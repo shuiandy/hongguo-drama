@@ -186,7 +186,7 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "jackotom",
+      "owner": "shuiandy",
       "repo": "hongguo-drama"
     },
     "linux": {

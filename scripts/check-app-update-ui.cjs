@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const { transformSync } = require('esbuild');
 const idle = { supported: true, reason: '', status: 'idle', version: null, percent: 0, error: '' };
-const release = { version: '9.0', url: 'https://github.com/jackotom/hongguo-drama/releases/tag/v9.0' };
+const release = { version: '9.0', url: 'https://github.com/shuiandy/hongguo-drama/releases/tag/v9.0' };
 function mount(api = {}, component = 'AppUpdateNotice', props = {}) {
   const slots = [], effects = [], cleanups = [], effectFns = [], events = new Map(), timers = new Map();
   let cursor = 0, tree, timerId = 0;
