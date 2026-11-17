@@ -23,3 +23,4 @@
 .app-layout.stealth-mode .player-viewing-layout { display: flex; flex: 1; min-height: 0; height: 100%; width: 100%; }
 .stealth-mode .player-viewing-layout > :not(.player-stage):not(.player-floating-slot) { display: none !important; }
 .stealth-mode .player-floating-slot { display: flex; flex: 1; min-height: 0; height: 100%; }
+.stealth-mode .stealth-toolbar-actions { margin-left: auto; }

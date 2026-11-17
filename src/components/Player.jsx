@@ -117,6 +117,7 @@ function Player({ target, onNavigate, onSeriesSelected, onFloatingChange, active
   const [loading, setLoading] = useState(false);
   const [merging, setMerging] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);   // 剧集选择面板
+  const [settingsOpen, setSettingsOpen] = useState(false); // 桌面端播放选项面板
   const [pickerQuery, setPickerQuery] = useState('');
 
   // 在线播放（按需流式或临时准备后缓存）
@@ -1785,7 +1786,7 @@ function Player({ target, onNavigate, onSeriesSelected, onFloatingChange, active
   }
 
   return (
-    <div className={`player-container ${episodesOpen ? '' : 'episodes-collapsed'}`}>
+    <div className={`player-container ${episodesOpen ? '' : 'episodes-collapsed'} ${settingsOpen ? 'player-settings-open' : ''}`}>
       {/* 剧集选择：当前剧 + 下拉管理面板（替代原来会越堆越长的横条） */}
       <div className="player-series-row" hidden={actionsHidden}>
         <div className="player-series-current">
@@ -1794,9 +1795,29 @@ function Player({ target, onNavigate, onSeriesSelected, onFloatingChange, active
           </span>
           <span className="player-stat">{t(mobile ? `第 ${currentIndex} 集 · 共 ${episodes.length || 0} 集` : `已下载 ${playableCount} / ${episodes.length || 0} 集`)}</span>
         </div>
+        <div className="player-series-actions">
+          <button
+            aria-expanded={pickerOpen}
+            className={`btn btn-outline series-picker-btn ${pickerOpen ? 'open' : ''}`}
+            onClick={() => setPickerOpen((v) => !v)}
+          >{t("切换剧集")}<span className="series-count">{t(seriesList.length)}</span>
+            <ChevronDown size={15} />
+          </button>
+          {!mobile && <button aria-expanded={settingsOpen} aria-controls="player-playback-settings"
+            className={`btn btn-outline player-settings-toggle ${settingsOpen ? 'open' : ''}`}
+            onClick={() => setSettingsOpen(open => !open)}><Settings size={15} />{t("播放选项")}</button>}
+          <button className="btn btn-outline player-download-jump" aria-controls="player-management"
+            onClick={() => {
+              if (portrait) setEpisodesOpen(true);
+              requestAnimationFrame(() => downloadToolsRef.current?.scrollIntoView({
+                behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'instant' : 'smooth', block: 'center',
+              }));
+            }}><Download size={15} />{t("下载管理")}</button>
+        </div>
       </div>
 
-      <div className="player-online-quality-row" hidden={actionsHidden}>
+      {/* 播放选项：桌面端收进「播放选项」按钮，安卓保持原有排布 */}
+      <div className="player-online-quality-row" id="player-playback-settings" hidden={actionsHidden}>
           <label className="player-download-quality">
             <span>{t("在线播放清晰度")}</span>
             <select className="input-field" aria-label={t("在线播放清晰度")} value={onlineQuality}
@@ -1865,22 +1886,6 @@ function Player({ target, onNavigate, onSeriesSelected, onFloatingChange, active
             })}>
             <Trash2 size={15} />{t("看完自动删 ")}{t(autoDelete ? '开' : '关')}
           </button>
-        <div className="player-series-actions">
-        <button
-          aria-expanded={pickerOpen}
-          className={`btn btn-outline series-picker-btn ${pickerOpen ? 'open' : ''}`}
-          onClick={() => setPickerOpen((v) => !v)}
-        >{t("切换剧集")}<span className="series-count">{t(seriesList.length)}</span>
-          <ChevronDown size={15} />
-        </button>
-          <button className="btn btn-outline player-download-jump" aria-controls="player-management"
-            onClick={() => {
-              if (portrait) setEpisodesOpen(true);
-              requestAnimationFrame(() => downloadToolsRef.current?.scrollIntoView({
-                behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'instant' : 'smooth', block: 'center',
-              }));
-            }}><Download size={15} />{t("下载管理")}</button>
-        </div>
         </div>
       </div>
 
