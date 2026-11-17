@@ -1,6 +1,7 @@
+const { RAW_MAIN_URL } = require('./release-repo');
 const ANNOUNCEMENT_URLS = Object.freeze({
-  normal: 'https://raw.githubusercontent.com/jackotom/hongguo-drama/main/announcements/normal.json',
-  emergency: 'https://raw.githubusercontent.com/jackotom/hongguo-drama/main/announcements/emergency.json',
+  normal: `${RAW_MAIN_URL}/announcements/normal.json`,
+  emergency: `${RAW_MAIN_URL}/announcements/emergency.json`,
 });
 const EMERGENCY_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_RESPONSE_BYTES = 32 * 1024;

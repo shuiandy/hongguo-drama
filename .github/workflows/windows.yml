@@ -15,6 +15,10 @@ on:
         description: Build and archive only; skip all functional, media, unit and platform acceptance checks
         type: boolean
         default: false
+      require_signing:
+        description: Fail unless the Windows EXEs are Authenticode signed (Azure Trusted Signing secrets required)
+        type: boolean
+        default: false
   push:
     branches: ['windows/**']
 permissions:
@@ -80,7 +84,10 @@ jobs:
   windows:
     needs: media
     runs-on: windows-2022
-    timeout-minutes: 25
+    timeout-minutes: 35
+    env:
+      # Signing state is part of the build cache key so an unsigned cached build is never reused once secrets exist.
+      WINDOWS_SIGNING_STATE: ${{ secrets.AZURE_CLIENT_ID != '' && 'signed' || 'unsigned' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -145,16 +152,44 @@ jobs:
             dist/*.exe
             dist/*.yml
             dist/*.blockmap
-          key: windows-update-v2-${{ github.sha }}-${{ hashFiles('package*.json', 'main.js', 'preload.js', 'index.html', 'vite.config.js', 'src/**', 'build/**', 'scripts/build-ffmpeg-source-win.sh', 'scripts/build-librempeg-source.sh', 'scripts/librempeg-videotoolbox-prototype.patch', 'scripts/prepare-nv-codec-headers.sh', 'scripts/prepare-amf-headers.sh', 'scripts/setup-software-player.cjs', 'scripts/software-player-assets.json') }}
+          key: windows-update-v3-${{ env.WINDOWS_SIGNING_STATE }}-${{ github.sha }}-${{ hashFiles('package*.json', 'main.js', 'preload.js', 'index.html', 'vite.config.js', 'src/**', 'build/**', 'scripts/build-ffmpeg-source-win.sh', 'scripts/build-librempeg-source.sh', 'scripts/librempeg-videotoolbox-prototype.patch', 'scripts/prepare-nv-codec-headers.sh', 'scripts/prepare-amf-headers.sh', 'scripts/setup-software-player.cjs', 'scripts/software-player-assets.json') }}
       - shell: pwsh
         if: ${{ inputs.build_only || steps.app-cache.outputs.cache-hit != 'true' }}
         run: |
-          npm run build:portable -- --config.electronDist=.cache/electron
+          $signArgs = @(node scripts/windows-signing-args.cjs --json | ConvertFrom-Json)
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          npx electron-builder --win nsis --x64 --publish never --config.electronDist=.cache/electron
+          npm run build:portable -- --config.electronDist=.cache/electron @signArgs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npx electron-builder --win nsis --x64 --publish never --config.electronDist=.cache/electron @signArgs
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          WINDOWS_SIGNING_REQUIRED: ${{ inputs.require_signing || false }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          WINDOWS_PUBLISHER_NAME: ${{ vars.WINDOWS_PUBLISHER_NAME }}
+      - name: Verify Authenticode signatures and updater publisher pinning
+        if: ${{ env.WINDOWS_SIGNING_STATE == 'signed' || inputs.require_signing }}
+        shell: pwsh
+        env:
+          WINDOWS_PUBLISHER_NAME: ${{ vars.WINDOWS_PUBLISHER_NAME }}
+        run: |
+          $files = @(Get-ChildItem dist/*.exe) + @(Get-Item dist/win-unpacked/*.exe)
+          if (-not $files.Count) { throw 'No Windows executables found to verify' }
+          foreach ($file in $files) {
+            $sig = Get-AuthenticodeSignature -LiteralPath $file.FullName
+            if ($sig.Status -ne 'Valid') { throw "Unsigned or invalid signature: $($file.Name) ($($sig.Status))" }
+            if (-not $sig.TimeStamperCertificate) { throw "Signature has no timestamp: $($file.Name)" }
+            Write-Output "PASS signed $($file.Name): $($sig.SignerCertificate.Subject)"
+          }
+          $updateConfig = Get-Content -Raw dist/win-unpacked/resources/app-update.yml
+          if ($updateConfig -notmatch 'publisherName') { throw 'app-update.yml lacks publisherName; electron-updater would skip installer signature verification' }
+          if (-not $updateConfig.Contains($env:WINDOWS_PUBLISHER_NAME)) { throw 'app-update.yml publisherName does not match WINDOWS_PUBLISHER_NAME' }
+          Write-Output 'PASS app-update.yml pins the signing publisher for in-app updates'
       - uses: actions/cache/save@v4
         if: ${{ !inputs.build_only && steps.app-cache.outputs.cache-hit != 'true' }}
         with:
