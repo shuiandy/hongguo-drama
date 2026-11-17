@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-export default function useFloatingPlayer(title, onChange, onBeforeMove) {
+// The floating window is frameless: this injected chrome provides the drag strip and close button.
+const FLOATING_CHROME_STYLE = '.floating-chrome{position:fixed;inset:0 0 auto;z-index:30;display:flex;align-items:flex-start;justify-content:flex-end;height:44px;padding:8px;box-sizing:border-box;background:linear-gradient(rgba(0,0,0,.62),transparent);opacity:0;transition:opacity .18s ease;-webkit-app-region:drag;pointer-events:auto}'
+  + 'body:hover .floating-chrome,.floating-chrome:focus-within{opacity:1}'
+  + '.floating-chrome-close{-webkit-app-region:no-drag;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.18);color:#fff;font:600 15px/1 -apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;backdrop-filter:blur(12px)}'
+  + '.floating-chrome-close:hover{background:rgba(255,255,255,.32)}.floating-chrome-close:focus-visible{outline:2px solid #fff;outline-offset:2px}'
+  + '@media (prefers-reduced-motion:reduce){.floating-chrome{transition:none}}';
+
+export default function useFloatingPlayer(title, onChange, onBeforeMove, closeLabel = '返回主窗口') {
   const [host] = useState(() => {
     const element = document.createElement('div');
     element.className = 'player-floating-host';
@@ -93,7 +100,21 @@ export default function useFloatingPlayer(title, onChange, onBeforeMove) {
       const style = child.document.createElement('style');
       style.textContent = 'html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}.player-floating-host{display:block;width:100%;height:100%}.player-floating-host>.player-stage{position:relative;inset:auto;width:100%;height:100%;min-width:0;min-height:0;max-height:none;aspect-ratio:auto;border-radius:0;margin:0}.player-controls-row{flex-wrap:wrap;gap:4px}.player-controls-volume input{width:48px}';
       child.document.head.appendChild(style);
+      const chromeStyle = child.document.createElement('style');
+      chromeStyle.textContent = FLOATING_CHROME_STYLE;
+      child.document.head.appendChild(chromeStyle);
       moveHost(child.document.body);
+      const chrome = child.document.createElement('div');
+      chrome.className = 'floating-chrome';
+      const close = child.document.createElement('button');
+      close.className = 'floating-chrome-close';
+      close.type = 'button';
+      close.textContent = '\u00d7';
+      close.title = closeLabel;
+      close.setAttribute('aria-label', closeLabel);
+      close.addEventListener('click', () => child.close());
+      chrome.appendChild(close);
+      child.document.body.appendChild(chrome);
       setFloating(true);
       onChange?.(true);
       syncAspectRatio();
@@ -102,7 +123,7 @@ export default function useFloatingPlayer(title, onChange, onBeforeMove) {
       restore(); child.close();
       throw new Error('悬浮窗初始化失败，请重试', { cause: error });
     }
-  }, [host, onChange, moveHost, syncAspectRatio]);
+  }, [host, onChange, moveHost, syncAspectRatio, closeLabel]);
 
   useEffect(() => {
     if (popup.current && !popup.current.closed) popup.current.document.title = title;

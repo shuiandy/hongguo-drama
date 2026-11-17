@@ -134,8 +134,13 @@ function attachFloatingPlayerWindow(mainWindow, {
           minHeight: Math.min(MIN_HEIGHT, height),
           maxWidth: Math.max(1, area.width - 32),
           maxHeight: Math.max(1, area.height - 32),
-          frame: true,
+          // Frameless like the mini window: the page draws its own drag strip and close button.
+          frame: false,
           ...(platform === 'darwin' ? { type: 'panel' } : {}),
+          hasShadow: true,
+          roundedCorners: true,
+          backgroundColor: '#000000',
+          // Do not inherit hiddenInset traffic lights from the opener window.
           titleBarStyle: 'default',
           alwaysOnTop: true,
           autoHideMenuBar: true,

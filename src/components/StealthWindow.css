@@ -1,11 +1,16 @@
 .stealth-toolbar { display: none; }
 .stealth-mode .sidebar, .stealth-mode .window-toolbar, .stealth-mode .compact-navigation { display: none !important; }
-.stealth-mode .main-wrapper { min-width: 0; }
-.stealth-mode .stealth-toolbar { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; gap: 8px; height: 48px; padding: 6px 10px 6px 82px; background: var(--bg-elevated); -webkit-app-region: drag; }
-.stealth-toolbar span { font-size: 10px; color: var(--text-secondary); }
+.stealth-mode .main-wrapper { min-width: 0; position: relative; background: #000; }
+/* The mini window has no title bar: a hover strip carries dragging and the two actions over the video. */
+.stealth-mode .stealth-toolbar { position: absolute; inset: 0 0 auto; z-index: 30; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; padding: 8px 10px; background: linear-gradient(rgba(0, 0, 0, .66), transparent); color: #fff; opacity: 0; transition: opacity .18s ease; -webkit-app-region: drag; }
+.stealth-mode:hover .stealth-toolbar, .stealth-mode .stealth-toolbar:focus-within { opacity: 1; }
+.stealth-toolbar span { font-size: 11px; color: rgba(255, 255, 255, .78); }
 .stealth-toolbar button { -webkit-app-region: no-drag; white-space: nowrap; }
+.stealth-mode .stealth-toolbar .btn { min-height: 26px; padding: 3px 10px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, .18); color: #fff; font-size: 11px; backdrop-filter: blur(12px); }
+.stealth-mode .stealth-toolbar .btn:hover:not(:disabled) { background: rgba(255, 255, 255, .32); color: #fff; }
+.stealth-mode .main-content[data-page="player"] .player-stage { background: #000; }
+@media (prefers-reduced-motion: reduce) { .stealth-mode .stealth-toolbar { transition: none; } }
 .stealth-toolbar-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-.stealth-mode .stealth-toolbar { height: auto; min-height: 48px; }
 .stealth-toolbar > span { min-width: 0; }
 @media (max-width: 700px) { .stealth-mode .stealth-toolbar > span { display: none; } }
 .stealth-mode .main-content[data-page="player"] { padding: 0; overflow: hidden; }
