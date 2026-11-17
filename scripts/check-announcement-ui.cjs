@@ -91,7 +91,7 @@ function mount({ notice = null, fullscreen = null, hidden = false, openExternal 
     walk(tree); return out;
   };
   const textOf = node => Array.isArray(node) ? node.map(textOf).join('') : typeof node === 'string' ? node : node?.children?.map(textOf).join('') || '';
-  const feedbackNotice = { ...purchaseNotice, body: `GitHub：https://github.com/jackotom/hongguo-drama/issues\n邮箱：jaoktom@outlook.com\n\n${purchaseText}` };
+  const feedbackNotice = { ...purchaseNotice, body: `GitHub：https://github.com/shuiandy/hongguo-drama/issues\n邮箱：jaoktom@outlook.com\n\n${purchaseText}` };
   const emailButton = ui => nodes(ui.tree.node).find(node => node.type === 'button' && textOf(node).includes('jaoktom@outlook.com'));
   const statuses = ui => nodes(ui.tree?.node).filter(node => node.props?.role === 'status');
   await check('GitHub and purchase remain links; the email button copies only its address without navigation', async () => {
@@ -100,7 +100,7 @@ function mount({ notice = null, fullscreen = null, hidden = false, openExternal 
     try {
       await ui.flush();
       const links = nodes(ui.tree.node).filter(node => node.type === 'a');
-      assert.deepEqual(links.map(node => node.props.href), ['https://github.com/jackotom/hongguo-drama/issues', 'https://vipai.pro/']);
+      assert.deepEqual(links.map(node => node.props.href), ['https://github.com/shuiandy/hongguo-drama/issues', 'https://vipai.pro/']);
       for (const link of links) { let prevented = false; await link.props.onClick({ preventDefault: () => { prevented = true; } }); assert.equal(prevented, true); }
       assert.deepEqual(ui.opened, links.map(node => node.props.href));
       const button = emailButton(ui);
@@ -114,7 +114,7 @@ function mount({ notice = null, fullscreen = null, hidden = false, openExternal 
       assert.equal(statuses(ui).length, 0, 'pending copy must not claim success');
       complete(); await copying; await ui.flush();
       assert.equal(textOf(statuses(ui)[0]), '邮箱已复制');
-      assert.deepEqual(ui.opened, ['https://github.com/jackotom/hongguo-drama/issues', 'https://vipai.pro/']);
+      assert.deepEqual(ui.opened, ['https://github.com/shuiandy/hongguo-drama/issues', 'https://vipai.pro/']);
       assert.deepEqual([...ui.timers.keys()], originalTimers, 'copying must not restart the announcement timer');
     } finally { ui.unmount(); }
   });

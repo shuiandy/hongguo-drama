@@ -6,7 +6,7 @@ import useDialogKeyboard from './useDialogKeyboard';
 import './AnnouncementNotice.css';
 
 const PURCHASE_URL = 'https://vipai.pro/';
-const FEEDBACK_URL = 'https://github.com/jackotom/hongguo-drama/issues';
+const FEEDBACK_URL = 'https://github.com/shuiandy/hongguo-drama/issues';
 const FEEDBACK_EMAIL = 'jaoktom@outlook.com';
 
 export default function AnnouncementNotice() {
