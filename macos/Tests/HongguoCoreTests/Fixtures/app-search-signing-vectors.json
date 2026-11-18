@@ -1,0 +1,165 @@
+{
+  "processNonceHex": "000102030405060708090a0b0c0d0e0f1011",
+  "processStarted": 1763430000000,
+  "identity": {
+    "device_id": "1234567890123456789",
+    "iid": "2234567890123456789",
+    "cdid": "01234567-89ab-cdef-0123-456789abcdef"
+  },
+  "search": [
+    {
+      "now": 1763430001234,
+      "keyword": "霸总",
+      "page": 1,
+      "cursor": null,
+      "randoms": [
+        305419896,
+        2596069104,
+        267242409,
+        2271560481,
+        3735928559,
+        12648430,
+        2147483647
+      ],
+      "url": "https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/search/tab/v?ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=72232&version_name=7.2.2.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=72232&resolution=1280*2772&dpi=520&update_version_code=72232&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=72232&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&iid=2234567890123456789&device_id=1234567890123456789&cdid=01234567-89ab-cdef-0123-456789abcdef&query=%E9%9C%B8%E6%80%BB&count=20&tab_type=11&bookshelf_search_plan=4&use_correct=true&user_is_login=0&offset=0&ts=1763430001&_rticket=1763430001234",
+      "headers": {
+        "User-Agent": "com.phoenix.read/72232 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3)",
+        "Accept": "application/json; charset=utf-8,application/x-protobuf",
+        "x-ss-req-ticket": "1763430001234",
+        "x-tt-request-tag": "t=0;n=0",
+        "sdk-version": "2",
+        "passport-sdk-version": "50561",
+        "x-xs-from-web": "0",
+        "x-khronos": "1763430001",
+        "x-ladon": "aRvOcQ==",
+        "x-argus": "cc4baQ==",
+        "x-gorgon": "84043412400194d3f651d9fe6cc91364e71df6105a7603b4d22b",
+        "x-helios": "8N68mj3dLXchWxdqwqi8OMf5l5KrsjG7Nnep6e4KlrQ6lDSs",
+        "x-medusa": "cs4baYYmRJOmGcdSp+TTGSYBenHu/wABrxW/++9/AeQMOE+dmI6iDqPFaAnP/pNmDaUNKlK7D7SHAzsjxg/pTBZp3eKYryW3iyPV1recTdqdkXokyIAhAYl6ZJk7nyOBj2OvjfwkITMC6ZhCmq8SJ6TivWu24fysquSkvW5y7YYaYe10D6tKDjVsdA95TglHQCCGbHRCE9ALfc+tEptOnWx0KrsRi1DJnnHXk0P3WicNlpLIpCSFU/VI3ldN5mhp8QGGqx98g9t0G0P7UWNyybgj+V+qbO8OhY1HBnqJOuUh77kt9ySZoOgvfO0mF3v7iL44rbJhi/V2zu1XRscu5/d0XRTtMrfIBwOJDQH6+7TZ6t5ZfOlZhUAs3tc2UbdqZ9wyAH1HUW+LUrdTUu0IGMCK5aD7hcrtqjVE9GQTHHyfwMRynjENFNO9Ay554AWGNjbXw+cJPeXHJ1mMmZsjrOgcqhORV1bvm4zKEPR9PnQrU5P3ehxHWMvY11QrPyVicAsaeCylCoaXWKc7JT2Ol4FdfnzScT4mPqvy67DIJRq4TMOI/LOaWU/FACxvhGkUHhTJ1vImaisBiU2QwQmH/fMowz65OeqQn8ho0eMB+VjAvCKdd6FQA9U7kYUuGEy+tI8fjGgjQzYFEje3wX6sQ6svXbuGHxxZ82/v5ta2/cEYwL/RpzwM6H6CL5ttuB78gJ+7dQZFvmhqjIuy/tABXK7OLfXC/RgokwN8mqvKusmDtOwUUqYq8bxATJkDfKn84ETWVhb6qm37WcODMbKMDB7jM8KTUMVcbTM+h7irO0v7YYmFtt1y0DrGXw07Hu5oBT/GekTCtz6PzBtfGznrkTgB8sQMBfXf/wuF9OBPDUgIyZR/gwKEmMTDIamGD9BWCOo8ifUjDuN3UaSFfojABJbrDECUm8RMzqkemnikmv/b9b3upSTTaI5gALMHd1ZnSGZqXL79xcTKZVyJKJLZlVOHpapjzf40ZLCwutNspGzAOf/5/zn/+L/AAA==",
+        "x-tt-dt": ""
+      },
+      "used": 7
+    },
+    {
+      "now": 1800000000999,
+      "keyword": "a b&c!",
+      "page": 2,
+      "cursor": {
+        "search_id": "s1",
+        "passback": "p=1",
+        "next_offset": 20
+      },
+      "randoms": [
+        4294967295,
+        0,
+        2147483648,
+        324508639,
+        610839776,
+        4275878552,
+        16909060
+      ],
+      "url": "https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/search/tab/v?ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=72232&version_name=7.2.2.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=72232&resolution=1280*2772&dpi=520&update_version_code=72232&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=72232&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&iid=2234567890123456789&device_id=1234567890123456789&cdid=01234567-89ab-cdef-0123-456789abcdef&query=a%20b%26c%21&count=20&tab_type=11&bookshelf_search_plan=4&use_correct=true&user_is_login=0&search_id=s1&passback=p%3D1&offset=20&ts=1800000000&_rticket=1800000001002",
+      "headers": {
+        "User-Agent": "com.phoenix.read/72232 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3)",
+        "Accept": "application/json; charset=utf-8,application/x-protobuf",
+        "x-ss-req-ticket": "1800000001002",
+        "x-tt-request-tag": "t=0;n=0",
+        "sdk-version": "2",
+        "passport-sdk-version": "50561",
+        "x-xs-from-web": "0",
+        "x-khronos": "1800000000",
+        "x-ladon": "a0nSAA==",
+        "x-argus": "ANJJaw==",
+        "x-gorgon": "8404ffff40014c9ca3133cb681eb5e23b16f83ef49b4b876f8e8",
+        "x-helios": "AAAAAHY2LebYnYIw++LTFCcC0PfIMLpgJZ6NUTjqlT9/cKKP",
+        "x-medusa": "A9JJa/c6FpHXBZVQ1viBG1cdKHOYugABaTUEBxIBA6eEGA6yIUPjYavhl7Ko1o7+LeuNfIZMYhHg+rAPoOLNx+OHFEE3g55AF4NyWnOJPkFKQo/rbnG18WLLm38GRyVvoOd96rY+rQjCwmxNkWaMWsY9FALLSK2+csowhUY5CKVHoj3HhfehijEeTC3VR5kaFWKl8koMa12Rg6UBvDn9RmTHR2e9Ta55feN+KqT6nApF7aU98dyutpJMVE8eX7ou2FxqYBbc/1vnnnhmZZyCCEKd10pztIUp/HTu4Ie5yUXTNoox4xI8hgOcUlXMX2386VwNPAQxDp1a+dBBuuh2HteYZ5umRo9+NVCxCTEPL2Z0wzobVHX0axXOvGZP0Ekj9COQesIMCqlZxPcDL5+ftQuh904xGE9bJx2MqgsfkhtlWAT9+lpX4K+O8elDdStj9Pd3ujleQERjDeJ2YpGN7KbS3sPOVGw61acu8pBscThfaACyGJDm6KzfyE0nyg3BxM14BKtZa05JCmWbeezYUwznA0FLB1JciLTorEa2h+RKje/mNMr+bB+8wauvwh7U34q4s5fb0X7xKertggmSGkKsVzefHYjoW65AApg+Ha/0p271jqHvRjVDdTn5NJPRvbgq+mHUPLtprODD1jFsu4WUfXNV0GBCRsmuGueiSfHKUO67srdAtMFLJ/h7MDGwuMZhIZMLjKw4HvFeUsk+kYDkftV6QrbXsVsyE2wXjhgEyZACMOINeSLi+5Lpj9efzNizEQtpyrwLS3p8COIW1TyVt3Q3GxYUCtCXwjY6J4p3tBMyU50wxXcfBRqwOuXVes8SwPj12Zn66PN3N14rTegtAz9/sobWXqOlGKpN0LPqt8GPBAmWWo9T2sOJP5frVAU/V1H3tc2sF/OBhAovtOU0DYzOImJxzlJ9mZ7+0XotHXrLjH7dd8G9DS/LLx2i9aLRaQFaequxpx2lBXYeTnEXNcJO1eJLDurAd4Yg3vaz2//5H9v/+F/c/g==",
+        "x-tt-dt": ""
+      },
+      "used": 7
+    }
+  ],
+  "metadata": [
+    {
+      "now": 1763430002000,
+      "apiPath": "/reading/distribution/category/landpage/v/",
+      "values": {
+        "offset": "0",
+        "limit": "50",
+        "genre": "short_play"
+      },
+      "payload": null,
+      "randoms": [
+        305419896,
+        2596069104,
+        267242409,
+        2271560481,
+        3735928559,
+        12648430,
+        2147483647
+      ],
+      "url": "https://api5-normal-sinfonlineb.fqnovel.com/reading/distribution/category/landpage/v/?offset=0&limit=50&genre=short_play&ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=73532&version_name=7.3.5.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=73532&resolution=1280*2772&dpi=520&update_version_code=73532&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=73532&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&iid=1018764998447377&device_id=1018764998447377&ts=1763430002&_rticket=1763430002002",
+      "headers": {
+        "User-Agent": "com.phoenix.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)",
+        "Accept": "application/json",
+        "Accept-Encoding": "identity",
+        "x-xs-from-web": "0",
+        "sdk-version": "2",
+        "x-ss-dp": "8662",
+        "x-tt-store-region": "cn",
+        "x-tt-store-region-src": "did",
+        "x-ss-req-ticket": "1763430002002",
+        "x-khronos": "1763430002",
+        "x-gorgon": "84043412400135efc8d3d9fe6cc91364e71df6105a7603b412a2",
+        "x-ladon": "aRvOcg==",
+        "x-argus": "cs4baQ==",
+        "x-helios": "8N68mp7T386oG5HrfjVdRsblzIersjG7Nnep6e4KlrQ6lDSs",
+        "x-medusa": "cc4baYUmRJOlGcdSpOTTGSUBenHu/wABJxX//+9/AZeFGLBm8wxHmfb+CRP6JywdBdmMILUETXdXzB/bE4do11+DWDK1mqn57npvbh/8rIahlNLvE6KxXHmH5/BVCOAdME8uUipX97QYQrvCDTWRWZ7azQcDKlS0W2YJUs3vZSjSQZlD5hWus4j/sqIgXroM1VNShfRG0IIdrBYsLp8fB3r1HWfR1o1P0HoW1EbsfBacJ7V+55eGVnwEQZ4kE8/28ROyXyctubDHbr3Py0s+KVVeNp/KL1aXSN/HnaNCTrixf0VlYmQ5wCswOC4gSRASxXiq+BCJgtaueZzPIfKbGmXvUooXyNmVg+pNt02qYX1Gakz6SE9VjQLAfTTR59XXxfSNuklLXJKTXD+wInnZiR95nuK2mGOJoDYZutXIb32NJWfqiPe8XrZF65vMKPh2mxtwTDGbCcIhe1lpA7ZI5d54ZxIupyxEvq2LM6pU9xMndFTyk1qUNmWVES8wijAtI0v64q13diDIKF58ssweeo84fY1a05gHIlEnBemdTRQ/gwNDAbIRgAV3yAFQj7pmpcsvGnXG4JdLI0E9PWEuio1QgJrfmIs2B6jJZv+g0twjARB9YHPbI0/F6l6vpTqXxgrnV128CAKf8MNFakqHp7fmcyL5/5NimdAoikFKfng6vyohBhXBSuIjPm/6aJYE6be8DynZwLxpIWVXhYS/rxJ+rQ4yFrR05/9lQz9C0FdqGn8Vp1AbuGfWKdLFmfW+NUuEJr1P2qseETcdvxpK+Czp2iubIVNE4J8AzJ7MeDwi693gy/9zY9a7VdyL/rSHbX3eDeb6utnOfK86pqn+9PneVrEL0YxdqNtotx3b1OvrMowNc3Zp688mgQiwigTi+FGSNrSjQvIyPxMeeLMqUrUuSt3J84843A0MF68fkyISJlOGFLDOuhsYgflRqml+MQzYb+6Y25XrN8qbtpEzw5kzWSRfNUMoXZ+8+f85//n/OL/AAA==",
+        "x-tt-dt": ""
+      },
+      "body": null,
+      "used": 7
+    },
+    {
+      "now": 1763430003000,
+      "apiPath": "/reading/bookapi/bookmall/cell/change/v",
+      "values": {
+        "a": "1"
+      },
+      "payload": {
+        "cell_id": "7"
+      },
+      "randoms": [
+        4294967295,
+        0,
+        2147483648,
+        324508639,
+        610839776,
+        4275878552,
+        16909060
+      ],
+      "url": "https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/bookmall/cell/change/v?a=1&ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=73532&version_name=7.3.5.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=73532&resolution=1280*2772&dpi=520&update_version_code=73532&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=73532&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&iid=1018764998447377&device_id=1018764998447377&ts=1763430003&_rticket=1763430003004",
+      "headers": {
+        "User-Agent": "com.phoenix.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)",
+        "Accept": "application/json",
+        "Accept-Encoding": "identity",
+        "x-xs-from-web": "0",
+        "sdk-version": "2",
+        "x-ss-dp": "8662",
+        "x-tt-store-region": "cn",
+        "x-tt-store-region-src": "did",
+        "x-ss-req-ticket": "1763430003004",
+        "x-khronos": "1763430003",
+        "x-gorgon": "8404ffff4001e63ff7852d7232025e23b16f83ef49f4f6eab551",
+        "x-ladon": "aRvOcw==",
+        "x-argus": "c84baQ==",
+        "x-helios": "AAAAABUMsc1+23yjh9aPJYjkZUjIMLpgJZ6NUTjqlT9/cKKP",
+        "x-medusa": "cM4baYQmRJOkGcdSpeTTGSQBenGYugABdTVEAxIJAaGBGH2BnPebAebGvvzlDGUU2xkz2wfh+GH9ycbP+uZhsKra4xEikunrws4iAwop2j2PYJzxhj5prtjhVpwIDsAG59+qN15e4km2pYf93V93GktY+Zce8WqO7uiuewTDatKejqa/+bKHSCm3uQfyGm5HdFsAZ8q7wkF2gC/wfrTRDcIL6xhaUnBSSsfebpT9EvLyvWU6e5YvtAm69Q6qUjduUBOwqizPQJpEiAEk5eceQylDDZck8umBhlxZDuwlFVQO/rCyv5akssymjX0hMA+MKMFq7+oMaD/4jB1xDL3bOBM3TE1oVxxR4FE0xXwiw8WuDatE65e1BWFtppkoIofPpn2EyjCHhsdOtzQ+1nXYykO29l2u/P90DaAu7XQ1iPpROV3/r01QlHOxQPtU3yi4+k5qY/OOBjKuW2kk+p+dxRrIQjAexMRrEH9LBwY3yySrEb0meeWYGJf8LlF7w1ke1id+LphWQ68YWU10zZh2wFmMVRAp2pc5ldzQT+IQr5vA4wcfNam2/+8lFtVasWiBVztMHfXLL6VAZ/bfaZZBHQv7uBFJh6ytk6fKfwNVway2wrnQdFn4zHTJaF3DqmuHgcqu8YYfi/jWmNNdXMnSAfwogO9Ec2cevRUgz+3GbeFIfYa69DuFUTEuvXoYSRpYXkKYh4zTyHUw8my4cY8ifcLwsNPmRu//oZ5mxudaOLFiKnJ5huxaT1Em1h4ekBOfVHXeAvRdNmUp4JfJa64Y04p3tGIp2gVwmA+hBY9R/VoltQYI2y+iesTg8QJkZh5PZNcquJBT7lNd+OYUGdZXnapDx9yk/kfjFyq+FOEhwAL/ScFwgEs+7VtyjaC60fGfB68EjCbg5UXl5mQAvDKBQcvshHEvUR+dnHxfUmcvz6fb0eMqAuW9Ve3QR6QixOBdDgAh5x5BorgY0Z5Uqw0r0PjR4cJ/suyffCe0+R/b//kf2r/c/g==",
+        "x-tt-dt": "",
+        "Content-Type": "application/json; charset=utf-8",
+        "x-ss-stub": "E0864B79DBDCD7B9125458A18DED43A7"
+      },
+      "body": "{\"cell_id\":\"7\"}",
+      "used": 7
+    }
+  ]
+}

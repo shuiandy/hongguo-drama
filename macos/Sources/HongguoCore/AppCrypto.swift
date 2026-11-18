@@ -252,6 +252,9 @@ struct ProtoWriter {
         bytes += Self.varint(value)
     }
 
+    /// Pre-encoded field bytes (for wire types the helpers do not cover).
+    mutating func raw(_ value: [UInt8]) { bytes += value }
+
     /// Zig-zag encoded signed field (app-source.js / playback-v5.js `'sint'`).
     mutating func sint(_ tag: Int, _ value: Int64) { uint(tag, Self.zigzag(value)) }
 
