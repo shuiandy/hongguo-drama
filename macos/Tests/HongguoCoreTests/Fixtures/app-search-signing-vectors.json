@@ -161,5 +161,89 @@
       "body": "{\"cell_id\":\"7\"}",
       "used": 7
     }
+  ],
+  "account": [
+    {
+      "now": 1763430004000,
+      "apiPath": "/reading/bookapi/read_history/list/v1/",
+      "values": {
+        "book_type": "2",
+        "limit": "0",
+        "offset": "0",
+        "last_min_read_timestamp_ms": "0",
+        "full_field": "true",
+        "is_first_load": "true",
+        "query_soft_deleted": "false"
+      },
+      "randoms": [
+        305419896,
+        2596069104,
+        267242409,
+        2271560481,
+        3735928559,
+        12648430,
+        2147483647
+      ],
+      "valueOrder": [
+        "book_type",
+        "limit",
+        "offset",
+        "last_min_read_timestamp_ms",
+        "full_field",
+        "is_first_load",
+        "query_soft_deleted"
+      ],
+      "url": "https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/read_history/list/v1/?book_type=2&limit=0&offset=0&last_min_read_timestamp_ms=0&full_field=true&is_first_load=true&query_soft_deleted=false&ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=72232&version_name=7.2.2.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=72232&resolution=1280*2772&dpi=520&update_version_code=72232&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=72232&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&iid=2234567890123456789&device_id=1234567890123456789&cdid=01234567-89ab-cdef-0123-456789abcdef&ts=1763430004&_rticket=1763430004003",
+      "headers": {
+        "User-Agent": "com.phoenix.read/72232 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3)",
+        "Accept": "application/json; charset=utf-8,application/x-protobuf",
+        "x-ss-req-ticket": "1763430004003",
+        "x-tt-request-tag": "t=0;n=0",
+        "sdk-version": "2",
+        "passport-sdk-version": "50561",
+        "x-xs-from-web": "0",
+        "x-khronos": "1763430004",
+        "x-ladon": "aRvOdA==",
+        "x-argus": "dM4baQ==",
+        "x-gorgon": "840434124001d7c6ee54d9fe6cc91364e71df6105a7603b472e3",
+        "x-helios": "8N68mnP7c6H4h5pIVjDqDkaQvFirsjG7Nnep6e4KlrQ6lDSs",
+        "x-medusa": "d84baYMmRJOjGcdSouTTGSMBenHu/wABjxW/+/9/AxyIOEmfqA1M5JheYPiYoYC0YguDBK0uDghrgVP8AOyeT9kx3Y7bDXGjceghjNHhSBRuQa9+kajpdmCLgkET/lD131nOStFwptIGbXg/8f1rypKeCXwiWr8N5PHGRRvRFyJHKxJHU3pa2LVl/SqX3nEE8GjUMLiJ2UV9fXgy5tajhJtho0T66ppRAhcAcQODOhicNGrB3ViDI/rFd40wS2gb6qIThvPCsv0iijnZJCod4hzmhCdDPocHCEaS/FaSSvJoyui+ZDGjZ2jRi2y7cgm81r+mGxnjIjzTrwxSy6x4KdKQEg0IYfacafFMxFBci0VI8weem42dn9y+9higVhnm7Ry+JNBObIHTjqlvvX4B5yZ4mNUDLZev6/3FMMH6NpQ+5UrhiA7iGOQQn6/RJFu4sfRabR+wOGS0P+wZgM6Q2uguO42amSlaWRfIi9Hd4OTeDlYPiz7MWcjKY2OLDE6IPz18ZWbMi1O6WtKSFxXd1UKNuRJkrm4VV51YiM2CaIp7wvrHvXTnj0qHCaLiYtOneb75sfkFesZeHIJz5Q+LhxzRJTI3Sedop2EtBHZ4p7EhWOaX6zNY9Wq0cB/dbRQjED1uVRUXj3wD6O4fz6Z8LQgcua1SV4pVAfQBCL+vzEdbXOaH/BiWEDcQwHK9CcPBhpqVAfvGrx22x53LJ2dXY/1PkJvUJ9zgEc+Y+ZwQfY2ciGpMFkyxd3Gg/mweYWoXfN92+pM6L4EZoj5RKhjWJIXHiUt10OPthvMTLiC2O0v7YYmFtt1y0DrGXw07Hu5oBT/GekTCtz6PzBtfGznrkTgB8sQMBfXf/wuF9OBPDUgIyZR/gwKEmMTDIamGD9BWCOo8ifUjDuN3UaSFfojABJbrDECUm8RMzqkemnikmv/b9b3upSTTaI5gALMHd1ZnSGZqXL79xcTKZVyJKJLZlVOHpapjzf40ZLCwutNspGziOf/5/zn/+L/AAA==",
+        "x-tt-dt": ""
+      },
+      "used": 7
+    },
+    {
+      "now": 1763430005000,
+      "apiPath": "/reading/user/info/v1/",
+      "values": {},
+      "randoms": [
+        4294967295,
+        0,
+        2147483648,
+        324508639,
+        610839776,
+        4275878552,
+        16909060
+      ],
+      "valueOrder": [],
+      "url": "https://api5-normal-sinfonlinea.fqnovel.com/reading/user/info/v1/?ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=72232&version_name=7.2.2.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=72232&resolution=1280*2772&dpi=520&update_version_code=72232&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=72232&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&iid=2234567890123456789&device_id=1234567890123456789&cdid=01234567-89ab-cdef-0123-456789abcdef&ts=1763430005&_rticket=1763430005002",
+      "headers": {
+        "User-Agent": "com.phoenix.read/72232 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3)",
+        "Accept": "application/json; charset=utf-8,application/x-protobuf",
+        "x-ss-req-ticket": "1763430005002",
+        "x-tt-request-tag": "t=0;n=0",
+        "sdk-version": "2",
+        "passport-sdk-version": "50561",
+        "x-xs-from-web": "0",
+        "x-khronos": "1763430005",
+        "x-ladon": "aRvOdQ==",
+        "x-argus": "dc4baQ==",
+        "x-gorgon": "8404ffff400119b375d53cb681eb5e23b16f83ef49f4f6ead5a8",
+        "x-helios": "AAAAAIRW7xnarozLbNV5n1pfKG/IMLpgJZ6NUTjqlT9/cKKP",
+        "x-medusa": "ds4baYImRJOiGcdSo+TTGSIBenGYugABZhVEBwIJAQ4OGLEJlDndcz+wqRSbbYwW4qiD7cDHOl/EMPv9MPz9fW4iwlQtWE4T/TvcQy1uucsLyZCMqroXJvrlwoE4NN4bSugrQRnmjlk1zlnk+yZG3ErXvztnnIdCw+5hEzOYIlsYGomc62utTyX6d9BFLmA8EzQVuYBWXRsCeEpTyrBz3IRFC99eR8a+b08vi4WbBQ4Qe7iXLOLUalq22+mwRMKOV6Sjcuk1wZo9LDJGNDN8zn5ghmwMRw4yJDM1tVYDM4dXZEaroxqjyrjDY+34VqFC3qn+CeN3AtT/4OiHuMylrwwjjZ2W7ZM/jZDSdK+QTxv1N54SeB2TuCx2QGmzACtg0MN7Bczz4zF0JdPB5QsBzWqCT6q+GMI32cbAn/afQxVal6EPDu8umBcDJcy+t/iDBFAacIgZ61wejmP7gXv9xZ9ggIdSdOl2MuyZCOHBe5PDMSgqitu3KJYBA0qV9qQQlPBB+pe24Odzcrx9N8B7suBh2wUBqX1L29mw83ToB6q4wNf8/JbUca08E73N71GJwLeymPTbbJP1bMTRjY2jH5tn1sCv949KRfzICLCF6Ivoo1poVupNGjEfk9oEfASVDHHX7KyUC0L10Z/PdSh7ChsTN6jxjC78gQElDt4XrWPyB0xfax1MjiSO6u0UfOiC4Eqty7B0WClgU8Py6fCuPJ2raTxKWmY5FvDIH5bEfmDXDwucQxd/X2XyNgxQ2LblfAf9CmlxrIcwa1ytZPAiek13UeE1hvjGvqeYK3jTLtAhtBMyU50wxXcfBRqwOuXVes8SwPj12Zn66PN3N14rTegtAz9/sobWXqOlGKpN0LPqt8GPBAmWWo9T2sOJP5frVAU/V1H3tc2sF/OBhAovtOU0DYzOImJxzlJ9mZ7+0XotHXrLjH7dd8G9DS/LLx2i9aLRaQFaequxpx2lBXYeTnEXNcJO1eJLDurAd4Yg3vZX2//5H9v/+F/c/g==",
+        "x-tt-dt": ""
+      },
+      "used": 7
+    }
   ]
 }

@@ -69,6 +69,19 @@ final class AppSearchSigningTests: XCTestCase {
         }
     }
 
+    func testAccountRequestMatchesReference() throws {
+        let identity = Self.fixture["identity"]
+        let id = PlaybackIdentity(deviceId: identity["device_id"].string!, iid: identity["iid"].string!, cdid: identity["cdid"].string!)
+        for item in Self.fixture["account"].array ?? [] {
+            let (signer, _) = signer(randoms(item))
+            let raw = item["values"].object ?? [:]
+            let values = (item["valueOrder"].array ?? []).map { ($0.string!, raw[$0.string!]!.string!) }
+            let signed = try signer.account(path: item["apiPath"].string!, values: values, identity: id, nowMillis: Int64(item["now"].number!))
+            XCTAssertEqual(signed.url, item["url"].string)
+            assertHeaders(signed, item)
+        }
+    }
+
     func testXGorgonAndBranchBasics() {
         let gorgon = AppLegacySigner.xGorgon(query: "a=1", body: nil, ts: 1_700_000_000, random: 0xabcd)
         XCTAssertTrue(gorgon.hasPrefix("8404cdab4001"))

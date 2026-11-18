@@ -52,5 +52,15 @@ const metadata = [
   return { ...item, url: signed.url, headers: signed.headers, body: signed.body ? signed.body.toString('utf8') : null,
     used: item.randoms.length - queue.length };
 });
+const account = [
+  { now: 1763430004000, apiPath: '/reading/bookapi/read_history/list/v1/',
+    values: { book_type: '2', limit: '0', offset: '0', last_min_read_timestamp_ms: '0', full_field: 'true', is_first_load: 'true', query_soft_deleted: 'false' },
+    randoms: randoms[0] },
+  { now: 1763430005000, apiPath: '/reading/user/info/v1/', values: {}, randoms: randoms[1] },
+].map(item => {
+  clock = item.now; queue = item.randoms.slice();
+  const signed = app.signedAccountRequest(item.apiPath, item.values, identity);
+  return { ...item, valueOrder: Object.keys(item.values), url: signed.url, headers: signed.headers, used: item.randoms.length - queue.length };
+});
 Date.now = realNow; Math.random = realRandom; crypto.randomBytes = realRandomBytes;
-process.stdout.write(JSON.stringify({ processNonceHex: PROCESS_NONCE_HEX, processStarted: PROCESS_STARTED, identity, search, metadata }, null, 2) + '\n');
+process.stdout.write(JSON.stringify({ processNonceHex: PROCESS_NONCE_HEX, processStarted: PROCESS_STARTED, identity, search, metadata, account }, null, 2) + '\n');
