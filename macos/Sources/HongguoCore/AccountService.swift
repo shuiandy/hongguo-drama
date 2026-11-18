@@ -130,10 +130,12 @@ public actor AccountService {
 
     public typealias WebRequest = @Sendable (_ url: URL, _ headers: [String: String]) async throws -> HTTPResponse
     public typealias AccountRequest = @Sendable (_ url: String, _ headers: [(String, String)]) async throws -> JSONValue
+    public typealias AccountWrite = @Sendable (_ url: String, _ headers: [(String, String)], _ body: [UInt8]) async throws -> JSONValue
 
     private let store: AccountCredentialStore
     private let webRequest: WebRequest
     private let accountRequest: AccountRequest
+    private let accountWrite: AccountWrite
     private let identity: @Sendable () async throws -> PlaybackIdentity
     private let now: @Sendable () -> Date
 
@@ -145,6 +147,8 @@ public actor AccountService {
     private var generation = 0
     private var login: (id: String, token: String, jar: CookieJar, expiresAt: Date)?
     private var loginGeneration = 0
+    /// Last position confirmed by the account per series, to skip redundant writes.
+    private var lastReported: [String: (episodeId: String, position: Double)] = [:]
 
     public init(store: AccountCredentialStore = KeychainCredentialStore()) {
         self.init(store: store, webRequest: nil, accountRequest: nil, identity: nil)
@@ -152,7 +156,8 @@ public actor AccountService {
 
     /// Injectable requests for tests.
     init(store: AccountCredentialStore, webRequest: WebRequest?, accountRequest: AccountRequest?,
-         identity: (@Sendable () async throws -> PlaybackIdentity)?, now: @escaping @Sendable () -> Date = { Date() }) {
+         identity: (@Sendable () async throws -> PlaybackIdentity)?, accountWrite: AccountWrite? = nil,
+         now: @escaping @Sendable () -> Date = { Date() }) {
         self.store = store
         self.now = now
         self.webRequest = webRequest ?? { url, headers in
@@ -167,6 +172,11 @@ public actor AccountService {
         let transport = AppTransport(http: .shared)
         self.accountRequest = accountRequest ?? { url, headers in
             do { return try await transport.requestJSON(url, headers: headers, deadline: Date().addingTimeInterval(12)) }
+            catch let error as AppSourceError { throw HongguoError(.unavailable, error.message) }
+        }
+        // Writes are never retried by the transport: a timed-out write may still have landed.
+        self.accountWrite = accountWrite ?? { url, headers, body in
+            do { return try await transport.requestJSON(url, method: "POST", headers: headers, body: body, deadline: Date().addingTimeInterval(12)) }
             catch let error as AppSourceError { throw HongguoError(.unavailable, error.message) }
         }
         self.identity = identity ?? { try await AppSearchIdentity.shared.get(transport: transport) }
@@ -360,6 +370,7 @@ public actor AccountService {
         credentials = AccountCredentials(cookie: cookie, profile: next)
         profile = next
         cachedHistory = nil
+        lastReported = [:]
         generation += 1
         restored = true
         restoreError = ""
@@ -428,6 +439,7 @@ public actor AccountService {
         credentials = nil
         profile = nil
         cachedHistory = nil
+        lastReported = [:]
         login = nil
         restored = true
         restoreError = ""
@@ -450,6 +462,58 @@ public actor AccountService {
         guard token == generation else { return [] }
         cachedHistory = rows
         return rows
+    }
+
+    public enum ProgressReportResult: Equatable, Sendable {
+        /// Both the history row and the resume point were confirmed by the account.
+        case synced
+        /// Nothing sent: signed out, or the same position was already confirmed.
+        case skipped
+    }
+
+    /// Writes one episode position to the signed-in account: first the watch history row, then the
+    /// resume point. Succeeds only when both replies confirm with `code` 0. Callers decide when to report
+    /// (episode change, pause, closing the player) and must check `AppSettings.cloudProgressSync` first.
+    @discardableResult
+    public func reportProgress(_ report: AccountProgressReport, force: Bool = false) async throws -> ProgressReportResult {
+        _ = await status()
+        guard let current = credentials, profile != nil else { return .skipped }
+        let historyBody = try report.historyBody(), progressBody = try report.progressBody()
+        if !force, let last = lastReported[report.seriesId], last.episodeId == report.episodeId,
+           abs(last.position - report.position) < Self.reportStep { return .skipped }
+        let token = generation
+        let device = try await identity()
+        for (path, body) in [("/reading/bookapi/read_history/update/v1/", historyBody),
+                             ("/reading/bookapi/read_progress/upload/v1/", progressBody)] {
+            guard token == generation else { return .skipped }
+            let signed = try AppLegacySigner.shared.accountWrite(path: path, body: body, identity: device,
+                                                                 nowMillis: Int64(now().timeIntervalSince1970 * 1000))
+            let reply = try await accountWrite(signed.url, signed.headers + [("Cookie", current.cookie)], body)
+            guard AccountProgressReport.acknowledged(reply) else {
+                let text = Self.cleanText(reply["message"].string ?? reply["msg"].string ?? reply["data"]["description"].string)
+                throw HongguoError(.upstream, text.isEmpty ? "红果账号未确认进度同步" : "红果账号未确认进度同步：\(text)")
+            }
+        }
+        guard token == generation else { return .skipped }
+        lastReported[report.seriesId] = (report.episodeId, report.position)
+        updateCachedHistory(with: report)
+        return .synced
+    }
+
+    /// Positions closer than this to the last confirmed one (same episode) are not sent again.
+    static let reportStep: Double = 5
+
+    private func updateCachedHistory(with report: AccountProgressReport) {
+        guard var rows = cachedHistory else { return }
+        let old = rows.first { $0.seriesId == report.seriesId }
+        rows.removeAll { $0.seriesId == report.seriesId }
+        rows.insert(AccountHistoryItem(seriesId: report.seriesId,
+                                       seriesTitle: report.title.isEmpty ? (old?.seriesTitle ?? "剧集 \(report.seriesId)") : report.title,
+                                       cover: report.cover.isEmpty ? (old?.cover ?? "") : report.cover,
+                                       episodeId: report.episodeId, episodeIndex: report.episodeIndex,
+                                       position: report.position, duration: report.duration, updatedAt: report.watchedAt,
+                                       total: max(report.episodeCount, old?.total ?? 0)), at: 0)
+        cachedHistory = Array(rows.prefix(50))
     }
 
     /// The account's history row for one series, from the last fetched history.

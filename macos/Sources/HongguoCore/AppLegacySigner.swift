@@ -479,6 +479,44 @@ struct AppLegacySigner {
         throw HongguoError(.format, "无法生成账号请求签名")
     }
 
+    static let accountWritePaths = ["/reading/bookapi/read_history/update/v1/", "/reading/bookapi/read_progress/upload/v1/"]
+
+    /// Signed JSON POST for the account's watch history / resume progress. Same identity and cookie as
+    /// `account`, but the body MD5 enters the hash branch, X-Gorgon and X-Medusa, and `x-ss-stub` carries it.
+    /// Field layout and the 7.3.9.32 profile follow N3urda/hongguoTV `CloudAccountClient.json` (GPL-3.0).
+    func accountWrite(path: String, body: [UInt8], identity: PlaybackIdentity, nowMillis: Int64) throws -> Signed {
+        guard Self.accountWritePaths.contains(path) else { throw HongguoError(.input, "不支持的账号写入接口") }
+        guard !body.isEmpty, body.count <= 64 * 1024 else { throw HongguoError(.input, "账号写入内容无效") }
+        guard [identity.deviceId, identity.iid].allSatisfy({ $0.matchesDigits(min: 1, max: 30) && $0.contains(where: { $0 != "0" }) }),
+              identity.cdid.range(of: "^[a-fA-F0-9-]{36}$", options: .regularExpression) != nil else {
+            throw HongguoError(.input, "账号设备身份无效")
+        }
+        let device = Self.merged(Self.versioned("73932", "7.3.9.32"),
+                                 [("iid", identity.iid), ("device_id", identity.deviceId), ("cdid", identity.cdid)])
+        let ts = UInt32(nowMillis / 1000)
+        let bodyMd5 = AppCrypto.md5(body)
+        for n in 0..<128 {
+            let ticket = String(nowMillis + Int64(n))
+            let query = AppCrypto.encodeQuery(device + [("ts", String(ts)), ("_rticket", ticket)])
+            let url = "\(Self.accountHost)\(path)?\(query)"
+            guard Self.branch(querySm3: AppCrypto.sm3(Array(query.utf8)), bodyMd5: bodyMd5, ts: ts) == 0 else { continue }
+            let headers: [(String, String)] = [
+                ("User-Agent", Self.searchUA.replacingOccurrences(of: "72232", with: "73932")),
+                ("Accept", "application/json; charset=utf-8,application/x-protobuf"),
+                ("Content-Type", "application/json; charset=utf-8"),
+                ("x-ss-stub", AppCrypto.hex(bodyMd5, uppercase: true)),
+                ("x-ss-req-ticket", ticket), ("x-tt-request-tag", "t=0;n=0"), ("sdk-version", "2"),
+                ("passport-sdk-version", "50561"), ("x-xs-from-web", "0"), ("x-khronos", String(ts)),
+                ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
+                ("x-gorgon", Self.xGorgon(query: query, body: body, ts: ts, random: random32() >> 16)), ("x-helios", helios(ts: ts)),
+                ("x-medusa", try medusa(url: url, body: body, ts: ts, deviceId: identity.deviceId, versionName: "7.3.9.32", nowMillis: nowMillis)),
+                ("x-tt-dt", ""),
+            ]
+            return Signed(url: url, query: query, headers: headers, body: body)
+        }
+        throw HongguoError(.format, "无法生成账号写入签名")
+    }
+
     static let metadataPaths = ["/reading/distribution/category/landpage/v/", "/reading/bookapi/bookmall/cell/change/v"]
 
     /// Port of `signedMetadataRequest` (catalogue lists; one anonymous identity per process).
