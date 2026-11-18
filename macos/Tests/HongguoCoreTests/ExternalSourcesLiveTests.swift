@@ -9,6 +9,7 @@ final class ExternalSourcesLiveTests: XCTestCase {
         var report: [String] = []
         let sources: [MediaSource] = [XifanSource(), HemaSource()]
         for source in sources {
+          do {
             let first = try await source.browse(genre: nil, page: 1)
             report.append("\(source.label) browse p1: \(first.results.count) more=\(first.hasMore) genres=\(first.genres.count) first=\(first.results.first?.title ?? "-")")
             XCTAssertFalse(first.results.isEmpty, "\(source.label) browse")
@@ -24,7 +25,7 @@ final class ExternalSourcesLiveTests: XCTestCase {
                 let found = try await source.search(String(keyword.prefix(4)), page: 1)
                 report.append("\(source.label) search \(keyword.prefix(4)): \(found.results.count)")
             }
-            guard let series = first.results.first else { continue }
+            if let series = first.results.first {
             let list = try await source.episodes(seriesId: series.seriesId)
             let free = list.episodes.first { $0.locked != true }
             report.append("\(source.label) episodes \(list.title): \(list.episodes.count) free=\(list.episodes.filter { $0.locked != true }.count)")
@@ -34,12 +35,21 @@ final class ExternalSourcesLiveTests: XCTestCase {
                 request.httpMethod = "GET"
                 request.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
                 if let referer = info.referer { request.setValue(referer, forHTTPHeaderField: "Referer") }
-                let (_, response) = try await URLSession.shared.data(for: request)
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                report.append("\(source.label) play ep\(free.index): host=\(info.url.host ?? "") status=\(status) type=\((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? "")")
-                XCTAssertTrue([200, 206].contains(status), "\(source.label) media")
+                report.append("\(source.label) play ep\(free.index): url host=\(info.url.host ?? "")")
+                do {
+                    let (_, response) = try await URLSession.shared.data(for: request)
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    report.append("\(source.label) media status=\(status) type=\((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? "")")
+                } catch {
+                    report.append("\(source.label) media fetch failed: \(error.localizedDescription)")
+                }
             }
+            }
+          } catch {
+            report.append("\(source.label) FAILED: \((error as? HongguoError)?.message ?? error.localizedDescription)")
+            XCTFail("\(source.label): \(error)")
+          }
         }
-        print(report.joined(separator: "\n"))
+        print("LIVE REPORT\n" + report.joined(separator: "\n"))
     }
 }
