@@ -235,7 +235,7 @@ private extension View {
         if #available(macOS 15.0, *) {
             self.toolbar(removing: .title).toolbarBackground(.hidden, for: .windowToolbar)
         } else {
-            self.toolbar(removing: .title)
+            self // macOS 14: the title bar keeps its title; .title removal needs macOS 15.
         }
     }
 }
