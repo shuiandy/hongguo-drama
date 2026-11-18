@@ -122,8 +122,10 @@ public struct PlayInfo: Sendable, Equatable {
     public var vid: String
     public var userAgent: String
     public var referer: String?
+    /// 16-byte CENC content key already derived by the App source (`spade_a` of player/v1 models).
+    public var contentKey: [UInt8]? = nil
 
-    public var isEncrypted: Bool { spadeA != nil }
+    public var isEncrypted: Bool { spadeA != nil || contentKey != nil }
 
     public var httpHeaders: [String: String] {
         var headers = ["User-Agent": userAgent]

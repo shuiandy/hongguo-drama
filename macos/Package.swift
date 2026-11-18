@@ -20,7 +20,8 @@ let package = Package(
         .testTarget(
             name: "HongguoCoreTests",
             dependencies: ["HongguoCore"],
-            path: "Tests/HongguoCoreTests"
+            path: "Tests/HongguoCoreTests",
+            exclude: ["Fixtures"]
         ),
     ]
 )

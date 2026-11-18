@@ -5,6 +5,7 @@ import Foundation
 public final class SeriesService: Sendable {
     private let http: HTTPClient
     private let api: LegacyAPI
+    private let appSource: AppSource
     private let episodeCache = TTLCache<SeriesEpisodes>(limit: 64)
     private let playCache = TTLCache<PlayInfo>(limit: 128)
     private let detailsCache = TTLCache<PublicDetails>(limit: 64)
@@ -13,6 +14,8 @@ public final class SeriesService: Sendable {
     public init(http: HTTPClient = .shared) {
         self.http = http
         self.api = LegacyAPI(http: http)
+        // One process-wide App queue (pacing and refusal handling are shared, as in Electron).
+        self.appSource = http === HTTPClient.shared ? .shared : AppSource(http: http)
     }
 
     private var pageOptions: HTTPClient.Options {
@@ -104,7 +107,8 @@ public final class SeriesService: Sendable {
 
     // MARK: Play URL
 
-    /// Resolves a playable URL: official web page first (plain MP4), then the legacy App API
+    /// Resolves a playable URL: official web page first (plain MP4, not the protected preview), then the
+    /// official App source (anonymous in-memory device, signed player/v1), then the legacy preload API
     /// (CENC encrypted, needs `spadeA`). A recent web media failure moves the web source last.
     public func playInfo(vid: String, seriesId: String?, force: Bool = false) async throws -> PlayInfo {
         guard vid.matchesDigits(min: 1, max: 30) else { throw HongguoError(.input, "无效的分集编号") }
@@ -122,6 +126,15 @@ public final class SeriesService: Sendable {
             } catch {
                 failures.append("网页：\(Self.describe(error))")
             }
+        }
+        do {
+            let info = try await appSource.playInfo(vid: vid)
+            await playCache.set(key, info, ttl: 30)
+            return info
+        } catch let error as AppSourceError where error.code == .cancelled {
+            throw error.hongguoError
+        } catch {
+            failures.append("App：\(Self.describe(error))")
         }
         do {
             let info = try await api.playInfo(vid: vid)

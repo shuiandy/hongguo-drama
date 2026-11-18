@@ -32,7 +32,7 @@ public final class PlaybackCache: @unchecked Sendable {
 
     /// Returns a local decrypted file for an encrypted `PlayInfo`. Concurrent calls share one download.
     public func prepare(_ info: PlayInfo) async throws -> URL {
-        guard let spadeA = info.spadeA else { throw HongguoError(.input, "片源未加密，无需解密缓存") }
+        guard info.isEncrypted else { throw HongguoError(.input, "片源未加密，无需解密缓存") }
         if let url = cachedFile(for: info) {
             try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
             return url
@@ -41,7 +41,9 @@ public final class PlaybackCache: @unchecked Sendable {
             if let existing = inflight[info.vid] { return existing }
             let created = Task { () throws -> URL in
                 defer { self.lock.withLock { self.inflight[info.vid] = nil } }
-                guard let key = CencDecryptor.deriveKey(spadeA) else { throw HongguoError(.decrypt, "片源密钥无法解析") }
+                guard let key = info.contentKey ?? info.spadeA.flatMap(CencDecryptor.deriveKey) else {
+                    throw HongguoError(.decrypt, "片源密钥无法解析")
+                }
                 var options = HTTPClient.Options()
                 options.headers = info.httpHeaders
                 options.timeout = 120

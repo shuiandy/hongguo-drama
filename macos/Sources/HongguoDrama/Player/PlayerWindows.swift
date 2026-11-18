@@ -164,10 +164,12 @@ final class PlayerWindows: NSObject, NSWindowDelegate {
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
-            MainActor.assumeIsolated {
-                guard let self else { return event }
-                return self.handle(event)
+            // Return only a Sendable flag across the isolation boundary; the event itself stays here.
+            let consumed: Bool = MainActor.assumeIsolated {
+                guard let self else { return false }
+                return self.handle(event) == nil
             }
+            return consumed ? nil : event
         }
     }
 
