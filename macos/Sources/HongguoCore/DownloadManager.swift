@@ -236,6 +236,26 @@ public actor DownloadManager {
         return queued
     }
 
+    /// Adds finished downloads made elsewhere (the Electron app) so the files show up and play
+    /// offline. Only files that exist are taken; episodes already known are skipped.
+    @discardableResult
+    public func importCompleted(_ imported: [DownloadTask]) throws -> Int {
+        var count = 0
+        for var task in imported where task.status == .completed && FileManager.default.fileExists(atPath: task.savePath) {
+            guard !tasks.contains(where: { $0.vid == task.vid || $0.savePath == task.savePath }) else { continue }
+            let size = Self.fileSize(task.fileURL)
+            task.receivedBytes = size
+            task.totalBytes = size
+            tasks.append(task)
+            count += 1
+        }
+        if count > 0 {
+            try persist(force: true)
+            changed()
+        }
+        return count
+    }
+
     // MARK: Control
 
     /// Pauses a pending, running or retry-scheduled task. The partial file stays for resume.

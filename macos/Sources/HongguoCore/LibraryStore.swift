@@ -190,6 +190,21 @@ public final class LibraryStore: @unchecked Sendable {
         }
     }
 
+    /// Merges imported records (from the Electron app). A record already here wins when it is newer.
+    @discardableResult
+    public func importRecords(_ records: [WatchRecord]) -> Int {
+        queue.sync {
+            var count = 0
+            for record in records {
+                if let existing = snapshot.history[record.seriesId], existing.updatedAt >= record.updatedAt { continue }
+                snapshot.history[record.seriesId] = record
+                count += 1
+            }
+            if count > 0 { persistLocked() }
+            return count
+        }
+    }
+
     /// Where "continue watching" should start for a series.
     public func resumePoint(for seriesId: String, episodeCount: Int) -> ResumePoint {
         ResumePoint.from(record(for: seriesId), episodeCount: episodeCount)
