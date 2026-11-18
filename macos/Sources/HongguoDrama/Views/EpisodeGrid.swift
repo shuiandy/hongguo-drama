@@ -80,10 +80,11 @@ struct EpisodeCell: View {
             .foregroundStyle(foreground)
             .frame(maxWidth: .infinity, minHeight: 44)
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .modifier(EpisodeCellBackground(state: state))
+            // The markers belong to the content, which Liquid Glass draws above the glass;
+            // as overlays after the glass they were covered on unwatched (clear glass) cells.
             .overlay(alignment: .topTrailing) {
                 if episode.webAvailable == false {
-                    Circle().fill(Color.hongguoGold).frame(width: 6, height: 6).padding(7)
+                    Circle().fill(Color.hongguoGold).frame(width: 7, height: 7).shadow(color: .black.opacity(0.35), radius: 1).padding(7)
                 }
             }
             .overlay(alignment: .bottomTrailing) {
@@ -94,6 +95,7 @@ struct EpisodeCell: View {
                         .padding(5)
                 }
             }
+            .modifier(EpisodeCellBackground(state: state))
         }
         .buttonStyle(.plain)
         .contextMenu {
