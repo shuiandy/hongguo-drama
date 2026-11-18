@@ -6,17 +6,22 @@ struct CoverImage: View {
     var cornerRadius: CGFloat = 8
 
     var body: some View {
-        AsyncImage(url: URL(string: url)) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().aspectRatio(contentMode: .fill)
-            case .failure:
-                placeholder.overlay(Image(systemName: "photo").foregroundStyle(.secondary))
-            default:
-                placeholder
+        // The image fills whatever size it is given; it never sizes its container
+        // (a portrait cover with .fill used to make full-window backdrops taller than the window).
+        Color.clear
+            .overlay {
+                AsyncImage(url: URL(string: url)) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    case .failure:
+                        placeholder.overlay(Image(systemName: "photo").foregroundStyle(.secondary))
+                    default:
+                        placeholder
+                    }
+                }
             }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 
     private var placeholder: some View {

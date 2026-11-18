@@ -223,11 +223,6 @@ struct PlayerScreen: View {
 
     var body: some View {
         ZStack {
-            Color.black
-            if !controller.cover.isEmpty {
-                AmbientBackdrop(url: controller.cover, blur: 110, opacity: 0.6)
-                    .overlay(RadialGradient(colors: [.clear, .black.opacity(0.55)], center: .center, startRadius: 120, endRadius: 800))
-            }
             HStack(spacing: 0) {
                 stage
                 if windows.showEpisodes {
@@ -239,6 +234,18 @@ struct PlayerScreen: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Backdrop goes in the background so it can never size the layout.
+        .background {
+            ZStack {
+                Color.black
+                if !controller.cover.isEmpty {
+                    AmbientBackdrop(url: controller.cover, blur: 110, opacity: 0.6)
+                        .overlay(RadialGradient(colors: [.clear, .black.opacity(0.55)], center: .center, startRadius: 120, endRadius: 800))
+                }
+            }
+        }
+        .clipped()
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
         .environment(\.colorScheme, .dark)
