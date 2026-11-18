@@ -542,9 +542,6 @@ struct PlayerSidePanel: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(controller.episodes?.title ?? "加载中").font(.system(size: 17, weight: .bold)).lineLimit(2)
                 Text(progressLine).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                if let source = sourceLine {
-                    Text(source).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                }
             }
             Spacer(minLength: 0)
         }
@@ -555,14 +552,6 @@ struct PlayerSidePanel: View {
         if let total = controller.episodes?.total, controller.index > 0 { parts.append("第 \(controller.index) / \(total) 集") }
         if let rating = details?.rating, rating > 0 { parts.append(String(format: "%.1f 分", rating)) }
         return parts.joined(separator: " · ")
-    }
-
-    private var sourceLine: String? {
-        guard let source = controller.currentSource else { return nil }
-        var text = "片源 \(sourceName(source))"
-        if let pipeline = controller.pipeline { text += " · \(pipelineName(pipeline))" }
-        if controller.videoSize.height > 1 { text += " · \(Int(controller.videoSize.width))×\(Int(controller.videoSize.height))" }
-        return text
     }
 
     private var episodesTab: some View {

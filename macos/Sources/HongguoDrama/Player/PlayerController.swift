@@ -423,10 +423,19 @@ final class PlayerController {
             guard let self, self.episodes?.seriesId == list.seriesId else { return }
             self.prefetched = (next.vid, raw, Date())
             let info = raw.selecting(shortSide: preferred)
-            guard info.isEncrypted, PlaybackCache.shared.cachedFile(for: info) == nil,
-                  let map = try? await CencStreamLoader.open(info) else { return }
-            guard self.episodes?.seriesId == list.seriesId, self.storedPreferredQuality == preferred else { return }
-            self.preparedMaps = [Self.mapKey(info): map]
+            guard info.isEncrypted, PlaybackCache.shared.cachedFile(for: info) == nil else { return }
+            if let map = try? await CencStreamLoader.open(info),
+               self.episodes?.seriesId == list.seriesId, self.storedPreferredQuality == preferred {
+                self.preparedMaps = [Self.mapKey(info): map]
+            }
+            // "播放时预先准备下一集": download and decrypt the whole next episode in the background,
+            // after a short pause so the current episode gets the bandwidth first. The next
+            // episode then starts from the local file at once.
+            guard AppModel.shared.settings.cacheNextEpisode else { return }
+            try? await Task.sleep(for: .seconds(8))
+            guard self.episodes?.seriesId == list.seriesId, self.storedPreferredQuality == preferred,
+                  self.hasNext, self.episodes?.episodes[self.index].vid == next.vid else { return }
+            _ = try? await PlaybackCache.shared.prepare(info)
         }
     }
 
