@@ -111,7 +111,8 @@ struct SettingsPanel: View {
                     }
                     Spacer(minLength: 0)
                     Button("完成") { model.closeSettings() }
-                        .buttonStyle(GlassButtonStyle(prominent: true, size: .small))
+                        .settingsButton(prominent: true)
+                        .controlSize(.large)
                         .keyboardShortcut(.cancelAction)
                         .help("关闭设置（esc）")
                 }
@@ -122,7 +123,6 @@ struct SettingsPanel: View {
                     .formStyle(.grouped)
                     .scrollContentBackground(.hidden)
                     .toggleStyle(.switch)
-                    .tint(.hongguoRed)
                     .padding(.horizontal, 10)
                     .id(model.settingsPane)
             }
@@ -130,6 +130,9 @@ struct SettingsPanel: View {
         }
         .frame(width: 900, height: 640)
         .background { ambient }
+        // System accent for switches, segmented controls and buttons, so they match the native
+        // glass controls instead of the brand red the main window uses.
+        .tint(nil)
     }
 
     private var categories: some View {
@@ -285,6 +288,22 @@ extension View {
 }
 
 // MARK: Shared pieces
+
+extension View {
+    /// Native button style for settings: Liquid Glass on macOS 26, bordered before that.
+    @ViewBuilder
+    func settingsButton(prominent: Bool = false) -> some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            if prominent { self.buttonStyle(.glassProminent) } else { self.buttonStyle(.glass) }
+        } else {
+            if prominent { self.buttonStyle(.borderedProminent) } else { self.buttonStyle(.bordered) }
+        }
+        #else
+        if prominent { self.buttonStyle(.borderedProminent) } else { self.buttonStyle(.bordered) }
+        #endif
+    }
+}
 
 /// Two-line label for a toggle or row: title plus a secondary explanation.
 struct SettingLabel: View {

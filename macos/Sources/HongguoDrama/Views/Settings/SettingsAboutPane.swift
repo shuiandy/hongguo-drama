@@ -22,13 +22,13 @@ struct SettingsAboutPane: View {
                     HStack(spacing: 8) {
                         if let release = model.availableRelease {
                             Button("下载 \(release.version)") { NSWorkspace.shared.open(release.url) }
-                                .buttonStyle(GlassButtonStyle(prominent: true, size: .small))
+                                .settingsButton(prominent: true)
                         } else {
                             Button("检查更新") { Task { await model.checkForUpdate(manual: true) } }
-                                .buttonStyle(GlassButtonStyle(prominent: true, size: .small))
+                                .settingsButton(prominent: true)
                         }
                         Button("查看更新说明") { NSWorkspace.shared.open(ReleaseRepo.releasesURL) }
-                            .buttonStyle(GlassButtonStyle(size: .small))
+                            .settingsButton()
                     }
                     .padding(.top, 6)
                     if !model.updateMessage.isEmpty {

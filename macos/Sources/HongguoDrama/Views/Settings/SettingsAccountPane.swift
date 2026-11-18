@@ -37,7 +37,7 @@ struct SettingsAccountPane: View {
                     if account.profile != nil {
                         Button("退出登录") { confirmLogout = true }
                     } else if !account.restoring {
-                        Button("去登录…") { openLoginPage() }.buttonStyle(GlassButtonStyle(prominent: true, size: .small))
+                        Button("去登录…") { openLoginPage() }.settingsButton(prominent: true)
                     }
                 }
                 .padding(.vertical, 4)
