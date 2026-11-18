@@ -182,7 +182,8 @@ public actor AnnouncementService {
     public func current() async -> Announcement? {
         async let emergency = load("emergency")
         async let normal = load("normal")
-        let result = await emergency ?? normal
+        let urgent = await emergency, regular = await normal
+        let result = urgent ?? regular
         if let result, result.urgent { shownUrgentIds.insert(result.id) }
         return result
     }
