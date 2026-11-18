@@ -45,6 +45,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             AppModel.shared.applyTheme()
             AppModel.shared.connectPlayer()
+            // Test builds: HONGGUO_OPEN_SETTINGS=<pane> opens the settings window at launch for screenshots.
+            if let raw = ProcessInfo.processInfo.environment["HONGGUO_OPEN_SETTINGS"] {
+                if let pane = SettingsPane(rawValue: raw) { AppModel.shared.settingsPane = pane }
+                try? await Task.sleep(for: .seconds(1))
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            }
         }
     }
 
