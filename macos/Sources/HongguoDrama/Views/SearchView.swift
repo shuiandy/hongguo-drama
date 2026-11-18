@@ -12,25 +12,18 @@ struct SearchView: View {
     @State private var isLoading = false
     @State private var error: String?
 
+    @FocusState private var fieldFocused: Bool
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(spacing: 22) {
+                PageHeader(title: "搜索", subtitle: "剧名、演员，或粘贴红果分享链接、剧集编号") { EmptyView() }
+                searchField
+                    .frame(maxWidth: 680)
+                    .padding(.top, 8)
+
                 if submitted.isEmpty {
-                    if !model.settings.searchHistory.isEmpty {
-                        HStack {
-                            Text("最近搜索").font(.headline)
-                            Spacer()
-                            Button("清空") { model.settings.searchHistory = [] }.buttonStyle(.link)
-                        }
-                        FlowLayout(spacing: 6) {
-                            ForEach(model.settings.searchHistory, id: \.self) { keyword in
-                                Button(keyword) { query = keyword; Task { await submit() } }
-                                    .buttonStyle(.bordered).controlSize(.small)
-                            }
-                        }
-                    }
-                    Text("输入剧名搜索，或粘贴红果分享链接、剧集编号直接打开。")
-                        .foregroundStyle(.secondary)
+                    idleContent.frame(maxWidth: 680, alignment: .leading)
                 } else if items.isEmpty {
                     if isLoading || error != nil {
                         LoadStateView(error: error, isLoading: isLoading) { Task { await submit() } }
@@ -38,15 +31,100 @@ struct SearchView: View {
                         ContentUnavailableView.search(text: submitted)
                     }
                 } else {
-                    PosterGrid(items: items) { Task { await loadMore() } }
-                    if isLoading { ProgressView().frame(maxWidth: .infinity) }
+                    results
                 }
             }
-            .padding(20)
+            .padding(.horizontal, 28)
+            .padding(.top, 6)
+            .padding(.bottom, 28)
+            .frame(maxWidth: .infinity)
+        }
+        .background(alignment: .top) {
+            // Soft coloured light so the glass field has something to refract.
+            // Full width and tall enough that the blur fades out inside the view's own bounds;
+            // backgroundExtensionEffect rasterizes to those bounds, so a smaller box shows hard edges.
+            ZStack {
+                Circle().fill(Color.hongguoRed.opacity(0.35)).frame(width: 520).offset(x: -220, y: -160)
+                Circle().fill(Color.purple.opacity(0.3)).frame(width: 480).offset(x: 260, y: -120)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 680, alignment: .top)
+            .blur(radius: 120)
+            .extendsUnderChrome()
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
         }
         .navigationTitle(submitted.isEmpty ? "搜索" : "“\(submitted)”")
-        .searchable(text: $query, placement: .toolbar, prompt: "剧名、分享链接或剧集编号")
-        .onSubmit(of: .search) { Task { await submit() } }
+        .transparentToolbar()
+        .onAppear {
+            fieldFocused = true
+            if let pending = model.pendingSearch {
+                model.pendingSearch = nil
+                query = pending
+                Task { await submit() }
+            }
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "magnifyingglass").font(.system(size: 18, weight: .semibold))
+            TextField("剧名、分享链接或剧集编号", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 19, weight: .medium))
+                .focused($fieldFocused)
+                .onSubmit { Task { await submit() } }
+            if query.isEmpty {
+                Text("回车搜索 · 粘贴分享链接直接打开").font(.system(size: 12)).foregroundStyle(.secondary)
+            } else {
+                Button { query = ""; fieldFocused = true } label: { Image(systemName: "xmark") }
+                    .buttonStyle(GlassIconButtonStyle(diameter: 34, variant: .clear))
+                    .help("清除")
+            }
+        }
+        .padding(.leading, 20)
+        .padding(.trailing, 10)
+        .frame(height: 56)
+        .glassSurface(in: Capsule(), interactive: true)
+    }
+
+    @ViewBuilder
+    private var idleContent: some View {
+        if !model.settings.searchHistory.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("最近搜索").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("清空") { model.settings.searchHistory = [] }.buttonStyle(.link)
+                }
+                FlowLayout(spacing: 8) {
+                    ForEach(model.settings.searchHistory, id: \.self) { keyword in
+                        Button(keyword) { query = keyword; Task { await submit() } }
+                            .buttonStyle(GlassButtonStyle(size: .small))
+                    }
+                }
+            }
+        } else {
+            Text("输入剧名搜索，或粘贴红果分享链接、剧集编号直接打开。")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var results: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("“\(submitted)”的结果").font(.system(size: 18, weight: .bold))
+                Text("\(items.count) 部\(hasMore ? "+" : "")").font(.system(size: 12)).foregroundStyle(.secondary)
+                Spacer()
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 14)], spacing: 14) {
+                ForEach(items) { item in
+                    SearchResultCard(item: item, keyword: submitted)
+                        .onAppear { if item.id == items.last?.id { Task { await loadMore() } } }
+                }
+            }
+            if isLoading { ProgressView().frame(maxWidth: .infinity) }
+        }
     }
 
     private func looksLikeLink(_ text: String) -> Bool {
@@ -96,6 +174,63 @@ struct SearchView: View {
         } catch {
             self.error = describe(error)
         }
+    }
+}
+
+/// Horizontal glass result card with the keyword highlighted.
+struct SearchResultCard: View {
+    let item: SeriesSummary
+    let keyword: String
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Button { model.open(item) } label: {
+            HStack(alignment: .top, spacing: 14) {
+                CoverImage(url: item.cover, cornerRadius: 14).frame(width: 96, height: 128)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(highlighted).font(.system(size: 15, weight: .bold)).lineLimit(2)
+                    Text(meta).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                    if !item.description.isEmpty {
+                        Text(item.description).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                    Spacer(minLength: 0)
+                    Button {
+                        Task { await PlayerController.shared.open(seriesId: item.seriesId, title: item.title, cover: item.cover) }
+                    } label: { Label("播放", systemImage: "play.fill") }
+                        .buttonStyle(GlassButtonStyle(prominent: true, size: .small))
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .glassSurface(in: RoundedRectangle(cornerRadius: 22, style: .continuous), interactive: true)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button(AppModel.shared.isFavorite(item.seriesId) ? "取消收藏" : "收藏") {
+                AppModel.shared.toggleFavorite(seriesId: item.seriesId, title: item.title, cover: item.cover)
+            }
+        }
+    }
+
+    private var highlighted: AttributedString {
+        var text = AttributedString(item.title)
+        if !keyword.isEmpty, let range = text.range(of: keyword) {
+            text[range].foregroundColor = .hongguoRed
+        }
+        return text
+    }
+
+    private var meta: String {
+        var parts = Array(item.tags.prefix(2))
+        if !item.episodeLabel.isEmpty {
+            parts.append(item.episodeLabel)
+        } else if item.episodeCount > 0 {
+            parts.append("\(item.episodeCount) 集")
+        }
+        if !item.heat.isEmpty { parts.append(item.heat) }
+        return parts.joined(separator: " · ")
     }
 }
 
