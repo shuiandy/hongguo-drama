@@ -778,7 +778,7 @@ struct MiniPlayerView: View {
                     .padding(.vertical, 8)
                     .glassSurface(in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 }
-                .padding(10)
+                .padding(16)
                 .background(
                     LinearGradient(colors: [.black.opacity(0.3), .clear, .clear, .black.opacity(0.35)], startPoint: .top, endPoint: .bottom)
                         .allowsHitTesting(false)
@@ -801,6 +801,8 @@ struct MiniPlayerView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(.white.opacity(0.18), lineWidth: 1))
+        // Borderless windows only get a hairline to resize from; give every edge and corner a real grip.
+        .overlay(WindowResizeEdges(thickness: 12, corner: 28))
         .onHover { value in withAnimation(.easeOut(duration: 0.18)) { hovering = value } }
         .preferredColorScheme(.dark)
         .environment(\.colorScheme, .dark)
