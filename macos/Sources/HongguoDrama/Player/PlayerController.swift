@@ -144,6 +144,13 @@ final class PlayerController {
     @ObservationIgnored private var lastSaved = Date.distantPast
     @ObservationIgnored private var retriedWithoutWeb = false
     @ObservationIgnored private var retriedWithFile = false
+    @ObservationIgnored private var retriedFresh = false
+    @ObservationIgnored private var usedPrefetched = false
+    /// Source of the next episode resolved while the current one plays (all tiers), so auto-next
+    /// does not wait for the signed App request (3 to 5 s).
+    @ObservationIgnored private var prefetched: (vid: String, info: PlayInfo, at: Date)?
+    /// Signed media URLs stay valid far longer; a stale one is re-resolved on failure anyway.
+    private static let prefetchLifetime: TimeInterval = 15 * 60
     @ObservationIgnored private var holdingSpeed = false
     @ObservationIgnored private var loadStarted = Date()
     /// Header maps prepared ahead of time for the next episode, keyed by `mapKey`.
@@ -216,7 +223,7 @@ final class PlayerController {
 
     func open(episodes list: SeriesEpisodes, cover: String, index: Int, startAt: Double = 0) {
         persistPosition()
-        if episodes?.seriesId != list.seriesId { preparedMaps.removeAll() }
+        if episodes?.seriesId != list.seriesId { preparedMaps.removeAll(); prefetched = nil }
         episodes = list
         self.cover = cover.isEmpty ? list.cover : cover
         PlayerWindows.shared.showPlayer()
@@ -229,6 +236,7 @@ final class PlayerController {
         index = target
         retriedWithoutWeb = false
         retriedWithFile = false
+        retriedFresh = false
         load(startAt: startAt, force: force)
     }
 
@@ -261,11 +269,17 @@ final class PlayerController {
         let service = AppModel.shared.series
         let preferred = storedPreferredQuality
         let maps = preparedMaps
+        var ready = resolved
+        usedPrefetched = false
+        if ready == nil, !force, let p = prefetched, p.vid == episode.vid, Date().timeIntervalSince(p.at) < Self.prefetchLifetime {
+            ready = p.info.selecting(shortSide: preferred)
+            usedPrefetched = true
+        }
         loadTask = Task { [weak self] in
             do {
                 var info: PlayInfo
-                if let resolved {
-                    info = resolved
+                if let ready {
+                    info = ready
                 } else {
                     info = try await service.playInfo(vid: episode.vid, seriesId: list.seriesId, force: force)
                         .selecting(shortSide: preferred)
@@ -377,6 +391,13 @@ final class PlayerController {
             }
             return
         }
+        if usedPrefetched, !retriedFresh {
+            // The prefetched signed URL may have expired: resolve this episode again once.
+            retriedFresh = true
+            prefetched = nil
+            load(startAt: resumeAt, force: true)
+            return
+        }
         if pipeline == .progressiveDecrypt, !retriedWithFile {
             retriedWithFile = true
             load(startAt: resumeAt, force: false, preferFile: true, resolved: currentInfo)
@@ -393,11 +414,18 @@ final class PlayerController {
         if localFileProvider?(next) != nil { return }
         let service = AppModel.shared.series
         let preferred = storedPreferredQuality
+        if let p = prefetched, p.vid == next.vid, Date().timeIntervalSince(p.at) < Self.prefetchLifetime / 2,
+           preparedMaps[Self.mapKey(p.info.selecting(shortSide: preferred))] != nil || !p.info.isEncrypted {
+            return
+        }
         Task { [weak self] in
-            guard let info = try? await service.playInfo(vid: next.vid, seriesId: list.seriesId).selecting(shortSide: preferred),
-                  info.isEncrypted, PlaybackCache.shared.cachedFile(for: info) == nil,
+            guard let raw = try? await service.playInfo(vid: next.vid, seriesId: list.seriesId) else { return }
+            guard let self, self.episodes?.seriesId == list.seriesId else { return }
+            self.prefetched = (next.vid, raw, Date())
+            let info = raw.selecting(shortSide: preferred)
+            guard info.isEncrypted, PlaybackCache.shared.cachedFile(for: info) == nil,
                   let map = try? await CencStreamLoader.open(info) else { return }
-            guard let self, self.episodes?.seriesId == list.seriesId, self.storedPreferredQuality == preferred else { return }
+            guard self.episodes?.seriesId == list.seriesId, self.storedPreferredQuality == preferred else { return }
             self.preparedMaps = [Self.mapKey(info): map]
         }
     }
