@@ -40,9 +40,18 @@ final class DownloadNamingTests: XCTestCase {
 /// Fake source: every episode resolves to a plain URL.
 struct FakeResolver: PlayInfoResolving {
     var encrypted = false
+    /// Extra lower tiers (short sides) offered next to a 1080p stream.
+    var tiers: [Int] = []
     func playInfo(vid: String, seriesId: String?, force: Bool) async throws -> PlayInfo {
-        PlayInfo(url: URL(string: "https://cdn.example.com/\(vid).mp4")!, spadeA: nil, codec: "h264", source: .app, vid: vid,
-                 userAgent: "test", referer: nil, contentKey: encrypted ? Array(repeating: 7, count: 16) : nil)
+        func stream(_ side: Int?) -> PlayInfo {
+            PlayInfo(url: URL(string: "https://cdn.example.com/\(vid)\(side.map { "-\($0)" } ?? "").mp4")!, spadeA: nil, codec: "h264",
+                     source: .app, vid: vid, userAgent: "test", referer: nil,
+                     contentKey: encrypted ? Array(repeating: 7, count: 16) : nil, quality: side.map(QualityOption.init(shortSide:)))
+        }
+        guard !tiers.isEmpty else { return stream(nil) }
+        var best = stream(1080)
+        best.variants = tiers.map(stream)
+        return best
     }
 }
 
@@ -54,6 +63,7 @@ actor FakeTransfer: MediaTransferring {
     var active = 0
     var peak = 0
     var offsets: [Int64] = []
+    var urls: [URL] = []
     var failuresLeft: Int
 
     init(size: Int64 = 1000, gateOpen: Bool = true, failures: Int = 0) {
@@ -68,11 +78,12 @@ actor FakeTransfer: MediaTransferring {
 
     nonisolated func transfer(_ request: MediaTransferRequest, to file: URL, onResponse: @escaping @Sendable (Int64, String?) -> Void,
                               progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> MediaTransferResult {
-        try await run(file: file, onResponse: onResponse, progress: progress)
+        try await run(url: request.url, file: file, onResponse: onResponse, progress: progress)
     }
 
-    private func run(file: URL, onResponse: @escaping @Sendable (Int64, String?) -> Void,
+    private func run(url: URL, file: URL, onResponse: @escaping @Sendable (Int64, String?) -> Void,
                      progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> MediaTransferResult {
+        urls.append(url)
         active += 1
         peak = max(peak, active)
         defer { active -= 1 }
@@ -170,6 +181,24 @@ final class DownloadManagerTests: XCTestCase {
         let offsets = await transfer.offsets
         XCTAssertEqual(offsets, [0, 500], "resume starts where the partial file ends")
         XCTAssertEqual(DownloadManager.fileSize(paused.fileURL), 1000)
+    }
+
+    func testDownloadFollowsPreferredQuality() async throws {
+        let transfer = FakeTransfer(size: 10)
+        var configuration = config()
+        configuration.preferredQuality = 720
+        let manager = DownloadManager(configuration: configuration, store: nil, resolver: FakeResolver(tiers: [720, 480]), transfer: transfer)
+        try await manager.enqueue(seriesId: "7200000000000000002", seriesTitle: "测试剧", episodes: episodes(1))
+        try await waitUntil { await manager.queueStatus().completed == 1 }
+        await manager.setConfiguration(config())
+        try await manager.enqueue(seriesId: "7200000000000000002", seriesTitle: "测试剧", episodes: [
+            Episode(vid: "7300000000000000099", index: 2, title: "", seriesId: "7200000000000000002")])
+        try await waitUntil { await manager.queueStatus().completed == 2 }
+        let urls = await transfer.urls.map(\.lastPathComponent)
+        XCTAssertEqual(urls, ["7300000000000000001-720.mp4", "7300000000000000099-1080.mp4"], "720 when preferred, best tier on auto")
+        var settings = AppSettings()
+        settings.preferredQuality = 480
+        XCTAssertEqual(settings.downloadConfiguration.preferredQuality, 480)
     }
 
     func testTransientFailureRetriesAutomatically() async throws {

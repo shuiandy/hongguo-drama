@@ -51,11 +51,15 @@ public struct DownloadConfiguration: Sendable, Equatable {
     public var lookupSpacing: Duration
     /// Automatic retry delays for transient network and CDN failures.
     public var retryDelays: [Duration]
+    /// Preferred video short side (1080, 720…), shared with the player; nil picks the best tier.
+    public var preferredQuality: Int?
 
     public init(root: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0],
                 nameFormat: String = DownloadNaming.defaultFormat, maxConcurrent: Int = 3,
-                lookupSpacing: Duration = .seconds(1), retryDelays: [Duration] = [.seconds(10), .seconds(30), .seconds(60)]) {
+                lookupSpacing: Duration = .seconds(1), retryDelays: [Duration] = [.seconds(10), .seconds(30), .seconds(60)],
+                preferredQuality: Int? = nil) {
         self.root = root
+        self.preferredQuality = preferredQuality
         self.nameFormat = nameFormat
         self.maxConcurrent = min(10, max(1, maxConcurrent))
         self.lookupSpacing = lookupSpacing
@@ -387,8 +391,10 @@ public actor DownloadManager {
                 complete(id, size: Self.fileSize(finalURL))
                 return
             }
+            // Same tier rule as the player. A resumed file whose tier changed fails If-Range and restarts.
             let info = try await resolver.playInfo(vid: task.vid, seriesId: task.seriesId,
                                                    force: task.receivedBytes > 0 || task.retryCount > 0)
+                .selecting(shortSide: configuration.preferredQuality)
             try Task.checkCancellation()
             update(id) { $0.phase = .transferring }
             changed()

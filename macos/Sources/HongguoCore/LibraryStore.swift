@@ -69,7 +69,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var downloadConfiguration: DownloadConfiguration {
         DownloadConfiguration(root: downloadRoot.map { URL(fileURLWithPath: $0, isDirectory: true) }
                                 ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0],
-                              nameFormat: downloadNameFormat, maxConcurrent: maxConcurrentDownloads)
+                              nameFormat: downloadNameFormat, maxConcurrent: maxConcurrentDownloads,
+                              preferredQuality: preferredQuality)
     }
 
     /// Clamps values a hand-edited or older file could carry out of range.
