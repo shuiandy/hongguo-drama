@@ -42,7 +42,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        Task { @MainActor in AppModel.shared.applyTheme() }
+        Task { @MainActor in
+            AppModel.shared.applyTheme()
+            AppModel.shared.connectPlayer()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

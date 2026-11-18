@@ -208,7 +208,9 @@ struct SearchResultCard: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button("在官网打开") { NSWorkspace.shared.open(Site.detailURL(item.seriesId)) }
+            Button(AppModel.shared.isFavorite(item.seriesId) ? "取消收藏" : "收藏") {
+                AppModel.shared.toggleFavorite(seriesId: item.seriesId, title: item.title, cover: item.cover)
+            }
         }
     }
 

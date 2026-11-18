@@ -16,6 +16,7 @@ struct SeriesDetailView: View {
     private var cover: String { [episodes?.cover, details?.cover, summary.cover].compactMap { $0 }.first { !$0.isEmpty } ?? "" }
 
     @State private var showAllReviews = false
+    @State private var downloadNotice: String?
 
     var body: some View {
         ScrollView {
@@ -95,9 +96,45 @@ struct SeriesDetailView: View {
                         Button { play(index: 1, resume: false) } label: { Label("播放第 1 集", systemImage: "play.fill") }
                             .buttonStyle(GlassButtonStyle(prominent: true, size: .large))
                     }
+                    let favorite = model.isFavorite(summary.seriesId)
+                    Button { model.toggleFavorite(seriesId: summary.seriesId, title: title, cover: cover) } label: {
+                        Label(favorite ? "已收藏" : "收藏", systemImage: favorite ? "heart.fill" : "heart")
+                    }
+                    .buttonStyle(GlassButtonStyle(size: .large))
+                    .help(favorite ? "取消收藏" : "加入我的剧库")
+                    Menu {
+                        if let episodes {
+                            Button("下载全部 \(episodes.total) 集") { download(episodes.episodes) }
+                            let next = record?.episodeIndex ?? 1
+                            if next > 1 {
+                                Button("从第 \(next) 集开始下载") { download(episodes.episodes.filter { $0.index >= next }) }
+                            }
+                            let missing = episodes.episodes.filter { model.localFiles[$0.vid] == nil }
+                            if missing.count != episodes.total, !missing.isEmpty {
+                                Button("下载剩余 \(missing.count) 集") { download(missing) }
+                            }
+                            Divider()
+                            Button("打开下载管理") { model.selection = .downloads }
+                        }
+                    } label: {
+                        Label(downloadLabel, systemImage: "arrow.down.circle")
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(GlassButtonStyle(size: .large))
+                    .menuIndicator(.hidden)
+                    .fixedSize()
                 }
                 .disabled(episodes == nil)
                 .padding(.top, 4)
+                if let downloadNotice {
+                    Label(downloadNotice, systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .task(id: downloadNotice) {
+                            try? await Task.sleep(for: .seconds(4))
+                            self.downloadNotice = nil
+                        }
+                }
             }
             .padding(.bottom, 4)
             Spacer(minLength: 0)
@@ -174,6 +211,20 @@ struct SeriesDetailView: View {
         }
     }
 
+    private var downloadLabel: String {
+        guard let episodes else { return "下载" }
+        let done = episodes.episodes.filter { model.localFiles[$0.vid] != nil }.count
+        return done > 0 ? "已下载 \(done)/\(episodes.total)" : "下载"
+    }
+
+    private func download(_ list: [Episode]) {
+        let id = summary.seriesId, title = title, cover = cover
+        Task {
+            let added = await model.download(list, seriesId: id, title: title, cover: cover)
+            downloadNotice = added > 0 ? "已加入下载队列：\(added) 集" : "这些集已经在下载列表里了"
+        }
+    }
+
     private func load(force: Bool = false) async {
         isLoading = true
         error = nil
@@ -182,7 +233,10 @@ struct SeriesDetailView: View {
         let seriesId = summary.seriesId
         async let detailsTask = try? service.publicDetails(seriesId: seriesId)
         do {
-            episodes = try await service.episodes(seriesId: seriesId, force: force)
+            let list = try await service.episodes(seriesId: seriesId, force: force)
+            episodes = list
+            _ = try? model.library.recordOpened(seriesId: seriesId, title: list.title, cover: cover, episodeCount: list.total,
+                                                publishedAt: summary.publishedAt)
         } catch {
             self.error = describe(error)
         }

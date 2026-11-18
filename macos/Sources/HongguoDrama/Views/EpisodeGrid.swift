@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import HongguoCore
 
@@ -65,6 +66,8 @@ struct EpisodeCell: View {
     let state: State
     let action: () -> Void
 
+    private var isDownloaded: Bool { AppModel.shared.localFiles[episode.vid] != nil }
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
@@ -83,8 +86,34 @@ struct EpisodeCell: View {
                     Circle().fill(Color.hongguoGold).frame(width: 6, height: 6).padding(7)
                 }
             }
+            .overlay(alignment: .bottomTrailing) {
+                if isDownloaded {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.green)
+                        .padding(5)
+                }
+            }
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if !isDownloaded {
+                Button("下载这一集") {
+                    let model = AppModel.shared
+                    let player = PlayerController.shared
+                    let list = player.episodes?.seriesId == episode.seriesId ? player.episodes : nil
+                    Task {
+                        await model.download([episode], seriesId: episode.seriesId,
+                                             title: list?.title ?? model.library.series(episode.seriesId)?.title ?? "",
+                                             cover: list?.cover ?? model.library.series(episode.seriesId)?.cover ?? "")
+                    }
+                }
+            } else {
+                Button("在访达中显示") {
+                    if let url = AppModel.shared.localFiles[episode.vid] { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                }
+            }
+        }
         .help(episode.webAvailable == false ? "第 \(episode.index) 集 · 官网未公开，走 App 片源" : "第 \(episode.index) 集")
     }
 

@@ -224,6 +224,7 @@ struct PlayerScreen: View {
     private var stage: some View {
         ZStack {
             VideoSurface(player: controller.player, gravity: controller.fillMode.gravity)
+            DanmakuOverlay(controller: controller, bottomInset: 130)
             // Click toggles play, double click toggles full screen.
             Color.clear
                 .contentShape(Rectangle())
@@ -298,6 +299,7 @@ struct PlayerScreen: View {
 struct PlayerControlBar: View {
     let controller: PlayerController
     let windows: PlayerWindows
+    @State private var showDanmakuSettings = false
 
     var body: some View {
         VStack(spacing: 6) {
@@ -385,6 +387,39 @@ struct PlayerControlBar: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("倍速（S / D）")
+
+            let danmakuOn = AppModel.shared.settings.danmaku.enabled
+            Button { AppModel.shared.settings.danmaku.enabled.toggle() } label: {
+                Image(systemName: danmakuOn ? "text.bubble.fill" : "text.bubble")
+            }
+            .buttonStyle(BarIconButtonStyle(size: 32, active: danmakuOn))
+            .help(danmakuOn ? "关闭弹幕" : "打开弹幕")
+            .contextMenu { Button("弹幕设置…") { showDanmakuSettings = true } }
+            Button { showDanmakuSettings.toggle() } label: { Image(systemName: "slider.horizontal.3") }
+                .buttonStyle(BarIconButtonStyle(size: 28))
+                .help("弹幕设置")
+                .popover(isPresented: $showDanmakuSettings, arrowEdge: .top) { DanmakuSettingsPanel() }
+
+            if !controller.qualityOptions.isEmpty {
+                Menu {
+                    Button { controller.preferredQuality = nil } label: {
+                        if controller.preferredQuality == nil { Label("自动", systemImage: "checkmark") } else { Text("自动") }
+                    }
+                    Divider()
+                    ForEach(controller.qualityOptions) { option in
+                        Button { controller.preferredQuality = option.id } label: {
+                            if controller.preferredQuality == option.id { Label(option.label, systemImage: "checkmark") } else { Text(option.label) }
+                        }
+                    }
+                } label: {
+                    pill(controller.preferredQuality == nil ? "自动 \(controller.currentQuality?.label ?? "")" : (controller.currentQuality?.label ?? "画质"))
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("画质")
+            }
 
             Menu {
                 ForEach(VideoFillMode.allCases) { mode in

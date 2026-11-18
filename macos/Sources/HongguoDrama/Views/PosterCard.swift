@@ -130,7 +130,9 @@ struct PosterCell: View {
             .onHover { value in withAnimation(.easeOut(duration: 0.15)) { hovering = value } }
             .contextMenu {
                 Button("立即播放第 1 集") { playFirst() }
-                Button("在官网打开") { NSWorkspace.shared.open(Site.detailURL(item.seriesId)) }
+                Button(model.isFavorite(item.seriesId) ? "取消收藏" : "收藏") {
+                    model.toggleFavorite(seriesId: item.seriesId, title: item.title, cover: item.cover)
+                }
                 Button("复制剧集编号") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(item.seriesId, forType: .string)

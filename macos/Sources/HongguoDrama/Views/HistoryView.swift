@@ -77,7 +77,24 @@ struct HistoryRow: View {
         HStack(spacing: 14) {
             CoverImage(url: record.cover, cornerRadius: 12).frame(width: 66, height: 88)
             VStack(alignment: .leading, spacing: 5) {
-                Text(record.title).font(.system(size: 15, weight: .bold)).lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(record.title).font(.system(size: 15, weight: .bold)).lineLimit(1)
+                    if record.unreadEpisodes > 0 {
+                        Text("更新 \(record.unreadEpisodes) 集")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .frame(height: 18)
+                            .background(Color.hongguoRed, in: Capsule())
+                    } else if !record.unreadSequelIds.isEmpty {
+                        Text("有续作")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 6)
+                            .frame(height: 18)
+                            .background(Color.hongguoGold, in: Capsule())
+                    }
+                }
                 Text(progressText).font(.system(size: 12)).foregroundStyle(.secondary)
                 Text(record.updatedAt, style: .relative).font(.system(size: 11)).foregroundStyle(.tertiary)
                 if record.total > 0 {
