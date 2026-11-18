@@ -146,9 +146,13 @@ public actor AccountService {
     private var login: (id: String, token: String, jar: CookieJar, expiresAt: Date)?
     private var loginGeneration = 0
 
-    public init(store: AccountCredentialStore = KeychainCredentialStore(), webRequest: WebRequest? = nil,
-                accountRequest: AccountRequest? = nil, identity: (@Sendable () async throws -> PlaybackIdentity)? = nil,
-                now: @escaping @Sendable () -> Date = { Date() }) {
+    public init(store: AccountCredentialStore = KeychainCredentialStore()) {
+        self.init(store: store, webRequest: nil, accountRequest: nil, identity: nil)
+    }
+
+    /// Injectable requests for tests.
+    init(store: AccountCredentialStore, webRequest: WebRequest?, accountRequest: AccountRequest?,
+         identity: (@Sendable () async throws -> PlaybackIdentity)?, now: @escaping @Sendable () -> Date = { Date() }) {
         self.store = store
         self.now = now
         self.webRequest = webRequest ?? { url, headers in
