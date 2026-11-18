@@ -40,8 +40,9 @@ struct SettingsDownloadsPane: View {
                         }
                         .fixedSize()
                     }
-                    TextField("剧名 集数", text: $model.settings.downloadNameFormat)
+                    TextField("文件命名", text: $model.settings.downloadNameFormat, prompt: Text("剧名 集数"))
                         .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
                     Text("示例：\(example)（每部剧单独一个文件夹）").font(.caption).foregroundStyle(.secondary)
                 }
             }
