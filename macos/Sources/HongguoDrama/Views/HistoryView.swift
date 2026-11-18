@@ -11,7 +11,14 @@ struct HistoryView: View {
                 ContentUnavailableView("还没有观看记录", systemImage: "clock", description: Text("播放过的短剧会出现在这里。"))
             } else {
                 ScrollView {
-                    PageHeader(title: "观看记录", subtitle: "\(model.history.count) 部") {
+                    PageHeader(title: "观看记录", subtitle: subtitle) {
+                        if AccountState.shared.profile != nil {
+                            Button { Task { await model.syncCloudHistory(force: true) } } label: {
+                                Label(model.cloudSyncing ? "同步中…" : "同步云端", systemImage: "arrow.triangle.2.circlepath")
+                            }
+                            .buttonStyle(GlassButtonStyle())
+                            .disabled(model.cloudSyncing)
+                        }
                         Button(role: .destructive) { confirmClear = true } label: { Label("清空", systemImage: "trash") }
                             .buttonStyle(GlassButtonStyle())
                     }
@@ -55,6 +62,14 @@ struct HistoryView: View {
             }
         }
         .onAppear { model.refreshHistory() }
+        .task { await model.syncCloudHistory() }
+    }
+
+    private var subtitle: String {
+        var text = "\(model.history.count) 部"
+        if AccountState.shared.profile != nil { text += " · 已与云端合并" }
+        if !model.cloudSyncMessage.isEmpty { text += " · \(model.cloudSyncMessage)" }
+        return text
     }
 
     private func resume(_ record: WatchRecord) {

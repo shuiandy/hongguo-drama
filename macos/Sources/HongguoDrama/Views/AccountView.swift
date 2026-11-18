@@ -201,6 +201,8 @@ struct AccountView: View {
         do {
             history = try await AccountService.shared.history(refresh: refresh)
             historyError = ""
+            model.store.mergeCloudHistory(history)
+            model.refreshHistory()
             // The background check may have dropped an expired login.
             let status = await AccountService.shared.status()
             if status.profile == nil { account.profile = nil; history = [] }

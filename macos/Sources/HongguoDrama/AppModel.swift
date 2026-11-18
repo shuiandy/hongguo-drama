@@ -145,6 +145,28 @@ final class AppModel {
         history = store.history()
     }
 
+    private var lastCloudSync = Date.distantPast
+    private(set) var cloudSyncing = false
+    var cloudSyncMessage = ""
+
+    /// Pulls the signed-in account's cloud watch history into the local history (newer side wins).
+    /// The website only exposes reading the cloud history, so local progress is not uploaded.
+    func syncCloudHistory(force: Bool = false) async {
+        guard !cloudSyncing, force || Date().timeIntervalSince(lastCloudSync) > 60 else { return }
+        guard await AccountService.shared.status().profile != nil else { return }
+        cloudSyncing = true
+        defer { cloudSyncing = false }
+        do {
+            let items = try await AccountService.shared.history(refresh: true)
+            lastCloudSync = Date()
+            store.mergeCloudHistory(items)
+            cloudSyncMessage = ""
+            refreshHistory()
+        } catch {
+            cloudSyncMessage = (error as? HongguoError)?.message ?? "云端观看记录同步失败，请稍后重试"
+        }
+    }
+
     func open(_ summary: SeriesSummary) {
         guard let selection else { return }
         paths[selection, default: []].append(summary)

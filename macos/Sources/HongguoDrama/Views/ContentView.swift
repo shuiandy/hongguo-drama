@@ -49,7 +49,10 @@ struct ContentView: View {
             }
         }
         .tint(.hongguoRed)
-        .task { await AccountState.shared.restore() }
+        .task {
+            await AccountState.shared.restore()
+            await model.syncCloudHistory(force: true)
+        }
         .background {
             // ⌘K jumps to search from anywhere in the main window. Search has no sidebar row:
             // the header search field on 发现 and 剧库 opens the same results page.

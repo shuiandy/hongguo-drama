@@ -245,6 +245,50 @@ public final class LibraryStore: @unchecked Sendable {
         }
     }
 
+    /// Merges the account's cloud watch history (read only upstream). For each series the newer
+    /// side wins by last-watched time; an older cloud row only fills an empty title, cover or total.
+    /// Returns how many local records were added or moved forward.
+    @discardableResult
+    public func mergeCloudHistory(_ items: [AccountHistoryItem]) -> Int {
+        queue.sync {
+            var count = 0
+            for item in items {
+                if var existing = snapshot.history[item.seriesId] {
+                    if existing.updatedAt >= item.updatedAt {
+                        var filled = existing
+                        if filled.title.isEmpty || filled.title.hasPrefix("剧集 ") { filled.title = item.seriesTitle }
+                        if filled.cover.isEmpty { filled.cover = item.cover }
+                        filled.total = max(filled.total, item.total)
+                        if filled != existing { snapshot.history[item.seriesId] = filled }
+                        continue
+                    }
+                    if !item.seriesTitle.isEmpty && !item.seriesTitle.hasPrefix("剧集 ") { existing.title = item.seriesTitle }
+                    if !item.cover.isEmpty { existing.cover = item.cover }
+                    existing.total = max(existing.total, item.total)
+                    if item.episodeIndex > 0 {
+                        existing.episodeIndex = item.episodeIndex
+                        existing.vid = item.episodeId
+                        existing.position = item.position
+                        existing.duration = item.duration
+                    }
+                    existing.updatedAt = item.updatedAt
+                    snapshot.history[item.seriesId] = existing
+                } else {
+                    // Without an episode number the position cannot be placed: start that series at episode 1.
+                    let known = item.episodeIndex > 0
+                    snapshot.history[item.seriesId] = WatchRecord(
+                        seriesId: item.seriesId, title: item.seriesTitle, cover: item.cover, total: item.total,
+                        episodeIndex: known ? item.episodeIndex : 1, vid: known ? item.episodeId : "",
+                        position: known ? item.position : 0, duration: known ? item.duration : 0,
+                        updatedAt: item.updatedAt, completedEpisode: known ? max(0, item.episodeIndex - 1) : 0)
+                }
+                count += 1
+            }
+            persistLocked()
+            return count
+        }
+    }
+
     /// Where "continue watching" should start for a series.
     public func resumePoint(for seriesId: String, episodeCount: Int) -> ResumePoint {
         ResumePoint.from(record(for: seriesId), episodeCount: episodeCount)
