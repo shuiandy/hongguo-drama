@@ -1,0 +1,537 @@
+{
+  "cases": [
+    {
+      "stampMs": 1763430000123,
+      "deviceId": "1234567890123456789",
+      "installId": "2234567890123456789",
+      "nonce": "0102030405060708090a0b",
+      "stamp": 1763430000,
+      "rawQuery": "_rticket=1763430000123&ac=wifi&aid=8662&app_name=novelread&channel=update_64&device_brand=Redmi&device_id=1234567890123456789&device_platform=android&device_type=25053RT47C&dpi=520&iid=2234567890123456789&language=zh&manifest_version_code=73532&os=android&os_api=36&os_version=16&resolution=1280%2A2772&ssmix=a&update_version_code=73532&version_code=73532&version_name=7.3.5.32",
+      "headers": {
+        "X-Gorgon": "840440e20000a70ded87ff447dece3898d8546b77f54051edb5b",
+        "X-Khronos": "1763430000",
+        "X-SS-Req-Ticket": "1763430000000",
+        "X-SS-STUB": "",
+        "X-Argus": "PMxPj+JImxTKEfQuAsVmWpqWXX7YFHW0wD3jljzbWeaEZ1xd6JaVTHdpdqRXfkrdyqwL6b4W7juyHvgcjkOq/TsivOw5BURgNRchylbbYh25W0qYePOsuFplUmcOrXBo3Skh4Ve7gN/EAOTJ9Zrkbn30w26cnNyWsnkimm8FIktY/9Mg0nRtkEn+EWmvHyFX+If8o5IJ/XYOKKd34iVguwzB",
+        "X-Ladon": "AwQFBtFj9ntW+jBgdA1JhabngJJnfrwAzFAlv0Cqi9J16ndL"
+      }
+    },
+    {
+      "stampMs": 1800000000999,
+      "deviceId": "1000000000000000001",
+      "installId": "8999999999999999999",
+      "nonce": "ffeeddccbbaa99887766f0",
+      "stamp": 1800000000,
+      "rawQuery": "_rticket=1800000000999&ac=wifi&aid=8662&app_name=novelread&channel=update_64&device_brand=Redmi&device_id=1000000000000000001&device_platform=android&device_type=25053RT47C&dpi=520&iid=8999999999999999999&language=zh&manifest_version_code=73532&os=android&os_api=36&os_version=16&resolution=1280%2A2772&ssmix=a&update_version_code=73532&version_code=73532&version_name=7.3.5.32",
+      "headers": {
+        "X-Gorgon": "840480ee000090d3ce92fdc4a4076feac450e542fc4482c0457c",
+        "X-Khronos": "1800000000",
+        "X-SS-Req-Ticket": "1800000000000",
+        "X-SS-STUB": "",
+        "X-Argus": "PMxhgUKIXtho/6stSub0VASKJDoVY13IeJ5USEZ0fLHWQTS4sWb2pxltQ2Xu5kN7DfGbnciPmAUTleNK5f8dHeO/vDy6n9ip0cZkGFTLJZX4iVRvm/iPb8zMmXAyrUTxaYKg05me0Drnf2gyjXwCVOIjhDu5Xh4VuZ3ROAdmx5u6gXMdJA/MkNs/cT+e1w6IRlcEMchECWjiMtsE2azNynYRDrXHTRmeLXWJg+fSvw6Vtg==",
+        "X-Ladon": "3cy7qogmgkK2Tv0P27ILBsAfikWVxDb4vuQj5crV4MTfwtOK"
+      }
+    },
+    {
+      "stampMs": 1700000000000,
+      "deviceId": "5555555555555555555",
+      "installId": "6666666666666666666",
+      "nonce": "00000000000000000000ff",
+      "stamp": 1700000000,
+      "rawQuery": "_rticket=1700000000000&ac=wifi&aid=8662&app_name=novelread&channel=update_64&device_brand=Redmi&device_id=5555555555555555555&device_platform=android&device_type=25053RT47C&dpi=520&iid=6666666666666666666&language=zh&manifest_version_code=73532&os=android&os_api=36&os_version=16&resolution=1280%2A2772&ssmix=a&update_version_code=73532&version_code=73532&version_name=7.3.5.32",
+      "headers": {
+        "X-Gorgon": "840420e0000058400dd50f45f43fb6f28a41f9de4a165439d88e",
+        "X-Khronos": "1700000000",
+        "X-SS-Req-Ticket": "1700000000000",
+        "X-SS-STUB": "",
+        "X-Argus": "PMyH6+Uwkn1w+rAMn6MGOzSeRqYyXcJXxGaM/6Y3RDirpPo51Ou6HsA5Kov1s9TrcsOcwVYtU7jZsym7M0kdF+lGPOwx8TgrpApbMeQ08NVqRbvnBdEy7N+xEpEPqIkikRojfSgMgn0z9XWeyTOr1p21a3zT2yi04PZVYk9eqnelLBxI7U1k6ujLqSxkkeA1MCyKnOqpTgknEkXPX9pHQU0w",
+        "X-Ladon": "AAAAAEec+czg38vUgSXp8JM5u3NgSys9XxPAljmWAE//Otwl"
+      }
+    }
+  ],
+  "deviceIds": [
+    {
+      "random": "0000000000000000",
+      "deviceId": "1000000000000000000"
+    },
+    {
+      "random": "ffffffffffffffff",
+      "deviceId": "3446744073709551615"
+    },
+    {
+      "random": "0123456789abcdef",
+      "deviceId": "1081985529216486895"
+    }
+  ],
+  "uvarint": [
+    {
+      "value": 0,
+      "hex": "00"
+    },
+    {
+      "value": 1,
+      "hex": "01"
+    },
+    {
+      "value": 127,
+      "hex": "7f"
+    },
+    {
+      "value": 128,
+      "hex": "8001"
+    },
+    {
+      "value": 300,
+      "hex": "ac02"
+    },
+    {
+      "value": 16384,
+      "hex": "808001"
+    },
+    {
+      "value": 1388734,
+      "hex": "bee154"
+    },
+    {
+      "value": 135135744,
+      "hex": "8084b840"
+    }
+  ],
+  "vid": "7300000000000000001",
+  "parse": [
+    {
+      "payload": {
+        "data": {
+          "data_list": [
+            {
+              "comment": {
+                "common": {
+                  "group_id": "7300000000000000001",
+                  "status": 1,
+                  "content": {
+                    "text": "第一条"
+                  }
+                },
+                "expand": {
+                  "offset_time": 1500
+                }
+              }
+            },
+            {
+              "comment": {
+                "common": {
+                  "group_id": "7300000000000000001",
+                  "status": 1,
+                  "content": {
+                    "text": "第二条"
+                  }
+                },
+                "expand": {
+                  "offset_time": "2500"
+                }
+              }
+            }
+          ],
+          "extra": {
+            "next_query_danmaku_list_time": "60000"
+          }
+        }
+      },
+      "expected": {
+        "items": [
+          {
+            "text": "第一条",
+            "timeRaw": 1500,
+            "color": "#FFFFFF",
+            "mode": "scroll"
+          },
+          {
+            "text": "第二条",
+            "timeRaw": "2500",
+            "color": "#FFFFFF",
+            "mode": "scroll"
+          }
+        ],
+        "nextMs": 60000,
+        "hasMore": null
+      }
+    },
+    {
+      "payload": {
+        "data": {
+          "data_list": [
+            {
+              "comment": {
+                "common": {
+                  "group_id": "7300000000000000001",
+                  "status": 1,
+                  "content": {
+                    "text": "彩色",
+                    "color": 16711680
+                  }
+                },
+                "expand": {
+                  "offset_time": 1500
+                }
+              }
+            },
+            {
+              "comment": {
+                "common": {
+                  "group_id": "7300000000000000001",
+                  "status": 1,
+                  "content": {
+                    "text": "三位",
+                    "color": "#0f8"
+                  }
+                },
+                "expand": {
+                  "offset_time": 1500
+                }
+              }
+            }
+          ],
+          "extra": {},
+          "common_list_info": {
+            "has_more": true,
+            "cursor": "{\"end_offset_time\": 120000}"
+          }
+        }
+      },
+      "expected": {
+        "items": [
+          {
+            "text": "彩色",
+            "timeRaw": 1500,
+            "color": "#FF0000",
+            "mode": "scroll"
+          },
+          {
+            "text": "三位",
+            "timeRaw": 1500,
+            "color": "#00FF88",
+            "mode": "scroll"
+          }
+        ],
+        "nextMs": 120000,
+        "hasMore": true
+      }
+    },
+    {
+      "payload": {
+        "data": {
+          "data_list": [
+            {
+              "comment": {
+                "common": {
+                  "group_id": "1",
+                  "status": 1,
+                  "content": {
+                    "text": "别的视频"
+                  }
+                },
+                "expand": {
+                  "offset_time": 1500
+                }
+              }
+            },
+            {
+              "comment": {
+                "common": {
+                  "group_id": "7300000000000000001",
+                  "status": 2,
+                  "content": {
+                    "text": "待审核"
+                  }
+                },
+                "expand": {
+                  "offset_time": 1500
+                }
+              }
+            },
+            {
+              "comment": {
+                "common": {
+                  "group_id": "7300000000000000001",
+                  "status": 1,
+                  "content": {
+                    "text": "置顶"
+                  }
+                },
+                "expand": {
+                  "offset_time": 1500
+                },
+                "mode": "top"
+              }
+            },
+            {
+              "comment": {
+                "common": {
+                  "group_id": "7300000000000000001",
+                  "status": 1,
+                  "content": {
+                    "text": "底部"
+                  }
+                },
+                "expand": {
+                  "offset_time": 1500
+                },
+                "danmaku_type": 3
+              }
+            }
+          ],
+          "common_list_info": {
+            "has_more": false,
+            "cursor": {
+              "end_offset_time": 999999
+            }
+          }
+        }
+      },
+      "expected": {
+        "items": [
+          {
+            "text": "置顶",
+            "timeRaw": 1500,
+            "color": "#FFFFFF",
+            "mode": "top"
+          },
+          {
+            "text": "底部",
+            "timeRaw": 1500,
+            "color": "#FFFFFF",
+            "mode": "bottom"
+          }
+        ],
+        "nextMs": null,
+        "hasMore": false
+      }
+    },
+    {
+      "payload": {
+        "data": {
+          "data_list": [
+            {
+              "comment": {
+                "common": {
+                  "status": "1",
+                  "content": {
+                    "text": "无分组"
+                  }
+                },
+                "offset_time": 3000
+              }
+            },
+            {
+              "nope": 1
+            },
+            null
+          ],
+          "extra": {
+            "next_query_danmaku_list_time": 5000
+          },
+          "common_list_info": {
+            "has_more": "1",
+            "cursor": {
+              "next_offset_time": "7000"
+            }
+          }
+        }
+      },
+      "expected": {
+        "items": [
+          {
+            "text": "无分组",
+            "timeRaw": 3000,
+            "color": "#FFFFFF",
+            "mode": "scroll"
+          }
+        ],
+        "nextMs": 7000,
+        "hasMore": true
+      }
+    },
+    {
+      "payload": {
+        "data": {
+          "data_list": [],
+          "extra": {
+            "next_query_danmaku_list_time": "0"
+          }
+        }
+      },
+      "expected": {
+        "items": [],
+        "nextMs": null,
+        "hasMore": null
+      }
+    },
+    {
+      "payload": {
+        "code": 0
+      },
+      "expected": {
+        "items": [],
+        "nextMs": null,
+        "hasMore": null
+      }
+    }
+  ],
+  "colors": [
+    {
+      "input": 16711680,
+      "expected": "#FF0000"
+    },
+    {
+      "input": -1,
+      "expected": "#FFFFFF"
+    },
+    {
+      "input": 0,
+      "expected": "#000000"
+    },
+    {
+      "input": "#abcdef",
+      "expected": "#ABCDEF"
+    },
+    {
+      "input": "#0f8",
+      "expected": "#00FF88"
+    },
+    {
+      "input": "0xff00ff",
+      "expected": "#FF00FF"
+    },
+    {
+      "input": "255",
+      "expected": "#0000FF"
+    },
+    {
+      "input": "red",
+      "expected": "#FFFFFF"
+    },
+    {
+      "input": "",
+      "expected": "#FFFFFF"
+    },
+    {
+      "input": "  #ABC  ",
+      "expected": "#AABBCC"
+    },
+    {
+      "input": null,
+      "expected": "#FFFFFF"
+    },
+    {
+      "input": 1.5,
+      "expected": "#000001"
+    },
+    {
+      "input": 33554431,
+      "expected": "#FFFFFF"
+    }
+  ],
+  "seconds": [
+    {
+      "input": 1500,
+      "expected": 1.5
+    },
+    {
+      "input": "2500",
+      "expected": 2.5
+    },
+    {
+      "input": "12.5",
+      "expected": 0.0125
+    },
+    {
+      "input": "abc",
+      "expected": null
+    },
+    {
+      "input": -5,
+      "expected": null
+    },
+    {
+      "input": 604800001,
+      "expected": null
+    },
+    {
+      "input": 604800000,
+      "expected": 604800
+    },
+    {
+      "input": "1e3",
+      "expected": null
+    },
+    {
+      "input": null,
+      "expected": null
+    },
+    {
+      "input": 0,
+      "expected": 0
+    }
+  ],
+  "clean": [
+    {
+      "input": "  hello  ",
+      "expected": "hello"
+    },
+    {
+      "input": "a\nb\tc",
+      "expected": "a b c"
+    },
+    {
+      "input": "x y",
+      "expected": "x y"
+    },
+    {
+      "input": "ok",
+      "expected": "ok"
+    }
+  ],
+  "modes": [
+    {
+      "input": [
+        {
+          "mode": "top"
+        }
+      ],
+      "expected": "top"
+    },
+    {
+      "input": [
+        {
+          "position": "底部"
+        }
+      ],
+      "expected": "bottom"
+    },
+    {
+      "input": [
+        {
+          "fix_type": 2
+        }
+      ],
+      "expected": "top"
+    },
+    {
+      "input": [
+        {
+          "mode": null
+        },
+        {
+          "danmaku_type": "fix_bottom"
+        }
+      ],
+      "expected": "bottom"
+    },
+    {
+      "input": [
+        {}
+      ],
+      "expected": "scroll"
+    }
+  ]
+}

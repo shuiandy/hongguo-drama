@@ -15,6 +15,15 @@ public struct WatchRecord: Codable, Hashable, Identifiable, Sendable {
     public var updatedAt: Date
     /// Highest episode played to the end.
     public var completedEpisode: Int
+    // Update tracking (see WatchHistory.swift). Optional so older files decode unchanged.
+    /// Largest episode count seen so far.
+    public var knownTotal: Int?
+    /// Episode count the user has acknowledged; the difference to `knownTotal` is "new episodes".
+    public var acknowledgedTotal: Int?
+    public var sequels: [SeriesRef]?
+    public var seenSequelIds: [String]?
+    public var lastCheckedAt: Date?
+    public var lastCheckError: String?
 
     public var isFinished: Bool { total > 0 && completedEpisode >= total }
 }
@@ -35,8 +44,46 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var searchHistory: [String] = []
     /// Preferred video short side in pixels (1080, 720…); nil = automatic (best tier).
     public var preferredQuality: Int?
+    public var muted: Bool = false
+    /// Picture mode remembered per series id (Electron keeps it per series too).
+    public var pictureModes: [String: PictureMode] = [:]
+    public var danmaku = DanmakuSettings()
+    /// Download folder; nil means ~/Downloads.
+    public var downloadRoot: String?
+    /// Naming template, see `DownloadNaming`.
+    public var downloadNameFormat: String = DownloadNaming.defaultFormat
+    /// 1...10.
+    public var maxConcurrentDownloads: Int = 3
+    /// Delete a downloaded episode's file once it has been watched to the end.
+    public var autoDeleteWatched: Bool = false
+    /// Prepare the next episode while the current one plays.
+    public var cacheNextEpisode: Bool = true
+    /// Check watched series for new episodes and sequels.
+    public var watchUpdatesEnabled: Bool = true
+    public var watchSequelsEnabled: Bool = true
 
     public init() {}
+
+    public func pictureMode(for seriesId: String) -> PictureMode { pictureModes[seriesId] ?? .fit }
+
+    public var downloadConfiguration: DownloadConfiguration {
+        DownloadConfiguration(root: downloadRoot.map { URL(fileURLWithPath: $0, isDirectory: true) }
+                                ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0],
+                              nameFormat: downloadNameFormat, maxConcurrent: maxConcurrentDownloads)
+    }
+
+    /// Clamps values a hand-edited or older file could carry out of range.
+    public func normalized() -> AppSettings {
+        var copy = self
+        copy.playbackRate = PlaybackRate.clamp(playbackRate)
+        copy.volume = VolumeState.clamp(volume)
+        if !PlaybackRate.speedSteps.contains(speedStep) { copy.speedStep = 0.25 }
+        copy.maxConcurrentDownloads = min(10, max(1, maxConcurrentDownloads))
+        copy.danmaku = danmaku.normalized()
+        if copy.downloadNameFormat.trimmingCharacters(in: .whitespaces).isEmpty { copy.downloadNameFormat = DownloadNaming.defaultFormat }
+        copy.searchHistory = Array(searchHistory.prefix(20))
+        return copy
+    }
 
     // Tolerates missing keys so adding a setting never invalidates an existing file.
     public init(from decoder: Decoder) throws {
@@ -52,7 +99,18 @@ public struct AppSettings: Codable, Equatable, Sendable {
         miniWindowFrame = try? c.decodeIfPresent(String.self, forKey: .miniWindowFrame)
         playerWindowFrame = try? c.decodeIfPresent(String.self, forKey: .playerWindowFrame)
         searchHistory = (try? c.decodeIfPresent([String].self, forKey: .searchHistory)) ?? d.searchHistory
+        muted = (try? c.decodeIfPresent(Bool.self, forKey: .muted)) ?? d.muted
+        pictureModes = (try? c.decodeIfPresent([String: PictureMode].self, forKey: .pictureModes)) ?? d.pictureModes
+        danmaku = (try? c.decodeIfPresent(DanmakuSettings.self, forKey: .danmaku)) ?? d.danmaku
+        downloadRoot = try? c.decodeIfPresent(String.self, forKey: .downloadRoot)
+        downloadNameFormat = (try? c.decodeIfPresent(String.self, forKey: .downloadNameFormat)) ?? d.downloadNameFormat
+        maxConcurrentDownloads = (try? c.decodeIfPresent(Int.self, forKey: .maxConcurrentDownloads)) ?? d.maxConcurrentDownloads
+        autoDeleteWatched = (try? c.decodeIfPresent(Bool.self, forKey: .autoDeleteWatched)) ?? d.autoDeleteWatched
+        cacheNextEpisode = (try? c.decodeIfPresent(Bool.self, forKey: .cacheNextEpisode)) ?? d.cacheNextEpisode
+        watchUpdatesEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .watchUpdatesEnabled)) ?? d.watchUpdatesEnabled
+        watchSequelsEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .watchSequelsEnabled)) ?? d.watchSequelsEnabled
         preferredQuality = try? c.decodeIfPresent(Int.self, forKey: .preferredQuality)
+        self = normalized()
     }
 }
 
@@ -121,6 +179,23 @@ public final class LibraryStore: @unchecked Sendable {
             snapshot.history[seriesId] = record
             persistLocked()
         }
+    }
+
+    /// Applies a change to one record (update checks, acknowledging new episodes or sequels).
+    @discardableResult
+    public func updateRecord(_ seriesId: String, _ transform: (WatchRecord) -> WatchRecord) -> WatchRecord? {
+        queue.sync {
+            guard let record = snapshot.history[seriesId] else { return nil }
+            let next = transform(record)
+            snapshot.history[seriesId] = next
+            persistLocked()
+            return next
+        }
+    }
+
+    /// Where "continue watching" should start for a series.
+    public func resumePoint(for seriesId: String, episodeCount: Int) -> ResumePoint {
+        ResumePoint.from(record(for: seriesId), episodeCount: episodeCount)
     }
 
     public func removeHistory(_ seriesId: String) {
