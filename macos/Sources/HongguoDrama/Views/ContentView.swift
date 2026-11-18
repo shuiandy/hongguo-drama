@@ -19,7 +19,6 @@ struct ContentView: View {
                     }
                 }
                 Section("我的") {
-                    SidebarRow(title: "搜索", style: SidebarStyle.of(.search)).tag(SidebarItem.search)
                     SidebarRow(title: "观看记录", style: SidebarStyle.of(.history),
                                badge: model.history.isEmpty ? nil : "\(model.history.count)").tag(SidebarItem.history)
                     SidebarRow(title: "我的剧库", style: SidebarStyle.of(.library),
@@ -52,7 +51,8 @@ struct ContentView: View {
         .tint(.hongguoRed)
         .task { await AccountState.shared.restore() }
         .background {
-            // ⌘K jumps to search from anywhere in the main window.
+            // ⌘K jumps to search from anywhere in the main window. Search has no sidebar row:
+            // the header search field on 发现 and 剧库 opens the same results page.
             Button("搜索") { model.selection = .search }
                 .keyboardShortcut("k", modifiers: .command)
                 .opacity(0)
