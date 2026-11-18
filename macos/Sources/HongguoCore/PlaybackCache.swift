@@ -19,7 +19,7 @@ public final class PlaybackCache: @unchecked Sendable {
         self.maxFiles = maxFiles
         self.directory = directory ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("HongguoDrama/playback", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+        try? FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
     }
 
