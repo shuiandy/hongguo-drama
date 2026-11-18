@@ -144,13 +144,13 @@ public actor DanmakuService {
                     .appendingPathComponent("HongguoDrama/danmaku-client.json"),
                 identity: DanmakuIdentity? = nil,
                 now: @escaping @Sendable () -> Date = { Date() },
-                nonce: @escaping @Sendable () -> [UInt8] = { AppCrypto.randomBytes(DanmakuSigner.nonceBytes) },
+                nonce: (@Sendable () -> [UInt8])? = nil,
                 pageGap: Duration = .milliseconds(120)) {
         self.transport = transport
         self.identityFile = identityFile
         self.identity = identity
         self.now = now
-        self.nonce = nonce
+        self.nonce = nonce ?? { AppCrypto.randomBytes(DanmakuSigner.nonceBytes) }
         self.pageGap = pageGap
     }
 

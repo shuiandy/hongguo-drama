@@ -56,7 +56,8 @@ public enum DanmakuSigner {
     }
 
     /// 1e18 + random % 8e18: a 19-digit decimal id (Go `newHongguoDeviceID`).
-    public static func newDeviceId(random: [UInt8] = AppCrypto.randomBytes(8)) -> String {
+    public static func newDeviceId(random given: [UInt8]? = nil) -> String {
+        let random = given ?? AppCrypto.randomBytes(8)
         precondition(random.count == 8)
         var raw: UInt64 = 0
         for byte in random { raw = (raw << 8) | UInt64(byte) }
