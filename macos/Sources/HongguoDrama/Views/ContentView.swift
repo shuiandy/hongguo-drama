@@ -238,9 +238,13 @@ struct HeaderSearchField: View {
 extension View {
     /// Transparent window toolbar: content and the ambient backdrop run up to the traffic lights,
     /// and the page draws its own aligned header.
+    @ViewBuilder
     func transparentToolbar() -> some View {
-        self
-            .toolbarBackground(.hidden, for: .windowToolbar)
-            .toolbar(removing: .title)
+        let base = self.toolbarBackground(.hidden, for: .windowToolbar)
+        if #available(macOS 15.0, *) {
+            base.toolbar(removing: .title)
+        } else {
+            base
+        }
     }
 }
