@@ -37,7 +37,7 @@ final class ExternalSourcesLiveTests: XCTestCase {
                 if let referer = info.referer { request.setValue(referer, forHTTPHeaderField: "Referer") }
                 report.append("\(source.label) play ep\(free.index): url host=\(info.url.host ?? "")")
                 do {
-                    let (_, response) = try await URLSession.shared.data(for: request)
+                    let (_, response) = try await URLSession(configuration: HTTPClient.defaultConfiguration()).data(for: request)
                     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                     report.append("\(source.label) media status=\(status) type=\((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? "")")
                 } catch {

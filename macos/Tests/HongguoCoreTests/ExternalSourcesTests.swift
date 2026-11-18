@@ -148,3 +148,11 @@ final class ExternalSourcesTests: XCTestCase {
         do { _ = try await source.playInfo(vid: "hema:41", seriesId: nil); XCTFail() } catch let error as HongguoError { XCTAssertEqual(error.kind, .input) }
     }
 }
+
+final class HTTPClientProxyTests: XCTestCase {
+    func testDefaultConfigurationBypassesSystemProxy() {
+        let config = HTTPClient.defaultConfiguration()
+        XCTAssertNotNil(config.connectionProxyDictionary)
+        XCTAssertTrue(config.connectionProxyDictionary?.isEmpty ?? false)
+    }
+}

@@ -36,6 +36,11 @@ public final class HTTPClient: @unchecked Sendable {
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.timeoutIntervalForRequest = 30
         config.httpMaximumConnectionsPerHost = 6
+        // Connect directly instead of through the system HTTP proxy, like the Electron app's
+        // default ("未启用（所有请求直连）"). A local proxy's CONNECT tunnel (e.g. Surge on
+        // 127.0.0.1:6152) stalled TLS handshakes to some CDNs such as 河马's; a TUN-mode proxy
+        // still sees the traffic. An empty dictionary turns the system proxy off.
+        config.connectionProxyDictionary = [:]
         return config
     }
 
