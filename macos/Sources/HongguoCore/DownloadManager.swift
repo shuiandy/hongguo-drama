@@ -468,7 +468,7 @@ public actor DownloadManager {
             }
             retryTimers[id] = Task {
                 try? await Task.sleep(for: delay)
-                await self.fireRetry(id, at: at)
+                self.fireRetry(id, at: at)
             }
         } else {
             update(id) { $0.status = .failed; $0.phase = nil; $0.retryAt = nil; $0.error = message }

@@ -130,6 +130,7 @@ public final class SeriesLibrary: @unchecked Sendable {
         onChange?()
     }
 
+    @discardableResult
     private func mutate(seriesId: String, title: String, now: Date, _ body: (inout LibrarySeries) -> Void) throws -> LibrarySeries {
         let id = seriesId.trimmingCharacters(in: .whitespaces)
         let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
