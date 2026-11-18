@@ -59,6 +59,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Check watched series for new episodes and sequels.
     public var watchUpdatesEnabled: Bool = true
     public var watchSequelsEnabled: Bool = true
+    /// Preferred video short side in pixels (1080, 720…); nil = automatic (best tier).
+    public var preferredQuality: Int?
 
     public init() {}
 
@@ -107,6 +109,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         cacheNextEpisode = (try? c.decodeIfPresent(Bool.self, forKey: .cacheNextEpisode)) ?? d.cacheNextEpisode
         watchUpdatesEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .watchUpdatesEnabled)) ?? d.watchUpdatesEnabled
         watchSequelsEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .watchSequelsEnabled)) ?? d.watchSequelsEnabled
+        preferredQuality = try? c.decodeIfPresent(Int.self, forKey: .preferredQuality)
         self = normalized()
     }
 }

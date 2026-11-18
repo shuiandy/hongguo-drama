@@ -183,13 +183,18 @@ public enum CencDecryptor {
 
     // MARK: Decrypt
 
-    /// Decrypts a complete CENC MP4 and rewrites `moov` so players see clear avc1/hvc1/mp4a tracks.
-    public static func decryptMP4(_ input: Data, key: [UInt8]) throws -> Data {
-        var d = [UInt8](input)
-        let total = d.count
-        let top = parseBoxes(d, 0, total)
-        guard let moov = top.first(where: { $0.type == "moov" }) else { throw HongguoError(.decrypt, "no moov box found in MP4") }
+    /// One encrypted sample: absolute file offset, size and 8-byte CTR nonce.
+    public struct Sample: Sendable {
+        public var offset: Int
+        public var size: Int
+        public var nonce: [UInt8]
+    }
 
+    /// Builds the sample table (offset, size, IV) for every track from the `stbl` boxes.
+    /// Only the bytes of `moov` must be present in `d`; sample offsets may point past its end.
+    static func sampleTable(_ d: [UInt8], _ top: [Box]) -> [Sample] {
+        let total = d.count
+        var samples: [Sample] = []
         for stbl in walk(top) where stbl.type == "stbl" {
             let kids = stbl.children ?? []
             guard let stsz = kids.first(where: { $0.type == "stsz" }),
@@ -214,11 +219,11 @@ public enum CencDecryptor {
                 (u32(d, stsc.offset + 16 + i * 12), u32(d, stsc.offset + 20 + i * 12))
             }
 
-            var ivOffsets: [Int] = []
+            var nonces: [[UInt8]] = []
             if let senc {
                 let count = u32(d, senc.offset + 12)
                 for i in 0..<count where senc.offset + 24 + i * 8 <= total {
-                    ivOffsets.append(senc.offset + 16 + i * 8)
+                    nonces.append(Array(d[(senc.offset + 16 + i * 8)..<(senc.offset + 24 + i * 8)]))
                 }
             }
 
@@ -237,15 +242,28 @@ public enum CencDecryptor {
                 for _ in 0..<samplesPerChunk[ci] {
                     guard sampleIndex < sampleCount else { break }
                     let size = sizes[sampleIndex]
-                    if off + size <= total, sampleIndex < ivOffsets.count {
-                        let ivAt = ivOffsets[sampleIndex]
-                        let plain = try decryptSample(key: key, nonce: d[ivAt..<(ivAt + 8)], cipher: d[off..<(off + size)])
-                        d.replaceSubrange(off..<(off + size), with: plain)
+                    if sampleIndex < nonces.count {
+                        samples.append(Sample(offset: off, size: size, nonce: nonces[sampleIndex]))
                     }
                     off += size
                     sampleIndex += 1
                 }
             }
+        }
+        return samples
+    }
+
+    /// Decrypts a complete CENC MP4 and rewrites `moov` so players see clear avc1/hvc1/mp4a tracks.
+    public static func decryptMP4(_ input: Data, key: [UInt8]) throws -> Data {
+        var d = [UInt8](input)
+        let total = d.count
+        let top = parseBoxes(d, 0, total)
+        guard let moov = top.first(where: { $0.type == "moov" }) else { throw HongguoError(.decrypt, "no moov box found in MP4") }
+
+        for sample in sampleTable(d, top) where sample.offset + sample.size <= total {
+            let range = sample.offset..<(sample.offset + sample.size)
+            let plain = try decryptSample(key: key, nonce: sample.nonce[...], cipher: d[range])
+            d.replaceSubrange(range, with: plain)
         }
 
         let newMoov = try rebuildMoov(&d, moov: moov)

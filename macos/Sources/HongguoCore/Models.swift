@@ -112,6 +112,23 @@ public struct PublicDetails: Sendable {
 
 public enum PlaySource: String, Sendable { case web, api, app }
 
+/// One resolution tier of an episode, identified by the video's short side in pixels.
+public struct QualityOption: Identifiable, Hashable, Codable, Sendable {
+    public var id: Int { shortSide }
+    /// Short side in pixels (1080 for a 1080x1920 portrait video).
+    public var shortSide: Int
+    public var label: String
+
+    public init(shortSide: Int) {
+        self.shortSide = shortSide
+        switch shortSide {
+        case 2160...: label = "4K"
+        case 1440..<2160: label = "2K"
+        default: label = "\(shortSide)P"
+        }
+    }
+}
+
 /// A resolved media URL for one episode.
 public struct PlayInfo: Sendable, Equatable {
     public var url: URL
@@ -124,6 +141,28 @@ public struct PlayInfo: Sendable, Equatable {
     public var referer: String?
     /// 16-byte CENC content key already derived by the App source (`spade_a` of player/v1 models).
     public var contentKey: [UInt8]? = nil
+    /// Resolution tier of this stream; nil when the source does not say (web).
+    public var quality: QualityOption? = nil
+    /// The same episode at other resolution tiers, highest first. Empty for single-stream sources.
+    public var variants: [PlayInfo] = []
+
+    /// Every tier of this episode, highest first (empty for single-stream sources).
+    public var qualityOptions: [QualityOption] {
+        guard !variants.isEmpty else { return [] }
+        return ([quality] + variants.map(\.quality)).compactMap { $0 }.sorted { $0.shortSide > $1.shortSide }
+    }
+
+    /// The stream for a preferred short side: exact tier, else the best tier below it, else the lowest.
+    /// nil keeps the default ("auto") choice. The result carries the full `variants` list again.
+    public func selecting(shortSide preferred: Int?) -> PlayInfo {
+        guard let preferred, !variants.isEmpty else { return self }
+        var base = self
+        base.variants = []
+        let all = ([base] + variants).sorted { ($0.quality?.shortSide ?? 0) > ($1.quality?.shortSide ?? 0) }
+        guard var chosen = all.first(where: { ($0.quality?.shortSide ?? 0) <= preferred }) ?? all.last else { return self }
+        chosen.variants = all.filter { $0.url != chosen.url }
+        return chosen
+    }
 
     public var isEncrypted: Bool { spadeA != nil || contentKey != nil }
 

@@ -22,7 +22,8 @@ public final class PlaybackCache: @unchecked Sendable {
     }
 
     func fileURL(for info: PlayInfo) -> URL {
-        directory.appendingPathComponent("\(info.vid.filter(\.isNumber)).mp4")
+        let tier = info.quality.map { "-\($0.shortSide)" } ?? ""
+        return directory.appendingPathComponent("\(info.vid.filter(\.isNumber))\(tier).mp4")
     }
 
     public func cachedFile(for info: PlayInfo) -> URL? {
@@ -38,9 +39,9 @@ public final class PlaybackCache: @unchecked Sendable {
             return url
         }
         let task: Task<URL, Error> = lock.withLock {
-            if let existing = inflight[info.vid] { return existing }
+            if let existing = inflight[fileURL(for: info).lastPathComponent] { return existing }
             let created = Task { () throws -> URL in
-                defer { self.lock.withLock { self.inflight[info.vid] = nil } }
+                defer { self.lock.withLock { self.inflight[self.fileURL(for: info).lastPathComponent] = nil } }
                 guard let key = info.contentKey ?? info.spadeA.flatMap(CencDecryptor.deriveKey) else {
                     throw HongguoError(.decrypt, "片源密钥无法解析")
                 }
@@ -59,7 +60,7 @@ public final class PlaybackCache: @unchecked Sendable {
                 self.prune()
                 return target
             }
-            inflight[info.vid] = created
+            inflight[fileURL(for: info).lastPathComponent] = created
             return created
         }
         return try await task.value
