@@ -252,7 +252,7 @@ struct MainToolbarButtons: ToolbarContent {
     }
 
     var body: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
+        ToolbarItemGroup(placement: .automatic) {
             Button { model.selection = .account } label: {
                 Label("账号", systemImage: account.profile == nil ? "person.crop.circle" : "person.crop.circle.fill")
             }
