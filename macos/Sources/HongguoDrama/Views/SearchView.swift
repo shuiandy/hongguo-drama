@@ -39,12 +39,15 @@ struct SearchView: View {
         }
         .background(alignment: .top) {
             // Soft coloured light so the glass field has something to refract.
+            // Full width and tall enough that the blur fades out inside the view's own bounds;
+            // backgroundExtensionEffect rasterizes to those bounds, so a smaller box shows hard edges.
             ZStack {
                 Circle().fill(Color.hongguoRed.opacity(0.35)).frame(width: 520).offset(x: -220, y: -160)
                 Circle().fill(Color.purple.opacity(0.3)).frame(width: 480).offset(x: 260, y: -120)
             }
+            .frame(maxWidth: .infinity)
+            .frame(height: 680, alignment: .top)
             .blur(radius: 120)
-            .frame(height: 420)
             .extendsUnderChrome()
             .ignoresSafeArea()
             .allowsHitTesting(false)
