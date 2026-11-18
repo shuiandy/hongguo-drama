@@ -99,7 +99,7 @@ struct EpisodeCell: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            if !isDownloaded {
+            if !isDownloaded, SourceRouter.isHongguo(episode.seriesId) {
                 Button("下载这一集") {
                     let model = AppModel.shared
                     let player = PlayerController.shared

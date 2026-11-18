@@ -125,6 +125,7 @@ struct SeriesDetailView: View {
                     }
                     .buttonStyle(GlassButtonStyle(size: .large))
                     .help(favorite ? "取消收藏" : "加入我的剧库")
+                    if SourceRouter.isHongguo(summary.seriesId) {
                     Menu {
                         if let episodes {
                             Button("下载全部 \(episodes.total) 集") { download(episodes.episodes) }
@@ -146,6 +147,7 @@ struct SeriesDetailView: View {
                     .buttonStyle(GlassButtonStyle(size: .large))
                     .menuIndicator(.hidden)
                     .fixedSize()
+                    }
                 }
                 .disabled(episodes == nil)
                 .padding(.top, 4)
@@ -254,9 +256,10 @@ struct SeriesDetailView: View {
         defer { isLoading = false }
         let service = model.series
         let seriesId = summary.seriesId
-        async let detailsTask = try? service.publicDetails(seriesId: seriesId)
+        let hongguo = SourceRouter.isHongguo(seriesId)
+        async let detailsTask = hongguo ? try? service.publicDetails(seriesId: seriesId) : nil
         do {
-            let list = try await service.episodes(seriesId: seriesId, force: force)
+            let list = try await SourceRouter.episodes(seriesId: seriesId, force: force)
             episodes = list
             _ = try? model.library.recordOpened(seriesId: seriesId, title: list.title, cover: cover, episodeCount: list.total,
                                                 publishedAt: summary.publishedAt)

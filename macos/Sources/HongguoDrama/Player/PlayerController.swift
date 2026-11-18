@@ -213,7 +213,7 @@ final class PlayerController {
         loadingText = "正在加载《\(title)》分集…"
         errorMessage = nil
         do {
-            let list = try await AppModel.shared.series.episodes(seriesId: seriesId)
+            let list = try await SourceRouter.episodes(seriesId: seriesId)
             open(episodes: list, cover: cover, index: index, startAt: startAt)
         } catch {
             isLoading = false
@@ -266,7 +266,6 @@ final class PlayerController {
         }
 
         loadingText = resolved == nil ? "正在获取第 \(episode.index) 集片源…" : "正在切换…"
-        let service = AppModel.shared.series
         let preferred = storedPreferredQuality
         let maps = preparedMaps
         var ready = resolved
@@ -281,7 +280,7 @@ final class PlayerController {
                 if let ready {
                     info = ready
                 } else {
-                    info = try await service.playInfo(vid: episode.vid, seriesId: list.seriesId, force: force)
+                    info = try await SourceRouter.playInfo(vid: episode.vid, seriesId: list.seriesId, force: force)
                         .selecting(shortSide: preferred)
                 }
                 try Task.checkCancellation()
@@ -412,14 +411,13 @@ final class PlayerController {
         guard let list = episodes, hasNext else { return }
         let next = list.episodes[index]
         if localFileProvider?(next) != nil { return }
-        let service = AppModel.shared.series
         let preferred = storedPreferredQuality
         if let p = prefetched, p.vid == next.vid, Date().timeIntervalSince(p.at) < Self.prefetchLifetime / 2,
            preparedMaps[Self.mapKey(p.info.selecting(shortSide: preferred))] != nil || !p.info.isEncrypted {
             return
         }
         Task { [weak self] in
-            guard let raw = try? await service.playInfo(vid: next.vid, seriesId: list.seriesId) else { return }
+            guard let raw = try? await SourceRouter.playInfo(vid: next.vid, seriesId: list.seriesId) else { return }
             guard let self, self.episodes?.seriesId == list.seriesId else { return }
             self.prefetched = (next.vid, raw, Date())
             let info = raw.selecting(shortSide: preferred)

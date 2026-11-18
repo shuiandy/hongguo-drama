@@ -7,6 +7,7 @@ struct DownloadsView: View {
     @Environment(AppModel.self) private var model
     @State private var filter: Filter = .all
     @State private var storage: Int64 = 0
+    @State private var showStorage = false
 
     enum Filter: Hashable, Sendable { case all, active, completed, failed }
 
@@ -40,6 +41,9 @@ struct DownloadsView: View {
                         .buttonStyle(GlassButtonStyle())
                     Button { Task { _ = await model.downloads.pauseAll() } } label: { Label("全部暂停", systemImage: "pause.fill") }
                         .buttonStyle(GlassButtonStyle())
+                    Button { showStorage = true } label: { Label("存储空间", systemImage: "internaldrive") }
+                        .buttonStyle(GlassButtonStyle())
+                        .help("按剧查看和清理下载占用的空间")
                     Button { NSWorkspace.shared.open(AppModel.downloadConfiguration(model.settings).root) } label: { Image(systemName: "folder") }
                         .buttonStyle(GlassIconButtonStyle(diameter: 38))
                         .help("打开下载文件夹")
@@ -66,6 +70,7 @@ struct DownloadsView: View {
         }
         .navigationTitle("下载")
         .transparentToolbar()
+        .sheet(isPresented: $showStorage) { StorageSheet().environment(model) }
         .task(id: model.downloadTasks.filter { $0.status == .completed }.count) {
             storage = await model.downloads.storageUsage()
         }
@@ -88,6 +93,9 @@ struct DownloadGroupCard: View {
     let tasks: [DownloadTask]
     @Environment(AppModel.self) private var model
     @State private var expanded = true
+    @State private var busy = false
+    @State private var notice: String?
+    @State private var confirmDelete = false
 
     private var first: DownloadTask { tasks[0] }
     private var completed: Int { tasks.filter { $0.status == .completed }.count }
@@ -109,9 +117,34 @@ struct DownloadGroupCard: View {
                     Button { play(tasks.first { $0.status == .completed }!) } label: { Label("播放", systemImage: "play.fill") }
                         .buttonStyle(GlassButtonStyle(prominent: true, size: .small))
                 }
+                Menu {
+                    Button("导出弹幕和本集评论") { run { await TextExportActions.exportSidecars(seriesId: first.seriesId, seriesTitle: first.seriesTitle) } }
+                        .disabled(completed == 0)
+                    Button("导出全剧评论…") { run { await TextExportActions.exportReviews(seriesId: first.seriesId, seriesTitle: first.seriesTitle) } }
+                    Divider()
+                    Button("重新扫描本地文件") { run { await rescan() } }
+                    Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([first.fileURL.deletingLastPathComponent()]) }
+                    Divider()
+                    Button("删除这部剧的全部下载…", role: .destructive) { confirmDelete = true }
+                } label: {
+                    Image(systemName: busy ? "hourglass" : "ellipsis")
+                }
+                .menuStyle(.button)
+                .buttonStyle(GlassIconButtonStyle(diameter: 32))
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .disabled(busy)
+                .help("导出、扫描和删除")
                 Button { withAnimation { expanded.toggle() } } label: { Image(systemName: expanded ? "chevron.up" : "chevron.down") }
                     .buttonStyle(GlassIconButtonStyle(diameter: 32))
                     .help(expanded ? "收起" : "展开")
+            }
+            if let notice {
+                Label(notice, systemImage: "info.circle").font(.system(size: 12)).foregroundStyle(.secondary)
+                    .task(id: notice) {
+                        try? await Task.sleep(for: .seconds(8))
+                        self.notice = nil
+                    }
             }
             if expanded {
                 VStack(spacing: 2) {
@@ -126,6 +159,42 @@ struct DownloadGroupCard: View {
         .contextMenu {
             Button("删除这部剧的全部任务（保留文件）") { remove(deleteFile: false) }
             Button("删除任务和已下载文件", role: .destructive) { remove(deleteFile: true) }
+        }
+        .confirmationDialog("删除《\(first.seriesTitle)》的全部下载？", isPresented: $confirmDelete) {
+            Button("删除", role: .destructive) { deleteSeries() }
+        } message: {
+            Text("会删除已下载的视频、未完成的部分和导出的弹幕评论文件。正在下载时不能删除。")
+        }
+    }
+
+    private func run(_ body: @escaping () async -> String?) {
+        busy = true
+        Task {
+            let text = await body()
+            busy = false
+            if let text { notice = text }
+        }
+    }
+
+    private func rescan() async -> String {
+        do {
+            let list = try await SourceRouter.episodes(seriesId: first.seriesId)
+            let added = try await model.downloads.rescan(seriesId: first.seriesId, seriesTitle: first.seriesTitle,
+                                                         cover: first.cover, episodes: list.episodes)
+            return added > 0 ? "找到 \(added) 个本地文件，已加入下载列表" : "没有找到新的本地文件"
+        } catch {
+            return (error as? HongguoError)?.message ?? describe(error)
+        }
+    }
+
+    private func deleteSeries() {
+        run {
+            do {
+                let result = try await model.downloads.deleteSeries(first.seriesId)
+                return "已删除 \(result.count) 集，释放 \(ByteCountFormatter.string(fromByteCount: result.freed, countStyle: .file))"
+            } catch {
+                return (error as? HongguoError)?.message ?? describe(error)
+            }
         }
     }
 

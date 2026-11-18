@@ -530,7 +530,7 @@ struct PlayerSidePanel: View {
         .glassSurface(in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .task(id: controller.episodes?.seriesId) {
             details = nil
-            guard let id = controller.episodes?.seriesId else { return }
+            guard let id = controller.episodes?.seriesId, SourceRouter.isHongguo(id) else { return }
             details = try? await AppModel.shared.series.publicDetails(seriesId: id)
         }
         .task(id: "\(controller.episodes?.seriesId ?? ""):\(controller.currentEpisode?.vid ?? ""):\(tab == .reviews && reviewScope == .episode)") {

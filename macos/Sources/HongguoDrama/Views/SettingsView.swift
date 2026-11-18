@@ -79,8 +79,12 @@ struct SettingsView: View {
                     Toggle("检查已看剧集的更新", isOn: $model.settings.watchUpdatesEnabled)
                     Toggle("检查续作", isOn: $model.settings.watchSequelsEnabled)
                 }
+                StorageSettingsSection()
             }
             .tabItem { Label("下载", systemImage: "arrow.down.circle") }
+
+            Form { SourcesSettingsSection() }
+                .tabItem { Label("片源", systemImage: "film.stack") }
 
             Form {
                 LabeledContent("当前版本", value: UpdateChecker.currentVersion)
@@ -116,7 +120,7 @@ struct SettingsView: View {
             .tabItem { Label("关于", systemImage: "info.circle") }
         }
         .formStyle(.grouped)
-        .frame(width: 500, height: 460)
+        .frame(width: 540, height: 520)
         .onAppear { cacheBytes = PlaybackCache.shared.usageBytes() }
         .task { announcementPrefs = await model.announcements.preferences }
         .confirmationDialog("从 Electron 版导入数据？", isPresented: $confirmImport) {

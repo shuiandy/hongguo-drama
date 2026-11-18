@@ -14,6 +14,14 @@ struct ContentView: View {
                         SidebarRow(title: kind.label, style: SidebarStyle.of(.category(kind))).tag(SidebarItem.category(kind))
                     }
                 }
+                let others = model.settings.mediaSources.filter { $0.id != "hongguo" }
+                if !others.isEmpty {
+                    Section("其他片源") {
+                        ForEach(others, id: \.id) { entry in
+                            SidebarRow(title: entry.label, style: SidebarStyle.of(.source(entry.id))).tag(SidebarItem.source(entry.id))
+                        }
+                    }
+                }
                 Section("榜单") {
                     ForEach(CatalogKind.rankings) { kind in
                         SidebarRow(title: kind.label, style: SidebarStyle.of(.ranking(kind))).tag(SidebarItem.ranking(kind))
@@ -85,6 +93,7 @@ struct ContentView: View {
         case .library: LibraryView()
         case .downloads: DownloadsView()
         case .account: AccountView()
+        case .source(let id): SourceCatalogView(sourceId: id).id(id)
         }
     }
 
@@ -113,6 +122,12 @@ struct SidebarStyle {
         case .history: return SidebarStyle(symbol: "clock.fill", colors: [Color(red: 0.2, green: 0.83, blue: 0.6), Color(red: 0.02, green: 0.47, blue: 0.34)])
         case .library: return SidebarStyle(symbol: "heart.fill", colors: [Color(red: 1, green: 0.45, blue: 0.55), Color(red: 0.86, green: 0.15, blue: 0.35)])
         case .downloads: return SidebarStyle(symbol: "arrow.down.circle.fill", colors: [Color(red: 0.35, green: 0.6, blue: 1), Color(red: 0.15, green: 0.35, blue: 0.9)])
+        case .source(let id) where id.hasPrefix("custom:"):
+            return SidebarStyle(symbol: "link", colors: [Color(red: 0.6, green: 0.65, blue: 0.72), Color(red: 0.32, green: 0.36, blue: 0.43)])
+        case .source(let id) where id == "reelshort" || id == "dramabox":
+            return SidebarStyle(symbol: "globe", colors: [Color(red: 0.3, green: 0.8, blue: 0.85), Color(red: 0.05, green: 0.5, blue: 0.6)])
+        case .source:
+            return SidebarStyle(symbol: "film.stack.fill", colors: [Color(red: 0.98, green: 0.75, blue: 0.35), Color(red: 0.85, green: 0.5, blue: 0.1)])
         case .account: return SidebarStyle(symbol: "person.crop.circle.fill", colors: [Color(red: 0.99, green: 0.72, blue: 0.3), Color(red: 0.9, green: 0.45, blue: 0.08)])
         }
     }

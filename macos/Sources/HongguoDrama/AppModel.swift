@@ -9,6 +9,8 @@ enum SidebarItem: Hashable, Identifiable {
     case library
     case downloads
     case account
+    /// Another catalogue: "xifan", "hema", "reelshort", "dramabox" or "custom:<uuid>".
+    case source(String)
 
     var id: String {
         switch self {
@@ -18,6 +20,7 @@ enum SidebarItem: Hashable, Identifiable {
         case .library: return "library"
         case .downloads: return "downloads"
         case .account: return "account"
+        case .source(let id): return "source:\(id)"
         }
     }
 
@@ -29,6 +32,7 @@ enum SidebarItem: Hashable, Identifiable {
         case .library: return "我的剧库"
         case .downloads: return "下载"
         case .account: return "账号"
+        case .source(let id): return SourceRouter.label(id)
         }
     }
 
@@ -43,6 +47,7 @@ enum SidebarItem: Hashable, Identifiable {
         case .library: return "heart"
         case .downloads: return "arrow.down.circle"
         case .account: return "person.crop.circle"
+        case .source: return "film.stack"
         }
     }
 }
@@ -55,7 +60,7 @@ final class AppModel {
 
     let search = SearchService()
     let catalog = CatalogService()
-    let series = SeriesService()
+    let series = SourceRouter.series
     let store = LibraryStore.shared
 
     var selection: SidebarItem? = .category(.realDrama)
