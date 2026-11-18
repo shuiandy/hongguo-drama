@@ -23,7 +23,7 @@ struct ContentView: View {
                     ContentUnavailableView("选择一个栏目", systemImage: "play.rectangle")
                 }
             }
-            .toolbar { MainToolbarButtons(model: model) }
+            .mainToolbar(model)
             .sheet(isPresented: $model.showingSettings) {
                 SettingsPanel().environment(model)
             }

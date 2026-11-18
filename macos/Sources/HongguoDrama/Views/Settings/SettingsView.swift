@@ -242,6 +242,7 @@ struct SettingsPanel: View {
 }
 
 /// Top right of the main window: account and settings, as toolbar buttons.
+/// The detail column puts toolbar items on its leading edge, so a flexible spacer pushes them right.
 struct MainToolbarButtons: ToolbarContent {
     let model: AppModel
     private var account: AccountState { AccountState.shared }
@@ -261,6 +262,24 @@ struct MainToolbarButtons: ToolbarContent {
                 Label("设置", systemImage: "gearshape")
             }
             .help("设置（⌘,）")
+        }
+    }
+}
+
+extension View {
+    /// Adds the account and settings buttons at the trailing edge of the window toolbar.
+    @ViewBuilder
+    func mainToolbar(_ model: AppModel) -> some View {
+        if #available(macOS 26.0, *) {
+            toolbar {
+                ToolbarSpacer(.flexible)
+                MainToolbarButtons(model: model)
+            }
+        } else {
+            toolbar {
+                ToolbarItem(placement: .automatic) { Spacer() }
+                MainToolbarButtons(model: model)
+            }
         }
     }
 }
