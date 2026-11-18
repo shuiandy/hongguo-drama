@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 import HongguoCore
 
 enum SidebarItem: Hashable, Identifiable {
@@ -36,6 +37,31 @@ enum SidebarItem: Hashable, Identifiable {
         }
     }
 
+    /// Stable key saved as `AppSettings.lastPage` (`id` is the same for a category and its ranking).
+    var persistKey: String {
+        switch self {
+        case .category(let kind): return "category:\(kind.rawValue)"
+        case .ranking(let kind): return "ranking:\(kind.rawValue)"
+        case .source(let id): return "source:\(id)"
+        default: return id
+        }
+    }
+
+    init?(persistKey key: String) {
+        let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
+        switch parts.first {
+        case "category": if let raw = parts.last, let kind = CatalogKind(rawValue: raw) { self = .category(kind) } else { return nil }
+        case "ranking": if let raw = parts.last, let kind = CatalogKind(rawValue: raw) { self = .ranking(kind) } else { return nil }
+        case "source": guard parts.count == 2 else { return nil }; self = .source(parts[1])
+        case "search": self = .search
+        case "history": self = .history
+        case "library": self = .library
+        case "downloads": self = .downloads
+        case "account": self = .account
+        default: return nil
+        }
+    }
+
     var symbol: String {
         switch self {
         case .category(.realDrama): return "person.2"
@@ -63,14 +89,30 @@ final class AppModel {
     let series = SourceRouter.series
     let store = LibraryStore.shared
 
-    var selection: SidebarItem? = .category(.realDrama)
+    var selection: SidebarItem? = .category(.realDrama) {
+        didSet {
+            guard let key = selection?.persistKey, key != settings.lastPage else { return }
+            settings.lastPage = key
+        }
+    }
     var paths: [SidebarItem: [SeriesSummary]] = [:]
     var settings: AppSettings {
-        didSet { if settings != oldValue { store.settings = settings; applyTheme() } }
+        didSet {
+            guard settings != oldValue else { return }
+            store.settings = settings
+            if settings.theme != oldValue.theme { applyTheme() }
+            if settings.playbackCacheLimitGB != oldValue.playbackCacheLimitGB { applyCacheLimit() }
+            if settings.preferredQuality != oldValue.preferredQuality || settings.downloadNameFormat != oldValue.downloadNameFormat
+                || settings.maxConcurrentDownloads != oldValue.maxConcurrentDownloads || settings.downloadRoot != oldValue.downloadRoot {
+                applyDownloadSettings()
+            }
+        }
     }
     var history: [WatchRecord] = []
     /// Query typed into a page header search field, consumed by the search page.
     var pendingSearch: String?
+    /// Category shown in the settings window (set before opening it to jump to one).
+    var settingsPane: SettingsPane = .general
 
     // MARK: Library (favorites and recently opened series)
 
@@ -88,11 +130,32 @@ final class AppModel {
     private init() {
         let settings = LibraryStore.shared.settings
         self.settings = settings
+        selection = Self.startSelection(settings)
         history = LibraryStore.shared.history()
         downloads = DownloadManager(configuration: Self.downloadConfiguration(settings))
         refreshLibrary()
         library.onChange = { Task { @MainActor in AppModel.shared.refreshLibrary() } }
         Task { await observeDownloads() }
+        applyCacheLimit()
+    }
+
+    /// Sidebar page for 打开时显示.
+    static func startSelection(_ settings: AppSettings) -> SidebarItem {
+        switch settings.startPage {
+        case "history": return .history
+        case "library": return .library
+        case "downloads": return .downloads
+        case "discover": return .category(.realDrama)
+        default:
+            // Other sources are picked inside 发现, and an unknown key falls back to it too.
+            guard let key = settings.lastPage, let item = SidebarItem(persistKey: key) else { return .category(.realDrama) }
+            if case .source = item { return .category(.realDrama) }
+            return item
+        }
+    }
+
+    func applyCacheLimit() {
+        PlaybackCache.shared.setLimit(bytes: Int64(settings.playbackCacheLimitGB) * 1_000_000_000)
     }
 
     /// Called once at launch (not from init: PlayerController's init reads AppModel.shared).
@@ -104,6 +167,7 @@ final class AppModel {
 
     static func downloadConfiguration(_ settings: AppSettings) -> DownloadConfiguration {
         var config = DownloadConfiguration(nameFormat: settings.downloadNameFormat, maxConcurrent: settings.maxConcurrentDownloads)
+        config.preferredQuality = settings.preferredQuality
         if let root = settings.downloadRoot, !root.isEmpty { config.root = URL(fileURLWithPath: root, isDirectory: true) }
         return config
     }
@@ -124,9 +188,24 @@ final class AppModel {
 
     private func observeDownloads() async {
         for await tasks in await downloads.updates() {
+            exportFinishedSeries(previous: downloadTasks, current: tasks)
             downloadTasks = tasks
             localFiles = Dictionary(tasks.filter { $0.status == .completed }.map { ($0.vid, $0.fileURL) },
                                     uniquingKeysWith: { first, _ in first })
+        }
+    }
+
+    /// 同时导出弹幕和评论: once every queued episode of a series has finished, saves its danmaku and
+    /// episode comments next to the videos. Existing sidecars are skipped by TextExport.
+    private func exportFinishedSeries(previous: [DownloadTask], current: [DownloadTask]) {
+        guard settings.autoExportText, !previous.isEmpty else { return }
+        let before = Set(previous.filter { $0.status == .completed }.map(\.id))
+        let newlyDone = Set(current.filter { $0.status == .completed && !before.contains($0.id) }.map(\.seriesId))
+        for seriesId in newlyDone {
+            let series = current.filter { $0.seriesId == seriesId }
+            guard series.allSatisfy({ $0.status == .completed || $0.status == .failed }),
+                  let title = series.first?.seriesTitle else { continue }
+            Task { _ = await TextExportActions.exportSidecars(seriesId: seriesId, seriesTitle: title) }
         }
     }
 
@@ -150,13 +229,16 @@ final class AppModel {
         history = store.history()
     }
 
-    private var lastCloudSync = Date.distantPast
+    private(set) var lastCloudSync = Date.distantPast
+    private(set) var lastCloudSyncCount = 0
     private(set) var cloudSyncing = false
     var cloudSyncMessage = ""
 
     /// Pulls the signed-in account's cloud watch history into the local history (newer side wins).
     /// The website only exposes reading the cloud history, so local progress is not uploaded.
-    func syncCloudHistory(force: Bool = false) async {
+    /// `force` skips the one-minute throttle; `manual` (a button) also runs when 显示云端观看记录 is off.
+    func syncCloudHistory(force: Bool = false, manual: Bool = false) async {
+        guard manual || settings.cloudHistorySync else { return }
         guard !cloudSyncing, force || Date().timeIntervalSince(lastCloudSync) > 60 else { return }
         guard await AccountService.shared.status().profile != nil else { return }
         cloudSyncing = true
@@ -164,6 +246,7 @@ final class AppModel {
         do {
             let items = try await AccountService.shared.history(refresh: true)
             lastCloudSync = Date()
+            lastCloudSyncCount = items.count
             store.mergeCloudHistory(items)
             cloudSyncMessage = ""
             refreshHistory()
@@ -188,7 +271,7 @@ final class AppModel {
     func startBackgroundChecks() {
         guard !backgroundStarted else { return }
         backgroundStarted = true
-        Task { await checkForUpdate(manual: false) }
+        if settings.checkUpdatesAtLaunch { Task { await checkForUpdate(manual: false) } }
         Task {
             var first = true
             while !Task.isCancelled {
@@ -201,7 +284,8 @@ final class AppModel {
             try? await Task.sleep(for: .seconds(20))
             while !Task.isCancelled {
                 await checkWatchUpdates(force: false)
-                try? await Task.sleep(for: .seconds(30 * 60))
+                // Wake often enough for the shortest interval; only due records are checked.
+                try? await Task.sleep(for: .seconds(min(30 * 60, settings.watchCheckHours * 3600)))
             }
         }
     }
@@ -212,9 +296,31 @@ final class AppModel {
         guard settings.watchUpdatesEnabled, !watchChecking else { return nil }
         watchChecking = true
         defer { watchChecking = false }
-        let summary = await watchChecker.refresh(force: force, includeSequels: settings.watchSequelsEnabled)
+        let before = Set(store.history().filter(\.hasUpdates).map(\.seriesId))
+        let summary = await watchChecker.refresh(force: force, includeSequels: settings.watchSequelsEnabled,
+                                                 every: TimeInterval(settings.watchCheckHours) * 3600)
         refreshHistory()
+        if settings.watchNotifications {
+            let fresh = history.filter { $0.hasUpdates && !before.contains($0.seriesId) }
+            if !fresh.isEmpty { Self.notifyUpdates(fresh) }
+        }
         return summary
+    }
+
+    /// Asks for notification permission (from the settings switch). Returns whether it was granted.
+    static func requestNotificationPermission() async -> Bool {
+        (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])) ?? false
+    }
+
+    private static func notifyUpdates(_ records: [WatchRecord]) {
+        let content = UNMutableNotificationContent()
+        content.title = records.count == 1 ? "《\(records[0].title)》有更新" : "\(records.count) 部剧有更新"
+        content.body = records.count == 1
+            ? (records[0].unreadEpisodes > 0 ? "更新了 \(records[0].unreadEpisodes) 集" : "出了续作")
+            : records.prefix(3).map { "《\($0.title)》" }.joined(separator: "、") + (records.count > 3 ? " 等" : "")
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: "watch-updates-\(Date().timeIntervalSince1970)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
     }
 
     /// Clears the "更新 N 集" / "有续作" badges once the user opens the series.

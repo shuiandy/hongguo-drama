@@ -66,6 +66,35 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Apple CMS (`/api.php/provide/vod/`) endpoints added by the user.
     public var customSources: [CustomSourceConfig] = []
 
+    // Settings window (2026-11 redesign).
+    /// Page shown when the main window opens: "last", "discover", "history", "library" or "downloads".
+    public var startPage: String = "last"
+    /// Sidebar page open when the app last quit (`SidebarItem.persistKey`), for startPage "last".
+    public var lastPage: String?
+    /// Playback cache cap in GB; the oldest decrypted episodes are removed beyond it. 0 = no cap.
+    public var playbackCacheLimitGB: Int = 5
+    /// Picture mode for series that have none remembered.
+    public var defaultPictureMode: PictureMode = .fit
+    /// Volume (percent) applied each time the player opens; nil keeps the last volume.
+    public var startVolume: Int?
+    /// Also search the enabled other sources from the search page.
+    public var searchOtherSources: Bool = true
+    /// Hours between new-episode checks for unfinished series (1...48).
+    public var watchCheckHours: Int = 6
+    /// Post a macOS notification when a check finds new episodes or sequels.
+    public var watchNotifications: Bool = false
+    /// Check for a new app version at launch (manual checks always work).
+    public var checkUpdatesAtLaunch: Bool = true
+    /// Export danmaku and episode comments next to the videos when a series finishes downloading.
+    public var autoExportText: Bool = false
+    /// Merge the signed-in account's cloud watch history into 观看记录.
+    public var cloudHistorySync: Bool = true
+
+    public static let startPages = ["last", "discover", "history", "library", "downloads"]
+    public static let cacheLimits = [2, 5, 10, 20, 0]
+    public static let watchCheckChoices = [1, 3, 6, 12, 24]
+    public static let startVolumes = [10, 25, 50, 75, 100]
+
     public init() {}
 
     /// Sources shown in the switcher, in order.
@@ -95,7 +124,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         customSources.removeAll { $0.id == id.lowercased() }
     }
 
-    public func pictureMode(for seriesId: String) -> PictureMode { pictureModes[seriesId] ?? .fit }
+    public func pictureMode(for seriesId: String) -> PictureMode { pictureModes[seriesId] ?? defaultPictureMode }
 
     public var downloadConfiguration: DownloadConfiguration {
         DownloadConfiguration(root: downloadRoot.map { URL(fileURLWithPath: $0, isDirectory: true) }
@@ -114,6 +143,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         copy.danmaku = danmaku.normalized()
         if copy.downloadNameFormat.trimmingCharacters(in: .whitespaces).isEmpty { copy.downloadNameFormat = DownloadNaming.defaultFormat }
         copy.searchHistory = Array(searchHistory.prefix(20))
+        if !Self.startPages.contains(startPage) { copy.startPage = "last" }
+        copy.playbackCacheLimitGB = min(200, max(0, playbackCacheLimitGB))
+        copy.startVolume = startVolume.map { min(100, max(0, $0)) }
+        copy.watchCheckHours = min(48, max(1, watchCheckHours))
         return copy
     }
 
@@ -147,6 +180,17 @@ public struct AppSettings: Codable, Equatable, Sendable {
         customSources = ((try? c.decodeIfPresent([Lenient<CustomSourceConfig>].self, forKey: .customSources)) ?? []).compactMap { entry in
             entry.value.flatMap { try? CustomSource.validate($0) }.flatMap { $0.id.isEmpty ? nil : $0 }
         }
+        startPage = (try? c.decodeIfPresent(String.self, forKey: .startPage)) ?? d.startPage
+        lastPage = try? c.decodeIfPresent(String.self, forKey: .lastPage)
+        playbackCacheLimitGB = (try? c.decodeIfPresent(Int.self, forKey: .playbackCacheLimitGB)) ?? d.playbackCacheLimitGB
+        defaultPictureMode = (try? c.decodeIfPresent(PictureMode.self, forKey: .defaultPictureMode)) ?? d.defaultPictureMode
+        startVolume = try? c.decodeIfPresent(Int.self, forKey: .startVolume)
+        searchOtherSources = (try? c.decodeIfPresent(Bool.self, forKey: .searchOtherSources)) ?? d.searchOtherSources
+        watchCheckHours = (try? c.decodeIfPresent(Int.self, forKey: .watchCheckHours)) ?? d.watchCheckHours
+        watchNotifications = (try? c.decodeIfPresent(Bool.self, forKey: .watchNotifications)) ?? d.watchNotifications
+        checkUpdatesAtLaunch = (try? c.decodeIfPresent(Bool.self, forKey: .checkUpdatesAtLaunch)) ?? d.checkUpdatesAtLaunch
+        autoExportText = (try? c.decodeIfPresent(Bool.self, forKey: .autoExportText)) ?? d.autoExportText
+        cloudHistorySync = (try? c.decodeIfPresent(Bool.self, forKey: .cloudHistorySync)) ?? d.cloudHistorySync
         self = normalized()
     }
 }

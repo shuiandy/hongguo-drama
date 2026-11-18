@@ -128,6 +128,7 @@ struct SourceCatalogView: View {
 struct SourcePicker: View {
     let current: String
     @Environment(AppModel.self) private var model
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         let sources = model.settings.mediaSources
@@ -141,7 +142,7 @@ struct SourcePicker: View {
                     }
                 }
                 Divider()
-                SettingsLink { Text("管理片源…") }
+                Button("管理片源…") { model.settingsPane = .sources; openSettings() }
             } label: {
                 Label("片源：\(SourceRouter.label(current))", systemImage: "film.stack")
             }

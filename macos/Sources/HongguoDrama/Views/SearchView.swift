@@ -11,6 +11,10 @@ struct SearchView: View {
     @State private var hasMore = false
     @State private var isLoading = false
     @State private var error: String?
+    /// 搜索时同时查找其他片源: first page from each enabled other source, in switcher order.
+    @State private var others: [OtherSourceResults] = []
+    @State private var othersLoading = false
+    @State private var searchToken = UUID()
 
     @FocusState private var fieldFocused: Bool
 
@@ -24,14 +28,17 @@ struct SearchView: View {
 
                 if submitted.isEmpty {
                     idleContent.frame(maxWidth: 680, alignment: .leading)
-                } else if items.isEmpty {
-                    if isLoading || error != nil {
-                        LoadStateView(error: error, isLoading: isLoading) { Task { await submit() } }
-                    } else {
-                        ContentUnavailableView.search(text: submitted)
-                    }
                 } else {
-                    results
+                    if items.isEmpty {
+                        if isLoading || error != nil {
+                            LoadStateView(error: error, isLoading: isLoading) { Task { await submit() } }
+                        } else if others.allSatisfy({ $0.items.isEmpty }) && !othersLoading {
+                            ContentUnavailableView.search(text: submitted)
+                        }
+                    } else {
+                        results
+                    }
+                    otherResults
                 }
             }
             .padding(.horizontal, 28)
@@ -127,6 +134,50 @@ struct SearchView: View {
         }
     }
 
+    @ViewBuilder
+    private var otherResults: some View {
+        ForEach(others.filter { !$0.items.isEmpty }) { group in
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(group.label).font(.system(size: 18, weight: .bold))
+                    Text("其他片源 · \(group.items.count) 部").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Spacer()
+                }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 14)], spacing: 14) {
+                    ForEach(group.items.prefix(12)) { item in SearchResultCard(item: item, keyword: submitted) }
+                }
+            }
+            .padding(.top, 10)
+        }
+        if othersLoading {
+            HStack(spacing: 8) { ProgressView().controlSize(.small); Text("正在搜索其他片源…").foregroundStyle(.secondary) }
+                .font(.system(size: 12))
+                .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func searchOtherSources(_ keyword: String, token: UUID) async {
+        others = []
+        guard model.settings.searchOtherSources else { return }
+        let entries = model.settings.mediaSources.filter { $0.id != "hongguo" }
+        guard !entries.isEmpty else { return }
+        othersLoading = true
+        defer { if token == searchToken { othersLoading = false } }
+        let found = await withTaskGroup(of: (Int, OtherSourceResults?).self) { group in
+            for (order, entry) in entries.enumerated() {
+                group.addTask {
+                    guard let source = try? SourceRouter.catalogue(entry.id),
+                          let page = try? await source.search(keyword, page: 1) else { return (order, nil) }
+                    return (order, OtherSourceResults(id: entry.id, label: entry.label, items: page.results))
+                }
+            }
+            var list: [(Int, OtherSourceResults)] = []
+            for await (order, result) in group { if let result { list.append((order, result)) } }
+            return list.sorted { $0.0 < $1.0 }.map(\.1)
+        }
+        if token == searchToken { others = found }
+    }
+
     private func looksLikeLink(_ text: String) -> Bool {
         text.range(of: "https?://|series_id", options: [.regularExpression, .caseInsensitive]) != nil
             || text.range(of: "^\\d{6,30}$", options: .regularExpression) != nil
@@ -154,7 +205,12 @@ struct SearchView: View {
         items = []
         page = 0
         hasMore = false
+        let token = UUID()
+        searchToken = token
+        let keyword = submitted
+        async let other: Void = searchOtherSources(keyword, token: token)
         await load(page: 1)
+        await other
     }
 
     private func loadMore() async {
@@ -260,4 +316,10 @@ struct FlowLayout: Layout {
             rowHeight = max(rowHeight, size.height)
         }
     }
+}
+
+struct OtherSourceResults: Identifiable, Sendable {
+    let id: String
+    let label: String
+    let items: [SeriesSummary]
 }

@@ -36,16 +36,17 @@ public actor WatchUpdateChecker {
     }
 
     /// Whether a record is due for a check.
-    public static func isDue(_ record: WatchRecord, now: Date) -> Bool {
+    /// `every` is the check interval for unfinished series (settings: 检查频率); finished ones use at least a day.
+    public static func isDue(_ record: WatchRecord, now: Date, every: TimeInterval = interval) -> Bool {
         guard let last = record.lastCheckedAt else { return true }
-        return now.timeIntervalSince(last) >= (record.isFinished ? finishedInterval : interval)
+        return now.timeIntervalSince(last) >= (record.isFinished ? max(finishedInterval, every) : every)
     }
 
     /// Checks due records (all with `force`). Concurrent calls share one run.
     @discardableResult
-    public func refresh(force: Bool = false, includeSequels: Bool = true) async -> Summary {
+    public func refresh(force: Bool = false, includeSequels: Bool = true, every: TimeInterval = interval) async -> Summary {
         if let running { return await running.value }
-        let task = Task { await self.run(force: force, includeSequels: includeSequels) }
+        let task = Task { await self.run(force: force, includeSequels: includeSequels, every: every) }
         running = task
         let result = await task.value
         running = nil
@@ -59,9 +60,9 @@ public actor WatchUpdateChecker {
         return store.record(for: seriesId)
     }
 
-    private func run(force: Bool, includeSequels: Bool) async -> Summary {
+    private func run(force: Bool, includeSequels: Bool, every: TimeInterval) async -> Summary {
         let at = now()
-        let due = store.history().filter { force || Self.isDue($0, now: at) }
+        let due = store.history().filter { force || Self.isDue($0, now: at, every: every) }
         var summary = Summary()
         await withTaskGroup(of: Bool?.self) { group in
             var iterator = due.makeIterator()

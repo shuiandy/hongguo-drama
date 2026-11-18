@@ -9,13 +9,15 @@ public final class PlaybackCache: @unchecked Sendable {
     public let directory: URL
     private let http: HTTPClient
     private let maxFiles: Int
+    /// Size cap in bytes (settings: 缓存上限); 0 = only the file count applies.
+    private var maxBytes: Int64 = 0
     private var inflight: [String: Task<URL, Error>] = [:]
     private let lock = NSLock()
 
-    public init(http: HTTPClient = .shared, maxFiles: Int = 12) {
+    public init(http: HTTPClient = .shared, maxFiles: Int = 12, directory: URL? = nil) {
         self.http = http
         self.maxFiles = maxFiles
-        directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        self.directory = directory ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("HongguoDrama/playback", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
@@ -66,6 +68,12 @@ public final class PlaybackCache: @unchecked Sendable {
         return try await task.value
     }
 
+    /// Sets the size cap (0 = none) and removes the oldest files beyond it now.
+    public func setLimit(bytes: Int64) {
+        lock.withLock { maxBytes = max(0, bytes) }
+        prune()
+    }
+
     public func clear() {
         try? FileManager.default.removeItem(at: directory)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -77,13 +85,23 @@ public final class PlaybackCache: @unchecked Sendable {
     }
 
     private func prune() {
-        let keys: [URLResourceKey] = [.contentModificationDateKey]
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey]
         guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: keys) else { return }
         let sorted = files.filter { $0.pathExtension == "mp4" }.sorted {
             let a = (try? $0.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast
             let b = (try? $1.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast
             return a > b
         }
-        for file in sorted.dropFirst(maxFiles) { try? FileManager.default.removeItem(at: file) }
+        let limit = lock.withLock { maxBytes }
+        var kept: Int64 = 0
+        for (offset, file) in sorted.enumerated() {
+            let size = Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            // Always keep the newest file (the one playing), whatever its size.
+            if offset >= maxFiles || (limit > 0 && offset > 0 && kept + size > limit) {
+                try? FileManager.default.removeItem(at: file)
+            } else {
+                kept += size
+            }
+        }
     }
 }
