@@ -20,7 +20,7 @@ APP="$OUT/HongguoDrama.app"
 if [[ -z "${SIGN_IDENTITY:-}" ]]; then
   identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
   for name in "Hongguo Drama Local Signing" "Apple Development"; do
-    hash="$(printf '%s\n' "$identities" | grep -F "\"$name" | head -n1 | awk '{print $2}')"
+    hash="$(printf '%s\n' "$identities" | grep -F "\"$name" | head -n1 | awk '{print $2}' || true)"
     if [[ -n "$hash" ]]; then SIGN_IDENTITY="$hash"; SIGN_NAME="$name"; break; fi
   done
   if [[ -z "${SIGN_IDENTITY:-}" ]]; then
