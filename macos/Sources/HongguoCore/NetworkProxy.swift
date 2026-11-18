@@ -99,7 +99,7 @@ public final class NetworkProxy: @unchecked Sendable {
             config.connectionProxyDictionary = [:]
             guard let port = NWEndpoint.Port(rawValue: UInt16(clamping: settings.port)) else { return }
             let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(settings.host.trimmingCharacters(in: .whitespaces)), port: port)
-            var proxy = settings.kind == .http
+            let proxy = settings.kind == .http
                 ? ProxyConfiguration(httpCONNECTProxy: endpoint, tlsOptions: nil)
                 : ProxyConfiguration(socksv5Proxy: endpoint)
             if !settings.username.isEmpty {
