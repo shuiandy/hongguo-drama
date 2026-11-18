@@ -1,14 +1,20 @@
 .stealth-toolbar { display: none; }
 .stealth-mode .sidebar, .stealth-mode .window-toolbar, .stealth-mode .compact-navigation { display: none !important; }
-.stealth-mode .main-wrapper { min-width: 0; }
-.stealth-mode .stealth-toolbar { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; gap: 8px; height: 48px; padding: 6px 10px 6px 82px; background: var(--bg-elevated); -webkit-app-region: drag; }
-.stealth-toolbar span { font-size: 10px; color: var(--text-secondary); }
+.stealth-mode .main-wrapper { min-width: 0; position: relative; background: #000; }
+/* The mini window has no title bar: a strip carries dragging and the two actions over the video.
+   It stays visible because the native controller already hides the whole window once the pointer leaves;
+   a :hover rule would fail here, since macOS sends no mouse events over a drag region and the strip vanished under the pointer. */
+.stealth-mode .stealth-toolbar { position: absolute; inset: 0 0 auto; z-index: 30; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; padding: 8px 10px; background: linear-gradient(rgba(0, 0, 0, .66), transparent); color: #fff; -webkit-app-region: drag; }
+.stealth-toolbar span { font-size: 11px; color: rgba(255, 255, 255, .78); }
 .stealth-toolbar button { -webkit-app-region: no-drag; white-space: nowrap; }
+.stealth-mode .stealth-toolbar .btn { min-height: 26px; padding: 3px 10px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, .18); color: #fff; font-size: 11px; backdrop-filter: blur(12px); }
+.stealth-mode .stealth-toolbar .btn:hover:not(:disabled) { background: rgba(255, 255, 255, .32); color: #fff; }
+.stealth-mode .main-content[data-page="player"] .player-stage { background: #000; }
 .stealth-toolbar-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-.stealth-mode .stealth-toolbar { height: auto; min-height: 48px; }
 .stealth-toolbar > span { min-width: 0; }
 @media (max-width: 700px) { .stealth-mode .stealth-toolbar > span { display: none; } }
-.stealth-mode .main-content[data-page="player"] { padding: 0; overflow: hidden; }
+/* Outranks `.layout-portrait.player-focused .main-content[data-page="player"]` so a mini window opened from 竖屏版 also fills edge to edge. */
+.app-layout.stealth-mode .main-wrapper .main-content[data-page="player"] { padding: 0; overflow: hidden; }
 .stealth-mode .player-container { display: flex; flex-direction: column; min-height: 0; height: 100%; gap: 0; }
 .stealth-mode .player-container > :not(.player-viewing-layout):not(.player-empty) { display: none !important; }
 .app-layout.stealth-mode .main-content .player-container .player-stage { position: relative; inset: auto; max-height: none; aspect-ratio: auto; z-index: auto; flex: 1; width: 100%; height: 100%; min-height: 0; border-radius: 0; }
@@ -18,3 +24,4 @@
 .app-layout.stealth-mode .player-viewing-layout { display: flex; flex: 1; min-height: 0; height: 100%; width: 100%; }
 .stealth-mode .player-viewing-layout > :not(.player-stage):not(.player-floating-slot) { display: none !important; }
 .stealth-mode .player-floating-slot { display: flex; flex: 1; min-height: 0; height: 100%; }
+.stealth-mode .stealth-toolbar-actions { margin-left: auto; }

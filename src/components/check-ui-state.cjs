@@ -23,11 +23,13 @@ async function mount(file, api, props = {}, storage = null) {
   const timers = new Map();
   let timerId = 0;
   let cursor = 0, tree, Component, queued = false;
+  // Stateless views split out of Player.jsx render inline, as they did before the split.
+  const playerViews = new Set();
   const changed = (old, deps) => !old || deps.some((d, i) => !Object.is(d, old[i]));
   const requestRender = () => { queued = true; };
   const scheduleEffect = (fn, deps) => { const i = cursor++; if (changed(slots[i], deps)) { slots[i] = deps; effects.push(() => { cleanups[i]?.(); cleanups[i] = fn(); }); } };
   const react = {
-    createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
+    createElement: (type, props, ...children) => playerViews.has(type) ? type({ ...(props || {}), children: children.flat(Infinity) }) : ({ type, props: props || {}, children: children.flat(Infinity) }),
     Fragment: 'fragment',
     useState: initial => {
       const i = cursor++;
@@ -83,6 +85,9 @@ async function mount(file, api, props = {}, storage = null) {
     };
     const sandbox = vm.createContext({ ...shared, module, exports: module.exports, require: localRequire, __dirname: path.dirname(resolved), __filename: resolved });
     vm.runInContext(compile(resolved), sandbox, { filename: resolved });
+    if (/[\\/]Player(?:SeriesPicker|EpisodeGrid|StageStatus|Dialogs)\.jsx$/.test(resolved)) {
+      for (const value of Object.values(module.exports)) if (typeof value === 'function') playerViews.add(value);
+    }
     return module.exports;
   };
   const Loaded = loadModule(path.resolve(__dirname, `${file}.jsx`)).default;

@@ -50,7 +50,9 @@ function createStealthController({ screen, getWindow, BaseWindow, View, getWakeR
       visibleOnAllWorkspaces: typeof win.isVisibleOnAllWorkspaces === 'function' ? win.isVisibleOnAllWorkspaces() : false };
     if (platform === 'darwin') {
       try {
-        panel = new BaseWindow({ type: 'panel', show: false, title: win.getTitle() });
+        // Frameless rounded panel: the video is the whole window, hover controls replace the title bar.
+        panel = new BaseWindow({ type: 'panel', show: false, title: win.getTitle(), frame: false, hasShadow: true,
+          roundedCorners: true, backgroundColor: '#000000' });
         contentView = win.contentView;
         win.setContentView(new View());
         panel.setContentView(contentView);

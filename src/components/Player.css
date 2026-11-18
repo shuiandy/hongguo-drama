@@ -629,6 +629,9 @@
 .layout-portrait .player-header { gap: 10px; margin-bottom: 14px; }
 .layout-portrait .player-series-row { justify-content: flex-start; flex-wrap: wrap; gap: 12px 20px; padding-bottom: 12px; }
 .layout-portrait .player-viewing-layout { display: grid; grid-template-columns: minmax(0, 1fr) 128px; gap: 14px; align-items: start; }
+/* Desktop portrait: the stage's height:100% needs a definite parent; without it a playing 9:16 video grows the stage past the window and hides the controls. Android keeps mobile-player.css. */
+.app-layout:not(.platform-android).layout-portrait .player-viewing-layout { align-items: stretch; }
+.app-layout:not(.platform-android).layout-portrait .player-floating-slot { height: 100%; min-height: 0; }
 .layout-portrait .player-stage:not(:fullscreen) { width: 100%; height: 100%; aspect-ratio: auto; max-height: none; margin: 0; min-height: 0; }
 .layout-portrait .player-video { object-fit: contain; }
 .layout-portrait .player-episode-panel { height: 100%; min-height: 0; max-height: none; overflow-y: auto; padding: 0 3px 6px; }
@@ -754,3 +757,76 @@
 .player-header .player-header-right .btn { width: 100%; min-width: 0; min-height: 36px; padding: 6px 8px; font-size: 12px; gap: 7px; justify-content: center; white-space: normal; }
 .player-header-right .btn svg { width: 15px; height: 15px; flex-shrink: 0; }
 .player-header-right .series-count { font-size: inherit; min-width: 0; padding: 0 .35em; }
+
+/* ===== Desktop theater (Windows, macOS, Linux; Android keeps its own layout) =====
+   The player page uses one dark palette whatever the app theme, so the picture is the brightest thing on screen. */
+.app-layout:not(.platform-android).player-focused .main-wrapper {
+  color-scheme: dark;
+  --bg: #121212; --bg-canvas: #121212; --bg-primary: #121212;
+  --card-bg: #1c1c1c; --bg-card: #1c1c1c; --bg-subtle: #1c1c1c; --bg-secondary: #1c1c1c; --bg-elevated: #222; --bg-inset: #262626; --bg-tertiary: #262626;
+  --bg-hover: #2c2c2c; --bg-input: #1a1a1a;
+  --text: #f2f1ee; --text-primary: #f2f1ee; --text-sub: #bdbab4; --text-secondary: #bdbab4; --text-tertiary: #8f8b84;
+  --border: #303030; --border-default: #303030; --border-color: #303030; --border-muted: #262626; --border-strong: #4a4a4a;
+  --primary: #c8383d; --primary-hover: #d84a4f; --accent: #ef7a7d; --accent-hover: #f4a0a2; --accent-text: #f3a6a7; --accent-soft: #3a2526; --accent-border: #7a4245;
+  --success: #8fd0ad; --success-bg: #1d3227; --success-border: #3f6a52;
+  --danger: #f0a0a0; --danger-bg: #3a2424; --danger-border: #7a4245;
+  --focus-ring: #f3a6a7; --focus-soft: #ef7a7d55; --selection: #6a3c3e; --scroll-thumb: #444; --skeleton: #262626;
+  background: var(--bg); color: var(--text-primary);
+}
+.app-layout:not(.platform-android).player-focused .window-toolbar { background: var(--bg); border-bottom-color: transparent; }
+
+/* Top bar: title on the left, three actions on the right; everything else lives behind 播放选项. */
+.app-layout:not(.platform-android) .player-series-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; padding: 0 0 14px; }
+.app-layout:not(.platform-android) .player-series-row[hidden] { display: none; }
+.app-layout:not(.platform-android) .player-series-current { flex: 1 1 260px; align-items: baseline; }
+.app-layout:not(.platform-android) .player-series-name { font-size: 22px; font-weight: 650; letter-spacing: -.01em; }
+.app-layout:not(.platform-android) .player-series-current .player-stat { color: var(--text-tertiary); font-size: 12px; }
+.app-layout:not(.platform-android) .player-series-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.app-layout:not(.platform-android) .player-series-actions .btn { min-height: 32px; padding: 5px 12px; border-color: transparent; border-radius: 999px; background: var(--bg-inset); color: var(--text-secondary); font-size: 12px; }
+.app-layout:not(.platform-android) .player-series-actions .btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
+.app-layout:not(.platform-android) .player-series-actions .btn.open { background: var(--accent-soft); color: var(--accent-text); }
+.app-layout:not(.platform-android) .player-series-actions .series-count { background: transparent; color: inherit; opacity: .7; }
+
+/* 播放选项 panel: quality, decoder and the playback switches, collapsed by default. */
+.app-layout:not(.platform-android) .player-container:not(.player-settings-open) > .player-online-quality-row,
+.app-layout:not(.platform-android) .player-container:not(.player-settings-open) > .player-header { display: none; }
+.app-layout:not(.platform-android) .player-settings-open > .player-online-quality-row:not([hidden]) { display: flex; justify-content: flex-start; gap: 12px 20px; margin: 0; padding: 14px 16px 6px; background: var(--bg-elevated); border-radius: 12px 12px 0 0; }
+.app-layout:not(.platform-android) .player-settings-open > .player-header:not([hidden]) { display: block; margin: 0 0 14px; padding: 8px 16px 14px; background: var(--bg-elevated); border-radius: 0 0 12px 12px; }
+.app-layout:not(.platform-android) .player-settings-open > .player-header .player-header-right { display: flex; flex-wrap: wrap; gap: 8px; }
+.app-layout:not(.platform-android) .player-settings-open > .player-header .player-header-right .btn { width: auto; min-height: 32px; padding: 5px 12px; border-radius: 999px; font-size: 12px; }
+.app-layout:not(.platform-android) .player-header .btn-autonext-on { background: var(--accent-soft); color: var(--accent-text); border-color: transparent !important; }
+.app-layout:not(.platform-android) .player-download-quality-hint { color: var(--text-tertiary); }
+.app-layout:not(.platform-android) .series-picker { margin-bottom: 14px; border-color: var(--border); background: var(--bg-elevated); }
+
+/* Landscape: a full-height stage with the episode list as a side column. */
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape.player-focused .main-content[data-page="player"] { padding: 16px 24px 40px; }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-container { max-width: 1560px; }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-viewing-layout { display: grid; grid-template-columns: minmax(0, 1fr) clamp(240px, 22vw, 320px); gap: 18px; align-items: start; }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-stage:not(.player-window-fill) { height: max(420px, calc(100vh - 150px)); aspect-ratio: auto; max-height: none; margin: 0; border-radius: 14px; background: #000; }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-stage .player-video { object-fit: contain; }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-floating-placeholder { height: max(420px, calc(100vh - 150px)); border: 0; border-radius: 14px; background: #000; }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-episode-panel { position: sticky; top: 0; max-height: max(420px, calc(100vh - 150px)); overflow-y: auto; padding: 14px; border-radius: 14px; background: var(--bg-card); overscroll-behavior: contain; }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-episode-panel .portrait-episode-heading { display: block; margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-now { padding: 0 0 12px; gap: 6px 8px; }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-now-title { font-size: 13px; }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-now-sub { flex-basis: 100%; }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-episodes { grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 6px; max-height: none; }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-episode-panel .player-tips { font-size: 11px; color: var(--text-tertiary); }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-episode-panel .player-management { margin-top: 14px; padding-top: 14px; }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-episode-panel .player-management h3 { font-size: 13px; }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-episode-panel .player-management-actions .btn { min-height: 30px; padding: 4px 10px; font-size: 11.5px; }
+.app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-footer { margin-top: 24px; }
+@media (max-width: 980px) {
+  .app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-viewing-layout { grid-template-columns: minmax(0, 1fr); }
+  .app-layout:not(.platform-android):not(.stealth-mode).layout-landscape .player-episode-panel { position: static; max-height: none; }
+}
+
+/* Episode chips on the dark stage surface. */
+.app-layout:not(.platform-android).player-focused .ep-chip { border-color: transparent; background: var(--bg-inset); }
+.app-layout:not(.platform-android).player-focused .ep-missing { border: 1px dashed var(--border-strong); background: transparent; }
+.app-layout:not(.platform-android).player-focused .ep-current { background: var(--primary); color: #fff; border-color: var(--primary) !important; box-shadow: none; }
+.app-layout:not(.platform-android).player-focused .ep-current .ep-badge { color: #fff; }
+
+/* Desktop overlays: softer glass over the picture. */
+.app-layout:not(.platform-android) .compat-overlay { background: rgba(8, 8, 8, .78); backdrop-filter: blur(6px); }
+.app-layout:not(.platform-android) .player-placeholder { background: #0d0d0d; }

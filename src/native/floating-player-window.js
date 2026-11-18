@@ -134,8 +134,13 @@ function attachFloatingPlayerWindow(mainWindow, {
           minHeight: Math.min(MIN_HEIGHT, height),
           maxWidth: Math.max(1, area.width - 32),
           maxHeight: Math.max(1, area.height - 32),
-          frame: true,
+          // Frameless like the mini window: the page draws its own drag strip and close button.
+          frame: false,
           ...(platform === 'darwin' ? { type: 'panel' } : {}),
+          hasShadow: true,
+          roundedCorners: true,
+          backgroundColor: '#000000',
+          // Do not inherit hiddenInset traffic lights from the opener window.
           titleBarStyle: 'default',
           alwaysOnTop: true,
           autoHideMenuBar: true,
@@ -199,9 +204,25 @@ function attachFloatingPlayerWindow(mainWindow, {
             persistSize(size);
           }, SIZE_SAVE_DELAY_MS);
         };
+        // macOS sends no mouse events over the page's drag strip, so CSS :hover cannot show the close button
+        // while the pointer is on it. Poll the native cursor (as the mini window does) and mark the page instead.
+        let pointerInside = null;
+        const pointerTimer = typeof screen.getCursorScreenPoint === 'function' && typeof child.webContents?.executeJavaScript === 'function'
+          ? setInterval(() => {
+            if (finalized || child.isDestroyed()) return;
+            const point = screen.getCursorScreenPoint();
+            const b = child.getBounds();
+            const inside = point.x >= b.x && point.x < b.x + b.width && point.y >= b.y && point.y < b.y + b.height;
+            if (inside === pointerInside) return;
+            pointerInside = inside;
+            child.webContents.executeJavaScript(inside ? 'document.body && (document.body.dataset.pointer = "in")'
+              : 'document.body && delete document.body.dataset.pointer', true).catch(() => {});
+          }, 100) : null;
+        pointerTimer?.unref?.();
         const finalize = () => {
           if (finalized) return;
           finalized = true;
+          if (pointerTimer) clearInterval(pointerTimer);
           if (saveTimer) clearTimeout(saveTimer);
           saveTimer = null;
           screen.removeListener?.('display-metrics-changed', onDisplayChange);

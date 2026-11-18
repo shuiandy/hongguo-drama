@@ -102,6 +102,7 @@ try {
   mac.setEnabled(true);
   assert.equal(panels.length, 1, 'macOS stealth requires a native panel');
   assert.equal(panels[0].options.type, 'panel');
+  assert.equal(panels[0].options.frame, false, 'the mini window has no native title bar');
   assert.equal(panels[0].contentView, playingView, 'move the same live renderer without restarting media');
   assert.equal(main.visible, false);
   assert.deepEqual(bounds, original, 'the normal main window keeps its bounds');

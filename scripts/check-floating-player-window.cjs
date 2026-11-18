@@ -200,7 +200,8 @@ function closeMain(mainWindow) {
     assert.equal(child.options.show, true, 'the player must be shown even when popup options hide it');
     assert.equal(child.options.x, -176, 'anchor to the right of the opener display work area');
     assert.equal(child.options.y, 56, 'anchor above the taskbar with a 16px margin');
-    assert.equal(child.options.frame, true);
+    assert.equal(child.options.frame, false, 'the floating player draws its own hover chrome');
+    assert.equal(child.options.roundedCorners, true);
     assert.equal(child.options.titleBarStyle, 'default');
     assert.equal(child.options.alwaysOnTop, true);
     assert.equal(child.options.autoHideMenuBar, true);

@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { transformSync } from 'esbuild';
 import * as shortcuts from '../../shortcuts.js';
+import { createRequire } from 'node:module';
+
+const { playerPartLoader } = createRequire(import.meta.url)('../../../scripts/check-player-resume.cjs');
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const realShortcuts = (bindings = {}) => ({
@@ -62,12 +65,14 @@ function playerApi(overrides = {}) {
 
 function mountPlayer(props, { api, softwareDecode = false, shortcuts } = {}) {
   let cursor = 0, tree;
+  const playerParts = new Set();
   const stateSlots = [];
   const effectSlots = [];
   const callbackSlots = [];
   const memoSlots = [];
   const react = {
-    createElement: (type, nodeProps, ...children) => ({ type, props: nodeProps || {}, children: children.flat(Infinity) }),
+    createElement: (type, nodeProps, ...children) => playerParts.has(type) ? type({ ...(nodeProps || {}), children: children.flat(Infinity) })
+      : ({ type, props: nodeProps || {}, children: children.flat(Infinity) }),
     useState(initial) {
       const at = cursor++;
       if (!(at in stateSlots)) stateSlots[at] = typeof initial === 'function' ? initial() : initial;
@@ -120,7 +125,7 @@ function mountPlayer(props, { api, softwareDecode = false, shortcuts } = {}) {
     './CastPanel': 'CastPanel',
     './VideoEnhancement': { default: 'VideoEnhancement', useVideoEnhancement: () => ({}) },
     './Player.css': {},
-    './icons': Object.fromEntries(['Play', 'Film', 'Download', 'Check', 'RefreshCw', 'Layers', 'X', 'Trash2', 'ChevronDown', 'Zap'].map(name => [name, name])),
+    './icons': Object.fromEntries(['Play', 'Film', 'Download', 'Check', 'RefreshCw', 'Layers', 'X', 'Trash2', 'ChevronDown', 'Zap', 'Settings'].map(name => [name, name])),
   };
   const module = { exports: {} };
   const source = transformSync(fs.readFileSync(new URL('../Player.jsx', import.meta.url), 'utf8'), { loader: 'jsx', format: 'cjs' }).code;
@@ -138,11 +143,11 @@ function mountPlayer(props, { api, softwareDecode = false, shortcuts } = {}) {
   const fullProps = { setEpisodesOpen: () => {}, onSeriesSelected: () => {}, onFloatingChange: () => {}, ...props };
   const context = {
     module, exports: module.exports,
-    require(id) {
+    require: playerPartLoader(id => {
       if (id === 'react') return react;
       if (id in modules) return modules[id];
       throw new Error(`Unexpected import: ${id}`);
-    },
+    }, playerParts),
     window: windowMock,
     document: documentMock,
     localStorage: windowMock.localStorage,
