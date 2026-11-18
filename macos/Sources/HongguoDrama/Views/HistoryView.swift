@@ -10,23 +10,32 @@ struct HistoryView: View {
             if model.history.isEmpty {
                 ContentUnavailableView("还没有观看记录", systemImage: "clock", description: Text("播放过的短剧会出现在这里。"))
             } else {
-                List {
-                    ForEach(model.history) { record in
-                        HistoryRow(record: record)
-                            .contentShape(Rectangle())
-                            .onTapGesture(count: 2) { resume(record) }
-                            .contextMenu {
-                                Button("继续播放") { resume(record) }
-                                Button("查看详情") { openDetail(record) }
-                                Divider()
-                                Button("删除记录", role: .destructive) {
-                                    model.store.removeHistory(record.seriesId)
-                                    model.refreshHistory()
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 380), spacing: 14)], spacing: 14) {
+                        ForEach(model.history) { record in
+                            HistoryRow(record: record) { resume(record) }
+                                .contextMenu {
+                                    Button("继续播放") { resume(record) }
+                                    Button("查看详情") { openDetail(record) }
+                                    Divider()
+                                    Button("删除记录", role: .destructive) {
+                                        model.store.removeHistory(record.seriesId)
+                                        model.refreshHistory()
+                                    }
                                 }
-                            }
+                        }
+                    }
+                    .padding(24)
+                }
+                .background(alignment: .top) {
+                    if let cover = model.history.first?.cover, !cover.isEmpty {
+                        AmbientBackdrop(url: cover, opacity: 0.4)
+                            .frame(height: 420)
+                            .mask(LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom))
+                            .extendsUnderChrome()
+                            .ignoresSafeArea()
                     }
                 }
-                .listStyle(.inset)
             }
         }
         .navigationTitle("观看记录")
@@ -59,22 +68,31 @@ struct HistoryView: View {
 
 struct HistoryRow: View {
     let record: WatchRecord
+    var resume: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 12) {
-            CoverImage(url: record.cover, cornerRadius: 6).frame(width: 54, height: 72)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(record.title).font(.headline)
-                Text(progressText).font(.callout).foregroundStyle(.secondary)
-                Text(record.updatedAt, style: .relative).font(.caption).foregroundStyle(.tertiary)
+        HStack(spacing: 14) {
+            CoverImage(url: record.cover, cornerRadius: 12).frame(width: 66, height: 88)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(record.title).font(.system(size: 15, weight: .bold)).lineLimit(1)
+                Text(progressText).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(record.updatedAt, style: .relative).font(.system(size: 11)).foregroundStyle(.tertiary)
+                if record.total > 0 {
+                    ProgressView(value: Double(min(record.completedEpisode, record.total)), total: Double(record.total))
+                        .tint(.hongguoRed)
+                        .controlSize(.small)
+                        .padding(.top, 2)
+                }
             }
-            Spacer()
-            if record.total > 0 {
-                ProgressView(value: Double(min(record.completedEpisode, record.total)), total: Double(record.total))
-                    .frame(width: 90)
-            }
+            Spacer(minLength: 0)
+            Button(action: resume) { Image(systemName: "play.fill").offset(x: 1) }
+                .buttonStyle(GlassIconButtonStyle(diameter: 40))
+                .help(record.isFinished ? "重看" : "继续播放")
         }
-        .padding(.vertical, 4)
+        .padding(12)
+        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .onTapGesture(count: 2, perform: resume)
+        .glassSurface(in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private var progressText: String {

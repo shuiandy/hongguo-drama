@@ -8,7 +8,7 @@ import SwiftUI
 final class PlayerWindows: NSObject, NSWindowDelegate {
     static let shared = PlayerWindows()
 
-    static let episodePanelWidth: CGFloat = 248
+    static let episodePanelWidth: CGFloat = 324
 
     private(set) var isMini = false
     private(set) var showEpisodes = true
