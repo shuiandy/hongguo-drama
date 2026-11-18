@@ -13,7 +13,7 @@ struct LibraryView: View {
                 }
                 if model.favorites.isEmpty && model.recentSeries.isEmpty {
                     ContentUnavailableView("剧库还是空的", systemImage: "heart",
-                                           description: Text("在详情页点"收藏"，喜欢的剧会出现在这里；打开过的剧也会自动记下。"))
+                                           description: Text("在详情页点“收藏”，喜欢的剧会出现在这里；打开过的剧也会自动记下。"))
                         .frame(maxWidth: .infinity)
                         .padding(.top, 60)
                 } else {

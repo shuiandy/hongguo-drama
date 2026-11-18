@@ -51,7 +51,7 @@ struct DownloadsView: View {
                               selection: $filter)
                 if groups.isEmpty {
                     ContentUnavailableView(filter == .all ? "还没有下载任务" : "这里没有任务", systemImage: "arrow.down.circle",
-                                           description: Text("在剧集详情页点"下载"即可离线观看，已下载的集会直接从本地播放。"))
+                                           description: Text("在剧集详情页点“下载”即可离线观看，已下载的集会直接从本地播放。"))
                         .frame(maxWidth: .infinity)
                         .padding(.top, 40)
                 } else {
