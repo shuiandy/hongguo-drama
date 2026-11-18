@@ -14,14 +14,15 @@
 | 分享链接 / 剧集编号直达 | 已完成 | 手动跟随跳转，每一跳都过 SSRF 校验 |
 | 剧集详情、简介、评分、评论 | 已完成 | 官网公开数据 |
 | 播放：官网明文片源 | 已完成 | 自有 URLSession 流式加载，AVPlayer 硬解 |
-| 播放：旧 App 接口加密片源 | 已完成 | 下载后 CENC 解密到本地缓存再播放 |
+| 播放：App 签名片源（player/v1） | 已完成 | 移植 `app-source.js` 播放路径：匿名设备注册（仅内存）、v5 签名，失败时换官方备用主机，再走一次 551 签名旧接口 |
+| 播放：旧 App 接口加密片源 | 已完成 | 最后的回退；加密片源下载后 CENC 解密到本地缓存再播放 |
 | 原生播放控件、全屏、画中画 | 已完成 | `AVPlayerView`，系统级 PiP |
 | 无边框悬浮小窗 | 已完成 | 置顶、跨桌面、按视频比例缩放、拖动、双击还原 |
 | 无标题栏播放器窗口 | 已完成 | 透明标题栏，悬停显示顶栏 |
 | 自动连播、倍速、长按空格 2 倍速 | 已完成 | |
 | 观看记录与续播 | 已完成 | `~/Library/Application Support/HongguoDrama` |
 | 深浅色主题 | 已完成 | 跟随系统或手动 |
-| App 签名片源（X-Gorgon / Medusa 等） | 第二阶段 | 移植 `src/native/app-source.js` |
+| App 搜索 / 目录 / 账号接口签名（X-Gorgon 等） | 未移植 | 播放不需要；搜索与目录走官网 |
 | 下载管理、剧库、合并 | 第二阶段 | |
 | 弹幕、官网账号登录 | 第三阶段 | |
 | 投屏、NAS、老板键、自动更新 | 第三阶段 | 自动更新计划使用 Sparkle |
@@ -56,16 +57,24 @@ macos/
     HTMLData.swift          只解析页面里的 JSON 字面量，不执行任何远端脚本
     SearchService.swift     官网搜索
     CatalogService.swift    分类与榜单
-    SeriesService.swift     分集、取源、详情、分享链接
-    LegacyAPI.swift         未签名的旧 App 接口（回退）
+    SeriesService.swift     分集、取源（官网非预览 → App → 旧接口）、详情、分享链接
+    AppSource.swift         App 播放取源：排队限速、选流、密钥与片源地址解密、域名白名单
+    PlaybackDevice.swift    匿名播放设备注册（只在内存，失败冷却 10 秒）
+    PlaybackSignerV5.swift  player/v1 的 v5 签名（Medusa / Helios）
+    PlayerSignature551.swift 旧接口重试用的 Argus / Ladon 签名
+    AppCrypto.swift         SM3、AES-CBC、gzip 等底层工具
+    LegacyAPI.swift         未签名的旧 App 接口（最后的回退）
     CencDecryptor.swift     spade_a 取密钥、CENC MP4 解密与 moov 重建
     PlaybackCache.swift     加密片源的解密缓存
     LibraryStore.swift      观看记录与设置
   Sources/HongguoDrama/     SwiftUI + AppKit 应用
     Views/                  侧边栏、分类、搜索、详情、观看记录、设置
     Player/                 播放控制、流式加载、播放器窗口、悬浮小窗
-  Tests/HongguoCoreTests/   解析、解密（含 Electron 版生成的向量）、SSRF、存储
+  Tests/HongguoCoreTests/   解析、解密、签名（含 Electron 版生成的向量）、SSRF、存储
+  scripts/gen-signing-vectors.cjs  用 src/native 的 JS 实现重新生成签名测试向量
 ```
+
+签名测试同时读取 `src/native/fixtures/playback-v5-vectors` 下的上游向量，因此需要在完整仓库里运行。
 
 ## 安全说明
 
@@ -75,7 +84,11 @@ macos/
 * App Transport Security 保持开启，http 片源会先升级为 https。
 * 播放流量走应用自己的 URLSession（不存 Cookie、不带账号信息），AVPlayer 只看到私有的
   `hgstream://` 地址。
-* 代码中没有任何账号凭据；接口里的设备参数是协议常量。
+* 代码中没有任何账号凭据；接口里的设备参数是协议常量。App 取源时注册的匿名设备身份只保存在内存，
+  不写盘，每次取源重新注册；注册失败后 10 秒内不再重试。所有取源请求排成一队、间隔至少 1 秒，
+  遇到 403 / 429 / 业务拒绝会停止已排队的请求。
+* App 返回的片源地址只接受 qznovelvod.com / fqnovelvod.com / douyinvod.com 的 HTTPS 地址，并再过
+  `URLGuard`；App 接口本身只允许 fqnovel.com / snssdk.com，带签名的请求不跟随跳转。
 * 已知限制：DNS 校验与实际连接之间存在理论上的 DNS 重绑定窗口（URLSession 不支持固定 IP 连接），
   与 Electron 版相比少了 socket 级别的地址校验。
 
