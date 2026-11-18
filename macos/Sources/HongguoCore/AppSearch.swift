@@ -85,7 +85,7 @@ public enum SearchText {
 
     static func integer(_ value: JSONValue) -> Int? {
         switch value {
-        case .int(let i): return i >= 0 ? i : nil
+        case .int(let i): return i >= 0 ? Int(exactly: i) : nil
         case .double(let d): return d >= 0 && d.rounded() == d && d <= 9_007_199_254_740_991 ? Int(d) : nil
         case .string(let s):
             let t = s.trimmingCharacters(in: .whitespaces)
