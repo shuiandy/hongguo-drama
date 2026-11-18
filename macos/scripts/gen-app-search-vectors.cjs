@@ -13,11 +13,9 @@ let clock = PROCESS_STARTED;
 const realNow = Date.now;
 Date.now = () => clock;
 const realRandomBytes = crypto.randomBytes;
-let firstRandomBytes = true;
-crypto.randomBytes = (n, ...rest) => {
-  if (firstRandomBytes && n === 18) { firstRandomBytes = false; return Buffer.from(PROCESS_NONCE_HEX, 'hex'); }
-  return Buffer.alloc(n, 0x11);
-};
+// Every 18-byte draw (app-source.js PROCESS_NONCE, and any other module loaded first) gets the
+// fixed nonce; everything else (the catalogue device ids) a constant fill.
+crypto.randomBytes = (n, ...rest) => n === 18 ? Buffer.from(PROCESS_NONCE_HEX, 'hex') : Buffer.alloc(n, 0x11);
 const Module = require('node:module');
 const originalLoad = Module._load;
 Module._load = function (request, ...rest) {
