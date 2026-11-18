@@ -25,6 +25,8 @@ struct ContentView: View {
                     SidebarRow(title: "我的剧库", style: SidebarStyle.of(.library),
                                badge: model.favorites.isEmpty ? nil : "\(model.favorites.count)").tag(SidebarItem.library)
                     SidebarRow(title: "下载", style: SidebarStyle.of(.downloads), badge: downloadBadge).tag(SidebarItem.downloads)
+                    SidebarRow(title: "账号", style: SidebarStyle.of(.account), badge: AccountState.shared.profile?.nickname ?? "未登录")
+                        .tag(SidebarItem.account)
                 }
             }
             .safeAreaInset(edge: .top, spacing: 0) { BrandHeader() }
@@ -48,6 +50,7 @@ struct ContentView: View {
             }
         }
         .tint(.hongguoRed)
+        .task { await AccountState.shared.restore() }
         .background {
             // ⌘K jumps to search from anywhere in the main window.
             Button("搜索") { model.selection = .search }
@@ -67,6 +70,7 @@ struct ContentView: View {
         case .history: HistoryView()
         case .library: LibraryView()
         case .downloads: DownloadsView()
+        case .account: AccountView()
         }
     }
 
@@ -95,6 +99,7 @@ struct SidebarStyle {
         case .history: return SidebarStyle(symbol: "clock.fill", colors: [Color(red: 0.2, green: 0.83, blue: 0.6), Color(red: 0.02, green: 0.47, blue: 0.34)])
         case .library: return SidebarStyle(symbol: "heart.fill", colors: [Color(red: 1, green: 0.45, blue: 0.55), Color(red: 0.86, green: 0.15, blue: 0.35)])
         case .downloads: return SidebarStyle(symbol: "arrow.down.circle.fill", colors: [Color(red: 0.35, green: 0.6, blue: 1), Color(red: 0.15, green: 0.35, blue: 0.9)])
+        case .account: return SidebarStyle(symbol: "person.crop.circle.fill", colors: [Color(red: 0.99, green: 0.72, blue: 0.3), Color(red: 0.9, green: 0.45, blue: 0.08)])
         }
     }
 }

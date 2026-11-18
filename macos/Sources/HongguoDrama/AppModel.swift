@@ -8,6 +8,7 @@ enum SidebarItem: Hashable, Identifiable {
     case history
     case library
     case downloads
+    case account
 
     var id: String {
         switch self {
@@ -16,6 +17,7 @@ enum SidebarItem: Hashable, Identifiable {
         case .history: return "history"
         case .library: return "library"
         case .downloads: return "downloads"
+        case .account: return "account"
         }
     }
 
@@ -26,6 +28,7 @@ enum SidebarItem: Hashable, Identifiable {
         case .history: return "观看记录"
         case .library: return "我的剧库"
         case .downloads: return "下载"
+        case .account: return "账号"
         }
     }
 
@@ -39,6 +42,7 @@ enum SidebarItem: Hashable, Identifiable {
         case .history: return "clock.arrow.circlepath"
         case .library: return "heart"
         case .downloads: return "arrow.down.circle"
+        case .account: return "person.crop.circle"
         }
     }
 }
