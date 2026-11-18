@@ -33,6 +33,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var miniWindowFrame: String?
     public var playerWindowFrame: String?
     public var searchHistory: [String] = []
+    /// Preferred video short side in pixels (1080, 720…); nil = automatic (best tier).
+    public var preferredQuality: Int?
 
     public init() {}
 
@@ -50,6 +52,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         miniWindowFrame = try? c.decodeIfPresent(String.self, forKey: .miniWindowFrame)
         playerWindowFrame = try? c.decodeIfPresent(String.self, forKey: .playerWindowFrame)
         searchHistory = (try? c.decodeIfPresent([String].self, forKey: .searchHistory)) ?? d.searchHistory
+        preferredQuality = try? c.decodeIfPresent(Int.self, forKey: .preferredQuality)
     }
 }
 

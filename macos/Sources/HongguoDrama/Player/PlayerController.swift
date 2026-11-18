@@ -71,6 +71,10 @@ final class PlayerController {
     private(set) var startupMilliseconds: Int?
     /// Short message shown over the video (speed changes, auto-next toggles).
     private(set) var toast: String?
+    /// Resolution tiers of the current episode, highest first. Empty when the source has one stream (web).
+    private(set) var qualityOptions: [QualityOption] = []
+    /// Tier actually playing; nil when unknown (web, local files).
+    private(set) var currentQuality: QualityOption?
 
     private var storedRate: Float = 1.0
     var rate: Float {
@@ -97,6 +101,30 @@ final class PlayerController {
     }
     /// Views apply `fillMode.gravity` to their AVPlayerView / AVPlayerLayer.
     var fillMode: VideoFillMode = .fit
+    /// Preferred tier (`QualityOption.id`, the short side in px); nil = automatic best.
+    /// Persisted. Setting it switches the current episode at the same position without re-resolving.
+    var preferredQuality: QualityOption.ID? {
+        get { storedPreferredQuality }
+        set {
+            guard newValue != storedPreferredQuality else { return }
+            storedPreferredQuality = newValue
+            AppModel.shared.settings.preferredQuality = newValue
+            preparedMaps.removeAll()
+            guard let info = currentInfo, !info.variants.isEmpty else { return }
+            let resumeAt = player.currentTime().seconds.isFinite ? player.currentTime().seconds : currentTime
+            guard let newValue else {
+                // Automatic: resolve again so the source's default tier is used.
+                show(toast: "画质：自动")
+                load(startAt: resumeAt, force: false)
+                return
+            }
+            let target = info.selecting(shortSide: newValue)
+            guard target.url != info.url else { return }
+            show(toast: "画质：\(target.quality?.label ?? "自动")")
+            load(startAt: resumeAt, force: false, resolved: target)
+        }
+    }
+    private var storedPreferredQuality: Int?
     var autoNext: Bool {
         get { AppModel.shared.settings.autoNext }
         set { AppModel.shared.settings.autoNext = newValue }
@@ -118,7 +146,7 @@ final class PlayerController {
     @ObservationIgnored private var retriedWithFile = false
     @ObservationIgnored private var holdingSpeed = false
     @ObservationIgnored private var loadStarted = Date()
-    /// Header maps prepared ahead of time for the next episode, keyed by vid.
+    /// Header maps prepared ahead of time for the next episode, keyed by `mapKey`.
     @ObservationIgnored private var preparedMaps: [String: CencStreamMap] = [:]
 
     var currentEpisode: Episode? {
@@ -139,6 +167,7 @@ final class PlayerController {
         let settings = AppModel.shared.settings
         storedRate = settings.rememberSpeed ? max(0.25, min(4, settings.playbackRate)) : 1
         storedVolume = max(0, min(1, settings.volume))
+        storedPreferredQuality = settings.preferredQuality
         player.volume = storedVolume
         player.preventsDisplaySleepDuringVideoPlayback = true
         player.actionAtItemEnd = .pause
@@ -203,7 +232,8 @@ final class PlayerController {
         load(startAt: startAt, force: force)
     }
 
-    private func load(startAt: Double, force: Bool, preferFile: Bool = false) {
+    /// `resolved` replays an already resolved source (quality switch, decrypt fallback) without a new request.
+    private func load(startAt: Double, force: Bool, preferFile: Bool = false, resolved: PlayInfo? = nil) {
         guard let episode = currentEpisode, let list = episodes else { return }
         loadTask?.cancel()
         loader?.cancelAll()
@@ -221,18 +251,28 @@ final class PlayerController {
             pipeline = .localFile
             currentSource = nil
             currentInfo = nil
+            qualityOptions = []
+            currentQuality = nil
             start(item: AVPlayerItem(url: file), info: nil, startAt: startAt)
             return
         }
 
-        loadingText = "正在获取第 \(episode.index) 集片源…"
+        loadingText = resolved == nil ? "正在获取第 \(episode.index) 集片源…" : "正在切换…"
         let service = AppModel.shared.series
-        let prepared = preparedMaps.removeValue(forKey: episode.vid)
+        let preferred = storedPreferredQuality
+        let maps = preparedMaps
         loadTask = Task { [weak self] in
             do {
-                let info = try await service.playInfo(vid: episode.vid, seriesId: list.seriesId, force: force)
+                var info: PlayInfo
+                if let resolved {
+                    info = resolved
+                } else {
+                    info = try await service.playInfo(vid: episode.vid, seriesId: list.seriesId, force: force)
+                        .selecting(shortSide: preferred)
+                }
                 try Task.checkCancellation()
                 try await URLGuard.check(info.url)
+                let prepared = maps[Self.mapKey(info)]
                 let (item, pipeline, streaming) = try await Self.makeItem(for: info, episode: episode, prepared: force ? nil : prepared,
                                                                           preferFile: preferFile) { text in
                     Task { @MainActor in self?.loadingText = text }
@@ -244,6 +284,8 @@ final class PlayerController {
                 guard let self else { return }
                 self.loader = streaming
                 self.pipeline = pipeline
+                self.qualityOptions = info.qualityOptions
+                self.currentQuality = info.quality
                 self.start(item: item, info: info, startAt: startAt)
             } catch is CancellationError {
             } catch let error as HongguoError where error.kind == .cancelled {
@@ -337,7 +379,7 @@ final class PlayerController {
         }
         if pipeline == .progressiveDecrypt, !retriedWithFile {
             retriedWithFile = true
-            load(startAt: resumeAt, force: false, preferFile: true)
+            load(startAt: resumeAt, force: false, preferFile: true, resolved: currentInfo)
             return
         }
         isLoading = false
@@ -350,13 +392,19 @@ final class PlayerController {
         let next = list.episodes[index]
         if localFileProvider?(next) != nil { return }
         let service = AppModel.shared.series
+        let preferred = storedPreferredQuality
         Task { [weak self] in
-            guard let info = try? await service.playInfo(vid: next.vid, seriesId: list.seriesId), info.isEncrypted,
-                  PlaybackCache.shared.cachedFile(for: info) == nil,
+            guard let info = try? await service.playInfo(vid: next.vid, seriesId: list.seriesId).selecting(shortSide: preferred),
+                  info.isEncrypted, PlaybackCache.shared.cachedFile(for: info) == nil,
                   let map = try? await CencStreamLoader.open(info) else { return }
-            guard let self, self.episodes?.seriesId == list.seriesId else { return }
-            self.preparedMaps = [next.vid: map]
+            guard let self, self.episodes?.seriesId == list.seriesId, self.storedPreferredQuality == preferred else { return }
+            self.preparedMaps = [Self.mapKey(info): map]
         }
+    }
+
+    /// Header maps depend on the file, i.e. episode and tier, not on the signed URL.
+    private nonisolated static func mapKey(_ info: PlayInfo) -> String {
+        "\(info.vid):\(info.quality?.shortSide ?? 0)"
     }
 
     private func episodeEnded() {

@@ -7,7 +7,7 @@
 // Changes: registered in-memory playback identity; pure JS SM3;
 // bounded HTTPS transport; exact episode matching; supported codec selection.
 // Swift port: playback only (search/catalogue/account signers are not ported); ByteVC2 rows are
-// skipped because AVFoundation cannot decode them; "auto" quality only.
+// skipped because AVFoundation cannot decode them; "auto" picks the best tier, others are variants.
 // Crypto tables and SDK protocol constants below are not user credentials.
 import Foundation
 
@@ -432,39 +432,51 @@ actor AppSource {
                 ? "本集仅提供播放器不支持的 ByteVC2 编码，当前无法播放，请在官方 App 观看"
                 : "本集暂未提供兼容的 H.264/HEVC 片源")
         }
-        let selected = best.pixels > 0 ? rows.filter { $0.pixels == best.pixels } : [best]
         let seed = info["key_seed"].string.map(AppCrypto.base64Decode)
         var lastError: Error?
         var incomplete = false
-        for row in selected {
-            do {
-                let spade = row.item["spade_a"].string ?? row.item["encrypt_info"]["spade_a"].string
-                let encrypt = !row.item["encrypt_info"]["encrypt"].isNull ? row.item["encrypt_info"]["encrypt"] : row.item["encrypt"]
-                let explicitlyPlain: Bool = {
-                    switch encrypt {
-                    case .bool(false), .int(0): return true
-                    case .string(let s): return s == "0" || s == "false"
-                    case .double(let d): return d == 0
-                    default: return false
+        /// First working stream among `tierRows` (already in codec preference order).
+        func resolve(_ tierRows: [Row]) -> PlayInfo? {
+            for row in tierRows {
+                do {
+                    let spade = row.item["spade_a"].string ?? row.item["encrypt_info"]["spade_a"].string
+                    let encrypt = !row.item["encrypt_info"]["encrypt"].isNull ? row.item["encrypt_info"]["encrypt"] : row.item["encrypt"]
+                    let explicitlyPlain: Bool = {
+                        switch encrypt {
+                        case .bool(false), .int(0): return true
+                        case .string(let s): return s == "0" || s == "false"
+                        case .double(let d): return d == 0
+                        default: return false
+                        }
+                    }()
+                    if requireMetadata && (spade ?? "").isEmpty && !explicitlyPlain {
+                        if encrypt.isNull { incomplete = true }
+                        throw AppSourceError(.invalidResponse, "本集片源缺少有效解密信息")
                     }
-                }()
-                if requireMetadata && (spade ?? "").isEmpty && !explicitlyPlain {
-                    if encrypt.isNull { incomplete = true }
-                    throw AppSourceError(.invalidResponse, "本集片源缺少有效解密信息")
-                }
-                let key = (spade ?? "").isEmpty ? nil : try deriveContentKey(spade!)
-                var candidates = [row.item["main_url"].string, row.item["backup_url"].string]
-                candidates += (row.item["backup_url_list"].array ?? []).map(\.string)
-                for candidate in candidates.compactMap({ $0 }).filter({ !$0.isEmpty }) {
-                    do {
-                        let media = try seed.map { try decryptSpadeURL(candidate, seed: $0) } ?? cleanURL(candidate)
-                        let url = try checkedURL(media, domains: mediaDomains)
-                        guard URLGuard.isPublicURL(url) else { throw URLGuard.blocked() }
-                        return PlayInfo(url: url, spadeA: nil, codec: row.codec == "bytevc1" ? "hevc" : row.codec, source: .app,
-                                        vid: vid, userAgent: inline ? playbackUA : videoUA, referer: nil, contentKey: key)
-                    } catch { lastError = error }
-                }
-            } catch { lastError = error }
+                    let key = (spade ?? "").isEmpty ? nil : try deriveContentKey(spade!)
+                    var candidates = [row.item["main_url"].string, row.item["backup_url"].string]
+                    candidates += (row.item["backup_url_list"].array ?? []).map(\.string)
+                    for candidate in candidates.compactMap({ $0 }).filter({ !$0.isEmpty }) {
+                        do {
+                            let media = try seed.map { try decryptSpadeURL(candidate, seed: $0) } ?? cleanURL(candidate)
+                            let url = try checkedURL(media, domains: mediaDomains)
+                            guard URLGuard.isPublicURL(url) else { throw URLGuard.blocked() }
+                            return PlayInfo(url: url, spadeA: nil, codec: row.codec == "bytevc1" ? "hevc" : row.codec, source: .app,
+                                            vid: vid, userAgent: inline ? playbackUA : videoUA, referer: nil, contentKey: key,
+                                            quality: row.pixels > 0 ? QualityOption(shortSide: row.pixels) : nil)
+                        } catch { lastError = error }
+                    }
+                } catch { lastError = error }
+            }
+            return nil
+        }
+        if var play = resolve(best.pixels > 0 ? rows.filter { $0.pixels == best.pixels } : [best]) {
+            // Other tiers are offered for manual switching only; "auto" never drops a tier silently.
+            let tiers = Set(rows.map(\.pixels).filter { $0 > 0 && $0 != best.pixels }).sorted(by: >)
+            if best.pixels > 0 {
+                play.variants = tiers.compactMap { tier in resolve(rows.filter { $0.pixels == tier }) }
+            }
+            return play
         }
         if let blocked = lastError as? AppSourceError, blocked.code == .securityBlocked { throw blocked }
         if let blocked = lastError as? HongguoError, blocked.kind == .security { throw blocked }

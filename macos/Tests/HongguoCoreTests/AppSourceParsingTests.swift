@@ -35,6 +35,31 @@ final class AppSourceParsingTests: XCTestCase {
         XCTAssertEqual(play.userAgent, AppSource.playbackUA)
     }
 
+    func testOffersOtherTiersAsVariants() throws {
+        let info = try model([
+            "video_1": row("h264", 1080, 1920, url: "https://a.qznovelvod.com/h264-1080.mp4", spade: spade),
+            "video_2": row("hevc", 720, 1280, url: "https://a.qznovelvod.com/hevc-720.mp4", spade: spade),
+            "video_3": row("h264", 720, 1280, url: "https://a.qznovelvod.com/h264-720.mp4", spade: spade),
+            "video_4": row("h264", 480, 854, url: "https://a.qznovelvod.com/h264-480.mp4", spade: spade),
+            "video_5": row("bytevc2", 1440, 2560, url: "https://a.qznovelvod.com/b2.mp4", spade: spade),
+        ])
+        let play = try AppSource.parsePlayModel(info, vid: "1", inline: true)
+        XCTAssertEqual(play.url.lastPathComponent, "h264-1080.mp4")
+        XCTAssertEqual(play.quality?.label, "1080P")
+        XCTAssertEqual(play.qualityOptions.map(\.shortSide), [1080, 720, 480])
+        XCTAssertEqual(play.variants.map(\.url.lastPathComponent), ["h264-720.mp4", "h264-480.mp4"], "H.264 preferred within a tier")
+        XCTAssertTrue(play.variants.allSatisfy { $0.contentKey == play.contentKey })
+
+        let low = play.selecting(shortSide: 720)
+        XCTAssertEqual(low.url.lastPathComponent, "h264-720.mp4")
+        XCTAssertEqual(low.qualityOptions.map(\.shortSide), [1080, 720, 480], "switching keeps every tier available")
+        XCTAssertEqual(play.selecting(shortSide: 600).quality?.shortSide, 480, "best tier at or below the preference")
+        XCTAssertEqual(play.selecting(shortSide: 240).quality?.shortSide, 480, "lowest tier when nothing is small enough")
+        XCTAssertEqual(low.selecting(shortSide: 1080).url.lastPathComponent, "h264-1080.mp4")
+        XCTAssertEqual(play.selecting(shortSide: nil), play)
+        XCTAssertEqual(QualityOption(shortSide: 2160).label, "4K")
+    }
+
     func testFallsBackToHEVCAndNormalisesByteVC1() throws {
         let info = try model([
             "video_1": row("bytevc1", 1080, 1920, url: "https:\\/\\/a.fqnovelvod.com\\/x.mp4?a=1\\u0026b=2", encrypt: false),
