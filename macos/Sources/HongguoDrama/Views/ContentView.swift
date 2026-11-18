@@ -14,14 +14,6 @@ struct ContentView: View {
                         SidebarRow(title: kind.label, style: SidebarStyle.of(.category(kind))).tag(SidebarItem.category(kind))
                     }
                 }
-                let others = model.settings.mediaSources.filter { $0.id != "hongguo" }
-                if !others.isEmpty {
-                    Section("其他片源") {
-                        ForEach(others, id: \.id) { entry in
-                            SidebarRow(title: entry.label, style: SidebarStyle.of(.source(entry.id))).tag(SidebarItem.source(entry.id))
-                        }
-                    }
-                }
                 Section("榜单") {
                     ForEach(CatalogKind.rankings) { kind in
                         SidebarRow(title: kind.label, style: SidebarStyle.of(.ranking(kind))).tag(SidebarItem.ranking(kind))

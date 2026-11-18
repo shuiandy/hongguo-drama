@@ -345,11 +345,15 @@ public final class HemaSource: MediaSource {
         let html: String
         if path == "/browse", let firstHTML { html = firstHTML } else { html = String(decoding: try await request(path), as: UTF8.self) }
         let data = try Self.pageData(html)
-        guard let list = data["bookList"].array, data["page"].number.map(Int.init) == page, (data["typeThreeId"].idString ?? "0") == slug else {
+        // The unfiltered first page reports typeThreeId "" (JS `|| '0'` treats it as 0).
+        let reported = data["typeThreeId"].idString.flatMap { $0.isEmpty ? nil : $0 } ?? "0"
+        guard let list = data["bookList"].array, data["page"].number.map(Int.init) == page, reported == slug else {
             throw HongguoError(.format, "河马返回的目录与请求不一致，请重试")
         }
         let results = Self.books(list)
-        let hasMore = !results.isEmpty && html.range(of: "<a\\b[^>]*\\shref=[\"']/browse/\(slug)/\(page + 1)[\"']", options: .regularExpression) != nil
+        let pages = data["pages"].number.map(Int.init)
+        let hasMore = !results.isEmpty && (pages.map { page < $0 }
+            ?? (html.range(of: "<a\\b[^>]*\\shref=[\"']/browse/\(slug)/\(page + 1)[\"']", options: .regularExpression) != nil))
         return SourcePage(results: results, page: page, hasMore: hasMore, genres: items!)
     }
 

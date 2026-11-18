@@ -96,8 +96,7 @@ final class ExternalSourcesTests: XCTestCase {
     static func hemaResponse(_ url: URL, _ body: Data?) -> String {
         switch url.path(percentEncoded: false) {
         case "/browse":
-            return next(#"{"typeThreeList":[{"typeThreeIds":[0],"name":"全部"},{"typeThreeIds":[12,13],"name":"逆袭"},{"typeThreeIds":["x"],"name":"坏"}],"bookList":[{"bookId":"41","bookName":"首页剧","coverWap":"https://img.example.com/1.jpg","totalChapterNum":60,"bookTypeThree":[{"name":"逆袭"}]}],"page":1,"typeThreeId":0}"#)
-                + #"<a href="/browse/0/2">下一页</a>"#
+            return next(#"{"typeThreeList":[{"typeThreeIds":[0],"name":"全部"},{"typeThreeIds":[12,13],"name":"逆袭"},{"typeThreeIds":["x"],"name":"坏"}],"bookList":[{"bookId":"41","bookName":"首页剧","coverWap":"https://img.example.com/1.jpg","totalChapterNum":60,"bookTypeThree":[{"name":"逆袭"}]}],"page":1,"pages":450,"typeThreeId":""}"#)
         case "/browse/12-13/2":
             return next(#"{"bookList":[{"bookId":42,"bookName":"第二页"}],"page":2,"typeThreeId":"12-13"}"#)
         case "/seo/video/6007":

@@ -23,6 +23,7 @@ struct CatalogView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 PageHeader(title: kind.label, subtitle: subtitle) {
+                    if !kind.isRanking { SourcePicker(current: "hongguo") }
                     HeaderSearchField()
                     Button { Task { await reload(force: true) } } label: { Image(systemName: "arrow.clockwise") }
                         .buttonStyle(GlassIconButtonStyle(diameter: 38))

@@ -23,6 +23,7 @@ struct SourceCatalogView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 PageHeader(title: label, subtitle: subtitle) {
+                    SourcePicker(current: sourceId)
                     searchField
                     Button { Task { await reload() } } label: { Image(systemName: "arrow.clockwise") }
                         .buttonStyle(GlassIconButtonStyle(diameter: 38))
@@ -120,5 +121,40 @@ struct SourceCatalogView: View {
             page = max(page, 1)
             self.error = describe(error)
         }
+    }
+}
+
+/// 发现 page source switch: 红果 (the category pages) or another enabled catalogue.
+struct SourcePicker: View {
+    let current: String
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let sources = model.settings.mediaSources
+        if sources.count > 1 {
+            Menu {
+                ForEach(sources, id: \.id) { entry in
+                    Button {
+                        select(entry.id)
+                    } label: {
+                        if entry.id == current { Label(entry.label, systemImage: "checkmark") } else { Text(entry.label) }
+                    }
+                }
+                Divider()
+                SettingsLink { Text("管理片源…") }
+            } label: {
+                Label("片源：\(SourceRouter.label(current))", systemImage: "film.stack")
+            }
+            .menuStyle(.button)
+            .buttonStyle(GlassButtonStyle())
+            .menuIndicator(.visible)
+            .fixedSize()
+            .help("切换片源")
+        }
+    }
+
+    private func select(_ id: String) {
+        guard id != current else { return }
+        model.selection = id == "hongguo" ? .category(.realDrama) : .source(id)
     }
 }
