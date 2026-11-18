@@ -76,6 +76,7 @@ public actor AnnouncementService {
         public var suppressionMode: String?
         public var suppressionVersion: String?
         public var suppressionDay: String?
+        public init() {}
     }
 
     public enum Mute: String, Sendable { case day, version }

@@ -19,6 +19,14 @@ struct HistoryView: View {
                             .buttonStyle(GlassButtonStyle())
                             .disabled(model.cloudSyncing)
                         }
+                        if model.settings.watchUpdatesEnabled {
+                            Button { Task { await checkUpdates() } } label: {
+                                Label(model.watchChecking ? "检查中…" : "检查更新", systemImage: "bell.badge")
+                            }
+                            .buttonStyle(GlassButtonStyle())
+                            .disabled(model.watchChecking)
+                            .help("检查已看剧集有没有新集和续作")
+                        }
                         Button(role: .destructive) { confirmClear = true } label: { Label("清空", systemImage: "trash") }
                             .buttonStyle(GlassButtonStyle())
                     }
@@ -30,6 +38,19 @@ struct HistoryView: View {
                                 .contextMenu {
                                     Button("继续播放") { resume(record) }
                                     Button("查看详情") { openDetail(record) }
+                                    if let sequels = record.sequels, !sequels.isEmpty {
+                                        Menu("续作") {
+                                            ForEach(sequels, id: \.seriesId) { ref in
+                                                Button(ref.title) {
+                                                    model.acknowledgeUpdates(record.seriesId)
+                                                    model.open(SeriesSummary(seriesId: ref.seriesId, title: ref.title))
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if record.hasUpdates {
+                                        Button("标记更新为已读") { model.acknowledgeUpdates(record.seriesId) }
+                                    }
                                     Divider()
                                     Button("删除记录", role: .destructive) {
                                         model.store.removeHistory(record.seriesId)
@@ -65,14 +86,27 @@ struct HistoryView: View {
         .task { await model.syncCloudHistory() }
     }
 
+    @State private var checkMessage = ""
+
+    private func checkUpdates() async {
+        checkMessage = ""
+        guard let summary = await model.checkWatchUpdates(force: true) else { return }
+        var text = "检查了 \(summary.checked) 部"
+        if summary.withUpdates > 0 { text += "，\(summary.withUpdates) 部有更新" } else { text += "，暂无更新" }
+        if summary.failed > 0 { text += "，\(summary.failed) 部检查失败" }
+        checkMessage = text
+    }
+
     private var subtitle: String {
         var text = "\(model.history.count) 部"
         if AccountState.shared.profile != nil { text += " · 已与云端合并" }
         if !model.cloudSyncMessage.isEmpty { text += " · \(model.cloudSyncMessage)" }
+        if !checkMessage.isEmpty { text += " · \(checkMessage)" }
         return text
     }
 
     private func resume(_ record: WatchRecord) {
+        model.acknowledgeUpdates(record.seriesId)
         Task {
             await PlayerController.shared.open(seriesId: record.seriesId, title: record.title, cover: record.cover,
                                                index: record.episodeIndex, startAt: record.position)

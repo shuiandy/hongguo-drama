@@ -22,6 +22,9 @@ struct SeriesDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 info
+                if let sequels = record?.sequels, !sequels.isEmpty {
+                    sequelRow(sequels)
+                }
                 episodePanel
                 if let reviews = details?.reviews, !reviews.isEmpty {
                     reviewList(reviews)
@@ -43,7 +46,27 @@ struct SeriesDetailView: View {
         }
         .navigationTitle(title)
         .transparentToolbar()
-        .task { await load() }
+        .task {
+            model.acknowledgeUpdates(summary.seriesId)
+            await load()
+        }
+    }
+
+    /// Later seasons found by the watch-update check.
+    private func sequelRow(_ sequels: [SeriesRef]) -> some View {
+        HStack(spacing: 8) {
+            Label("续作", systemImage: "rectangle.stack.badge.plus").font(.system(size: 13, weight: .semibold))
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(sequels, id: \.seriesId) { ref in
+                        Button(ref.title) { model.open(SeriesSummary(seriesId: ref.seriesId, title: ref.title, cover: "")) }
+                            .buttonStyle(GlassButtonStyle())
+                            .help("打开 \(ref.title)")
+                    }
+                }
+            }
+            .scrollIndicators(.never)
+        }
     }
 
     // MARK: Header

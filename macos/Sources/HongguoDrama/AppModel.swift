@@ -167,6 +167,75 @@ final class AppModel {
         }
     }
 
+    // MARK: Background checks (new episodes, sequels, app updates, announcements)
+
+    let watchChecker = WatchUpdateChecker()
+    let announcements = AnnouncementService()
+    private(set) var watchChecking = false
+    var availableRelease: AvailableRelease?
+    var updateMessage = ""
+    /// The announcement currently shown as a sheet.
+    var announcement: Announcement?
+    private var backgroundStarted = false
+
+    /// Starts the launch checks and their timers once: update check at launch, announcements at
+    /// launch and every 5 minutes (emergency only), watch updates every 30 minutes for due records.
+    func startBackgroundChecks() {
+        guard !backgroundStarted else { return }
+        backgroundStarted = true
+        Task { await checkForUpdate(manual: false) }
+        Task {
+            var first = true
+            while !Task.isCancelled {
+                if announcement == nil, let next = await announcements.check(urgentOnly: !first) { announcement = next }
+                first = false
+                try? await Task.sleep(for: .seconds(5 * 60))
+            }
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(20))
+            while !Task.isCancelled {
+                await checkWatchUpdates(force: false)
+                try? await Task.sleep(for: .seconds(30 * 60))
+            }
+        }
+    }
+
+    /// Checks watched series for new episodes and sequels (only due ones unless forced).
+    @discardableResult
+    func checkWatchUpdates(force: Bool) async -> WatchUpdateChecker.Summary? {
+        guard settings.watchUpdatesEnabled, !watchChecking else { return nil }
+        watchChecking = true
+        defer { watchChecking = false }
+        let summary = await watchChecker.refresh(force: force, includeSequels: settings.watchSequelsEnabled)
+        refreshHistory()
+        return summary
+    }
+
+    /// Clears the "更新 N 集" / "有续作" badges once the user opens the series.
+    func acknowledgeUpdates(_ seriesId: String) {
+        guard let record = store.record(for: seriesId), record.hasUpdates else { return }
+        _ = store.updateRecord(seriesId) { $0.acknowledging() }
+        refreshHistory()
+    }
+
+    func checkForUpdate(manual: Bool) async {
+        if manual { updateMessage = "正在检查…" }
+        do {
+            availableRelease = try await UpdateChecker().check()
+            updateMessage = availableRelease.map { "发现新版本 \($0.version)" } ?? "已是最新版本（\(UpdateChecker.currentVersion)）"
+        } catch {
+            if manual { updateMessage = (error as? HongguoError)?.message ?? "检查更新失败，请稍后重试" }
+        }
+    }
+
+    /// "查看公告" in settings: whatever is current, ignoring mutes.
+    func showCurrentAnnouncement() async -> Bool {
+        guard let current = await announcements.current() else { return false }
+        announcement = current
+        return true
+    }
+
     func open(_ summary: SeriesSummary) {
         guard let selection else { return }
         paths[selection, default: []].append(summary)

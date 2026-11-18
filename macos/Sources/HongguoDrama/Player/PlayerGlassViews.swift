@@ -494,6 +494,12 @@ struct PlayerSidePanel: View {
     let windows: PlayerWindows
     @State private var tab: Tab = .episodes
     @State private var details: PublicDetails?
+    @State private var reviewScope: ReviewScope = .series
+    @State private var episodeComments: EpisodeComments?
+    @State private var episodeCommentsError = ""
+
+    enum ReviewScope: Hashable, Sendable { case series, episode }
+    private static let episodeCommentService = EpisodeCommentService()
 
     private var record: WatchRecord? {
         guard let id = controller.episodes?.seriesId else { return nil }
@@ -526,6 +532,9 @@ struct PlayerSidePanel: View {
             details = nil
             guard let id = controller.episodes?.seriesId else { return }
             details = try? await AppModel.shared.series.publicDetails(seriesId: id)
+        }
+        .task(id: "\(controller.episodes?.seriesId ?? ""):\(controller.currentEpisode?.vid ?? ""):\(tab == .reviews && reviewScope == .episode)") {
+            await loadEpisodeComments()
         }
     }
 
@@ -659,34 +668,102 @@ struct PlayerSidePanel: View {
     // MARK: 评论
 
     private var reviewsTab: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 10) {
-                if let reviews = details?.reviews, !reviews.isEmpty {
-                    ForEach(reviews) { review in
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 8) {
-                                CoverImage(url: review.avatar, cornerRadius: 12).frame(width: 24, height: 24)
-                                Text(review.author.isEmpty ? "匿名用户" : review.author).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                                Spacer(minLength: 0)
-                                if let likes = review.likes, likes > 0 {
-                                    Label(formatCount(likes), systemImage: "hand.thumbsup").font(.system(size: 11)).foregroundStyle(.secondary)
-                                }
-                            }
-                            Text(review.content).font(.system(size: 13)).lineSpacing(3).textSelection(.enabled)
-                        }
-                        .padding(14)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .glassSurface(.clear, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        VStack(alignment: .leading, spacing: 10) {
+            GlassSegments(options: [GlassOption(label: "全剧", value: ReviewScope.series),
+                                    GlassOption(label: episodeScopeTitle, value: ReviewScope.episode)],
+                          selection: $reviewScope)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    switch reviewScope {
+                    case .series: seriesReviews
+                    case .episode: episodeReviews
                     }
-                } else if details == nil {
-                    ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
-                } else {
-                    Text("暂无评论").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 40)
                 }
+                .padding(2)
             }
-            .padding(2)
+            .scrollIndicators(.never)
         }
-        .scrollIndicators(.never)
+    }
+
+    private var episodeScopeTitle: String {
+        guard controller.index > 0 else { return "本集" }
+        if let total = episodeComments?.total, total > 0, episodeComments?.vid == controller.currentEpisode?.vid {
+            return "第 \(controller.index) 集 \(formatCount(total))"
+        }
+        return "第 \(controller.index) 集"
+    }
+
+    @ViewBuilder
+    private var seriesReviews: some View {
+        if let reviews = details?.reviews, !reviews.isEmpty {
+            ForEach(reviews) { review in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        CoverImage(url: review.avatar, cornerRadius: 12).frame(width: 24, height: 24)
+                        Text(review.author.isEmpty ? "匿名用户" : review.author).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                        Spacer(minLength: 0)
+                        if let likes = review.likes, likes > 0 {
+                            Label(formatCount(likes), systemImage: "hand.thumbsup").font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(review.content).font(.system(size: 13)).lineSpacing(3).textSelection(.enabled)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .glassSurface(.clear, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+        } else if details == nil {
+            ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
+        } else {
+            Text("暂无评论").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 40)
+        }
+    }
+
+    @ViewBuilder
+    private var episodeReviews: some View {
+        let vid = controller.currentEpisode?.vid
+        if let comments = episodeComments, comments.vid == vid {
+            if let likes = comments.likeCount, likes > 0 {
+                Label("本集 \(formatCount(likes)) 人点赞", systemImage: "heart.fill")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            if comments.items.isEmpty {
+                Text("本集暂无公开评论").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 30)
+            }
+            ForEach(comments.items) { item in
+                Text(item.content).font(.system(size: 13)).lineSpacing(3).textSelection(.enabled)
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .glassSurface(.clear, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            Text(comments.notice).font(.system(size: 11)).foregroundStyle(.tertiary).padding(.top, 4)
+        } else if !episodeCommentsError.isEmpty {
+            Text(episodeCommentsError).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 40)
+        } else if vid == nil {
+            Text("开始播放后显示本集评论").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 40)
+        } else {
+            ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
+        }
+    }
+
+    private func loadEpisodeComments() async {
+        guard tab == .reviews, reviewScope == .episode,
+              let seriesId = controller.episodes?.seriesId, let vid = controller.currentEpisode?.vid else { return }
+        if episodeComments?.vid == vid { return }
+        episodeCommentsError = ""
+        guard WatchHistory.source(of: seriesId) == .hongguo else {
+            episodeCommentsError = "这个片源没有本集评论"
+            return
+        }
+        do {
+            let result = try await Self.episodeCommentService.comments(seriesId: seriesId, vid: vid)
+            guard !Task.isCancelled else { return }
+            episodeComments = result
+        } catch is CancellationError {
+        } catch {
+            guard !Task.isCancelled else { return }
+            episodeCommentsError = (error as? HongguoError)?.message ?? "本集评论加载失败，请稍后重试"
+        }
     }
 
     private func sourceName(_ source: PlaySource) -> String {

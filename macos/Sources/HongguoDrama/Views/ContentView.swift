@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import HongguoCore
 
 struct ContentView: View {
@@ -20,7 +21,8 @@ struct ContentView: View {
                 }
                 Section("我的") {
                     SidebarRow(title: "观看记录", style: SidebarStyle.of(.history),
-                               badge: model.history.isEmpty ? nil : "\(model.history.count)").tag(SidebarItem.history)
+                               badge: model.history.isEmpty ? nil : "\(model.history.count)",
+                               dot: model.history.contains(where: \.hasUpdates)).tag(SidebarItem.history)
                     SidebarRow(title: "我的剧库", style: SidebarStyle.of(.library),
                                badge: model.favorites.isEmpty ? nil : "\(model.favorites.count)").tag(SidebarItem.library)
                     SidebarRow(title: "下载", style: SidebarStyle.of(.downloads), badge: downloadBadge).tag(SidebarItem.downloads)
@@ -30,8 +32,13 @@ struct ContentView: View {
             }
             .safeAreaInset(edge: .top, spacing: 0) { BrandHeader() }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if let record = model.history.first {
-                    ContinueWatchingCard(record: record).padding(10)
+                VStack(spacing: 0) {
+                    if let release = model.availableRelease {
+                        UpdateAvailableCard(release: release).padding(.horizontal, 10).padding(.top, 10)
+                    }
+                    if let record = model.history.first {
+                        ContinueWatchingCard(record: record).padding(10)
+                    }
                 }
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
@@ -50,8 +57,12 @@ struct ContentView: View {
         }
         .tint(.hongguoRed)
         .task {
+            model.startBackgroundChecks()
             await AccountState.shared.restore()
             await model.syncCloudHistory(force: true)
+        }
+        .sheet(item: $model.announcement) { item in
+            AnnouncementSheet(announcement: item)
         }
         .background {
             // ⌘K jumps to search from anywhere in the main window. Search has no sidebar row:
@@ -112,6 +123,8 @@ struct SidebarRow: View {
     let title: String
     let style: SidebarStyle
     var badge: String?
+    /// Red dot for unread updates (new episodes or sequels).
+    var dot = false
 
     var body: some View {
         HStack(spacing: 11) {
@@ -123,6 +136,9 @@ struct SidebarRow: View {
                             in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             Text(title).font(.system(size: 15, weight: .medium))
             Spacer(minLength: 0)
+            if dot {
+                Circle().fill(Color.hongguoRed).frame(width: 7, height: 7).help("有剧集更新")
+            }
             if let badge {
                 Text(badge).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
             }
@@ -265,6 +281,76 @@ extension View {
             base.toolbar(removing: .title)
         } else {
             base
+        }
+    }
+}
+
+// MARK: Update and announcements
+
+/// Sidebar card shown when GitHub has a newer release; opens this project's release page.
+struct UpdateAvailableCard: View {
+    let release: AvailableRelease
+
+    var body: some View {
+        Button { NSWorkspace.shared.open(release.url) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.down.app.fill").font(.system(size: 18)).foregroundStyle(Color.hongguoRed)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("新版本 \(release.version)").font(.system(size: 13, weight: .semibold))
+                    Text("点击前往下载页").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .glassSurface(in: RoundedRectangle(cornerRadius: 14, style: .continuous), interactive: true)
+        }
+        .buttonStyle(.plain)
+        .help("在浏览器打开 GitHub 发布页")
+    }
+}
+
+/// Remote announcement. Emergency ones stay until acknowledged; normal ones can be muted.
+struct AnnouncementSheet: View {
+    let announcement: Announcement
+    @Environment(\.dismiss) private var dismiss
+    @State private var error = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: announcement.urgent ? "exclamationmark.triangle.fill" : "megaphone.fill")
+                    .foregroundStyle(announcement.urgent ? Color.orange : Color.hongguoRed)
+                Text(announcement.urgent ? "紧急公告" : "公告").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            Text(announcement.title).font(.system(size: 18, weight: .bold))
+            ScrollView {
+                Text(announcement.body).font(.system(size: 13)).lineSpacing(4).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 280)
+            if !error.isEmpty { Text(error).font(.system(size: 11)).foregroundStyle(.secondary) }
+            HStack {
+                if announcement.urgent {
+                    Spacer()
+                    Button("我知道了") { act { try await AppModel.shared.announcements.acknowledge(announcement.id) } }
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("今天不再提醒") { act { try await AppModel.shared.announcements.mute(.day) } }
+                    Button("此版本不再提醒") { act { try await AppModel.shared.announcements.mute(.version) } }
+                    Spacer()
+                    Button("关闭") { dismiss() }.keyboardShortcut(.defaultAction)
+                }
+            }
+        }
+        .padding(22)
+        .frame(width: 440)
+        .interactiveDismissDisabled(announcement.urgent)
+    }
+
+    private func act(_ body: @escaping () async throws -> Void) {
+        Task {
+            do { try await body(); dismiss() } catch { self.error = (error as? HongguoError)?.message ?? "保存失败" }
         }
     }
 }

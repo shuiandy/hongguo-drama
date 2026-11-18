@@ -5,6 +5,11 @@ import HongguoCore
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var cacheBytes: Int64 = 0
+    @State private var announcementPrefs = AnnouncementService.State()
+    @State private var announcementNote = ""
+    @State private var confirmImport = false
+    @State private var importing = false
+    @State private var importNote = ""
 
     var body: some View {
         @Bindable var model = model
@@ -23,6 +28,17 @@ struct SettingsView: View {
                             cacheBytes = PlaybackCache.shared.usageBytes()
                         }
                     }
+                }
+                Section("从旧版导入") {
+                    LabeledContent("Electron 版数据") {
+                        Button(importing ? "导入中…" : "导入…") { confirmImport = true }
+                            .disabled(importing || !ElectronImport.exists())
+                    }
+                    Text(ElectronImport.exists()
+                         ? "导入旧版红果短剧里的观看进度、打开过的剧、已下载的集和设置。只读取旧版数据，不会修改它。"
+                         : "没有找到旧版数据（~/Library/Application Support/红果短剧/data.json）。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !importNote.isEmpty { Text(importNote).font(.caption) }
                 }
             }
             .tabItem { Label("通用", systemImage: "gearshape") }
@@ -65,13 +81,86 @@ struct SettingsView: View {
                 }
             }
             .tabItem { Label("下载", systemImage: "arrow.down.circle") }
+
+            Form {
+                LabeledContent("当前版本", value: UpdateChecker.currentVersion)
+                LabeledContent("更新") {
+                    HStack {
+                        if let release = model.availableRelease {
+                            Button("下载 \(release.version)") { NSWorkspace.shared.open(release.url) }
+                        }
+                        Button("检查更新") { Task { await model.checkForUpdate(manual: true) } }
+                    }
+                }
+                if !model.updateMessage.isEmpty {
+                    Text(model.updateMessage).font(.caption).foregroundStyle(.secondary)
+                }
+                Section("公告") {
+                    Toggle("显示普通公告", isOn: Binding(get: { announcementPrefs.normalEnabled },
+                                                     set: { value in setAnnouncements(normal: value) }))
+                    Toggle("显示紧急公告", isOn: Binding(get: { announcementPrefs.emergencyEnabled },
+                                                     set: { value in setAnnouncements(emergency: value) }))
+                    LabeledContent("当前公告") {
+                        Button("查看") {
+                            Task {
+                                announcementNote = await model.showCurrentAnnouncement() ? "" : "目前没有公告"
+                            }
+                        }
+                    }
+                    if !announcementNote.isEmpty { Text(announcementNote).font(.caption).foregroundStyle(.secondary) }
+                }
+                LabeledContent("项目主页") {
+                    Button("在 GitHub 打开") { NSWorkspace.shared.open(ReleaseRepo.releasesURL) }
+                }
+            }
+            .tabItem { Label("关于", systemImage: "info.circle") }
         }
         .formStyle(.grouped)
-        .frame(width: 460, height: 420)
+        .frame(width: 500, height: 460)
         .onAppear { cacheBytes = PlaybackCache.shared.usageBytes() }
+        .task { announcementPrefs = await model.announcements.preferences }
+        .confirmationDialog("从 Electron 版导入数据？", isPresented: $confirmImport) {
+            Button("导入") { runImport() }
+        } message: {
+            Text("会合并观看进度、打开过的剧、已下载的集和设置；两边都有的记录以较新的为准。旧版数据只读取，不会被修改。")
+        }
         .onChange(of: model.settings.maxConcurrentDownloads) { model.applyDownloadSettings() }
         .onChange(of: model.settings.downloadNameFormat) { model.applyDownloadSettings() }
         .onChange(of: model.settings.downloadRoot) { model.applyDownloadSettings() }
+    }
+
+    private func setAnnouncements(normal: Bool? = nil, emergency: Bool? = nil) {
+        Task {
+            do {
+                try await model.announcements.setPreferences(normalEnabled: normal, emergencyEnabled: emergency)
+                announcementNote = ""
+            } catch {
+                announcementNote = (error as? HongguoError)?.message ?? "保存失败"
+            }
+            announcementPrefs = await model.announcements.preferences
+        }
+    }
+
+    private func runImport() {
+        importing = true
+        importNote = ""
+        Task {
+            defer { importing = false }
+            do {
+                let result = try ElectronImport.read(base: model.settings)
+                let counts = try await ElectronImport.apply(result, store: model.store, library: model.library,
+                                                            downloads: model.downloads, applySettings: true)
+                if let settings = result.settings { model.settings = settings }
+                model.refreshHistory()
+                model.refreshLibrary()
+                model.applyDownloadSettings()
+                var text = "已导入 \(counts.records) 条观看记录、\(counts.series) 部剧、\(counts.downloads) 个下载"
+                if result.skipped > 0 { text += "，跳过 \(result.skipped) 条无效数据" }
+                importNote = text
+            } catch {
+                importNote = (error as? HongguoError)?.message ?? "导入失败：\(describe(error))"
+            }
+        }
     }
 
     private func chooseFolder() {
