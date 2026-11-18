@@ -2,11 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 // The floating window is frameless: this injected chrome provides the drag strip and close button.
 const FLOATING_CHROME_STYLE = '.floating-chrome{position:fixed;inset:0 0 auto;z-index:30;display:flex;align-items:flex-start;justify-content:flex-end;height:44px;padding:8px;box-sizing:border-box;background:linear-gradient(rgba(0,0,0,.62),transparent);opacity:0;transition:opacity .18s ease;-webkit-app-region:drag;pointer-events:auto}'
-  + 'body:hover .floating-chrome,.floating-chrome:focus-within{opacity:1}'
+  + 'body:hover .floating-chrome,body[data-pointer="in"] .floating-chrome,.floating-chrome:focus-within{opacity:1}'
   + '.floating-chrome-close{-webkit-app-region:no-drag;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.18);color:#fff;font:600 15px/1 -apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;backdrop-filter:blur(12px)}'
   + '.floating-chrome-close:hover{background:rgba(255,255,255,.32)}.floating-chrome-close:focus-visible{outline:2px solid #fff;outline-offset:2px}'
   + '@media (prefers-reduced-motion:reduce){.floating-chrome{transition:none}}';
-
 export default function useFloatingPlayer(title, onChange, onBeforeMove, closeLabel = '返回主窗口') {
   const [host] = useState(() => {
     const element = document.createElement('div');
@@ -115,6 +114,8 @@ export default function useFloatingPlayer(title, onChange, onBeforeMove, closeLa
       close.addEventListener('click', () => child.close());
       chrome.appendChild(close);
       child.document.body.appendChild(chrome);
+      // body[data-pointer] is set by the main process from the native cursor (floating-player-window.js),
+      // because :hover drops when the pointer is over the drag strip.
       setFloating(true);
       onChange?.(true);
       syncAspectRatio();
