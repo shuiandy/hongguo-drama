@@ -4,6 +4,7 @@ import HongguoCore
 
 struct ContentView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         @Bindable var model = model
@@ -57,6 +58,11 @@ struct ContentView: View {
         }
         .tint(.hongguoRed)
         .task {
+            // Test builds: HONGGUO_OPEN_SETTINGS=<pane> opens the settings window at launch for screenshots.
+            if let raw = ProcessInfo.processInfo.environment["HONGGUO_OPEN_SETTINGS"] {
+                if let pane = SettingsPane(rawValue: raw) { model.settingsPane = pane }
+                openSettings()
+            }
             model.startBackgroundChecks()
             await AccountState.shared.restore()
             await model.syncCloudHistory(force: true)
