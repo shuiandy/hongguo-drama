@@ -29,7 +29,7 @@ final class AccountServiceTests: XCTestCase {
         let png = Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]).base64EncodedString()
         return AccountService(store: store, webRequest: { url, headers in
             web.record(url, headers)
-            switch url.path {
+            switch url.path(percentEncoded: false) {
             case "/passport/web/get_qrcode/":
                 return self.response(url, json: #"{"message":"success","data":{"token":"tok","qrcode":"data:image/png;base64,\#(png)","expire_time":120}}"#,
                                      headers: ["Set-Cookie": "passport_csrf_token=abc; Path=/"])
@@ -76,7 +76,7 @@ final class AccountServiceTests: XCTestCase {
         let done = try await account.pollLogin(qr.loginId)
         XCTAssertEqual(done, .signedIn(AccountProfile(id: "1234567", nickname: "小红"), storageWarning: ""))
         XCTAssertEqual(store.current?.cookie, "passport_csrf_token=abc; sessionid=s3cret; sid_tt=t")
-        let poll = web.requests.first { $0.0.path == "/passport/web/check_qrconnect/" }!
+        let poll = web.requests.first { $0.0.path(percentEncoded: false) == "/passport/web/check_qrconnect/" }!
         XCTAssertTrue(poll.0.query!.contains("token=tok"))
         XCTAssertTrue(poll.0.query!.contains("aid=513755"))
 
