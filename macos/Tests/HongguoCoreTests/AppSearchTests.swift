@@ -82,6 +82,24 @@ final class AppSearchSigningTests: XCTestCase {
         }
     }
 
+    func testAccountWriteRequestMatchesReference() throws {
+        let identity = Self.fixture["identity"]
+        let id = PlaybackIdentity(deviceId: identity["device_id"].string!, iid: identity["iid"].string!, cdid: identity["cdid"].string!)
+        let items = Self.fixture["accountWrite"].array ?? []
+        XCTAssertEqual(items.count, 2)
+        for item in items {
+            let (signer, queue) = signer(randoms(item))
+            let body = Array(item["body"].string!.utf8)
+            let signed = try signer.accountWrite(path: item["apiPath"].string!, body: body, identity: id, nowMillis: Int64(item["now"].number!))
+            XCTAssertEqual(signed.url, item["url"].string)
+            XCTAssertEqual(signed.body, body)
+            assertHeaders(signed, item)
+            XCTAssertEqual(queue.values.count, randoms(item).count - Int(item["used"].number!), "same number of random draws")
+        }
+        XCTAssertThrowsError(try AppLegacySigner.shared.accountWrite(path: "/reading/bookapi/read_history/list/v1/", body: [1], identity: id, nowMillis: 0))
+        XCTAssertThrowsError(try AppLegacySigner.shared.accountWrite(path: "/reading/bookapi/read_progress/upload/v1/", body: [], identity: id, nowMillis: 0))
+    }
+
     func testXGorgonAndBranchBasics() {
         let gorgon = AppLegacySigner.xGorgon(query: "a=1", body: nil, ts: 1_700_000_000, random: 0xabcd)
         XCTAssertTrue(gorgon.hasPrefix("8404cdab4001"))

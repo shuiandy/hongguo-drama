@@ -65,6 +65,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var builtinSources: [String: Bool] = [:]
     /// Apple CMS (`/api.php/provide/vod/`) endpoints added by the user.
     public var customSources: [CustomSourceConfig] = []
+    /// Report watch progress of Hongguo series to the signed-in Hongguo account. Off unless the user opts in.
+    public var cloudProgressSync: Bool = false
 
     public init() {}
 
@@ -143,6 +145,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         watchSequelsEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .watchSequelsEnabled)) ?? d.watchSequelsEnabled
         preferredQuality = try? c.decodeIfPresent(Int.self, forKey: .preferredQuality)
         builtinSources = (try? c.decodeIfPresent([String: Bool].self, forKey: .builtinSources)) ?? d.builtinSources
+        cloudProgressSync = (try? c.decodeIfPresent(Bool.self, forKey: .cloudProgressSync)) ?? d.cloudProgressSync
         // An entry that no longer validates is dropped instead of failing the whole file.
         customSources = ((try? c.decodeIfPresent([Lenient<CustomSourceConfig>].self, forKey: .customSources)) ?? []).compactMap { entry in
             entry.value.flatMap { try? CustomSource.validate($0) }.flatMap { $0.id.isEmpty ? nil : $0 }
