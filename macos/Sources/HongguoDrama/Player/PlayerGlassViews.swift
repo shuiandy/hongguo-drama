@@ -6,13 +6,12 @@ import HongguoCore
 // glass control bar, plus a right panel with 选集 / 简介 / 评论 tabs. The video is a bare AVPlayerLayer;
 // all controls are drawn here and bound to PlayerController.
 
-// MARK: Video surface with picture in picture
+// MARK: Video surface
 
-/// AVPlayerLayer host. With `allowsPictureInPicture` it also owns the system PiP controller.
+/// AVPlayerLayer host.
 struct VideoSurface: NSViewRepresentable {
     let player: AVPlayer
     var gravity: AVLayerVideoGravity = .resizeAspect
-    var allowsPictureInPicture = false
 
     final class SurfaceView: NSView {
         let playerLayer = AVPlayerLayer()
@@ -38,43 +37,12 @@ struct VideoSurface: NSViewRepresentable {
         let view = SurfaceView()
         view.playerLayer.player = player
         view.playerLayer.videoGravity = gravity
-        if allowsPictureInPicture { PictureInPicture.shared.attach(view.playerLayer) }
         return view
     }
 
     func updateNSView(_ view: SurfaceView, context: Context) {
         if view.playerLayer.player !== player { view.playerLayer.player = player }
         if view.playerLayer.videoGravity != gravity { view.playerLayer.videoGravity = gravity }
-    }
-}
-
-@MainActor
-@Observable
-final class PictureInPicture: NSObject, AVPictureInPictureControllerDelegate {
-    static let shared = PictureInPicture()
-
-    private(set) var isActive = false
-    @ObservationIgnored private var controller: AVPictureInPictureController?
-
-    var isSupported: Bool { AVPictureInPictureController.isPictureInPictureSupported() }
-
-    func attach(_ layer: AVPlayerLayer) {
-        guard isSupported, controller == nil else { return }
-        controller = AVPictureInPictureController(playerLayer: layer)
-        controller?.delegate = self
-    }
-
-    func toggle() {
-        guard let controller else { return }
-        if controller.isPictureInPictureActive { controller.stopPictureInPicture() } else { controller.startPictureInPicture() }
-    }
-
-    nonisolated func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
-        MainActor.assumeIsolated { isActive = true }
-    }
-
-    nonisolated func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
-        MainActor.assumeIsolated { isActive = false }
     }
 }
 
@@ -255,7 +223,7 @@ struct PlayerScreen: View {
 
     private var stage: some View {
         ZStack {
-            VideoSurface(player: controller.player, gravity: controller.fillMode.gravity, allowsPictureInPicture: true)
+            VideoSurface(player: controller.player, gravity: controller.fillMode.gravity)
             // Click toggles play, double click toggles full screen.
             Color.clear
                 .contentShape(Rectangle())
@@ -440,13 +408,6 @@ struct PlayerControlBar: View {
             Button { controller.toggleAutoNext() } label: { Image(systemName: "repeat") }
                 .buttonStyle(BarIconButtonStyle(size: 32, active: controller.autoNext))
                 .help(controller.autoNext ? "自动连播：开（A）" : "自动连播：关（A）")
-            if PictureInPicture.shared.isSupported {
-                Button { PictureInPicture.shared.toggle() } label: {
-                    Image(systemName: PictureInPicture.shared.isActive ? "pip.exit" : "pip.enter")
-                }
-                .buttonStyle(BarIconButtonStyle(size: 32))
-                .help("画中画")
-            }
             Button { windows.enterMini() } label: { Image(systemName: "rectangle.portrait.bottomright.inset.filled") }
                 .buttonStyle(BarIconButtonStyle(size: 32))
                 .help("悬浮小窗（M）")
