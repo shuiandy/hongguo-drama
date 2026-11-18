@@ -17,8 +17,7 @@ struct SettingsAboutPane: View {
                     Text("Mac 原生版 · 版本 \(UpdateChecker.currentVersion)").font(.caption).foregroundStyle(.secondary)
                     HStack(spacing: 8) {
                         if let release = model.availableRelease {
-                            Button("下载 \(release.version)") { NSWorkspace.shared.open(release.url) }
-                                .buttonStyle(GlassButtonStyle(prominent: true, size: .small))
+                            UpdateControls(release: release)
                         } else {
                             Button("检查更新") { Task { await model.checkForUpdate(manual: true) } }
                                 .buttonStyle(GlassButtonStyle(prominent: true, size: .small))
@@ -37,7 +36,7 @@ struct SettingsAboutPane: View {
 
             Section("更新") {
                 Toggle(isOn: $model.settings.checkUpdatesAtLaunch) {
-                    SettingLabel("启动时检查更新", note: "发现新版本时提示，不会自动下载或安装。随时可以在上面手动检查。")
+                    SettingLabel("启动时检查更新", note: "发现新版本时提示，不会自动下载。点“下载并安装”后会校验文件摘要和开发者签名，确认无误才允许重启安装。")
                 }
             }
 
@@ -70,6 +69,8 @@ private struct LicenseSheet: View {
             你可以自由使用、修改和再发布本程序，但再发布时必须同样以 GPL-3.0 开放源代码，并保留版权和许可声明。本程序不提供任何担保。
 
             完整许可文本见 https://www.gnu.org/licenses/gpl-3.0.html
+
+            ByteVC2 兼容转换组件 librempeg 是独立程序，以 AGPL-3.0 发布，内含 x264（GPL-2.0 或更新版本）。其许可文本与对应源代码压缩包位于应用包内 Contents/Resources/licenses/librempeg。
             """)
             .font(.callout)
             .textSelection(.enabled)

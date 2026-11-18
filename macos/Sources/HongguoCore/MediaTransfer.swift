@@ -73,14 +73,33 @@ enum RangeDecision: Equatable {
 /// URLSession implementation. Every URL and redirect hop goes through `URLGuard`; data is
 /// written as it arrives, so memory stays flat for long episodes.
 public final class URLSessionMediaTransfer: MediaTransferring, @unchecked Sendable {
-    private let session: URLSession
+    private let lock = NSLock()
+    private var currentSession: URLSession
+    /// nil for an injected configuration, which is never rebuilt after a proxy change.
+    private var proxyRevision: Int?
     private let guardCheck: @Sendable (URL) async throws -> Void
 
-    public init(configuration: URLSessionConfiguration = HTTPClient.defaultConfiguration(),
-                guardCheck: @escaping @Sendable (URL) async throws -> Void = { try await URLGuard.check($0) }) {
+    private var session: URLSession {
+        lock.withLock {
+            if let built = proxyRevision, built != NetworkProxy.shared.revision {
+                currentSession.finishTasksAndInvalidate()
+                currentSession = URLSession(configuration: Self.configured(HTTPClient.defaultConfiguration()))
+                proxyRevision = NetworkProxy.shared.revision
+            }
+            return currentSession
+        }
+    }
+
+    private static func configured(_ configuration: URLSessionConfiguration) -> URLSessionConfiguration {
         configuration.timeoutIntervalForRequest = 60
         configuration.timeoutIntervalForResource = 6 * 60 * 60
-        session = URLSession(configuration: configuration)
+        return configuration
+    }
+
+    public init(configuration: URLSessionConfiguration? = nil,
+                guardCheck: @escaping @Sendable (URL) async throws -> Void = { try await URLGuard.check($0) }) {
+        proxyRevision = configuration == nil ? NetworkProxy.shared.revision : nil
+        currentSession = URLSession(configuration: Self.configured(configuration ?? HTTPClient.defaultConfiguration()))
         self.guardCheck = guardCheck
     }
 

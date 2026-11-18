@@ -23,21 +23,48 @@ final class DanmakuModel {
         }
     }
 
-    func load(seriesId: String, vid: String, fresh: Bool = false) async {
-        let newKey = "\(seriesId):\(vid)"
+    /// "本集评论" when the bullets currently shown are the episode's comments, not timed danmaku.
+    private(set) var usingComments = false
+    @ObservationIgnored private static let commentService = EpisodeCommentService()
+
+    func load(seriesId: String, vid: String, source: DanmakuSettings.Source, duration: Double? = nil, fresh: Bool = false) async {
+        let newKey = "\(seriesId):\(vid):\(source.rawValue)"
         guard fresh || newKey != key else { return }
         key = newKey
         stage.reset()
         stage.load([])
         total = 0
         notice = nil
+        usingComments = false
         isLoading = true
-        let result = await DanmakuService.shared.fetch(seriesId: seriesId, vid: vid, fresh: fresh)
-        guard key == newKey else { return }
-        isLoading = false
-        stage.load(result.items)
-        total = result.total
-        notice = result.success ? (result.notice.isEmpty ? nil : result.notice) : result.error
+        defer { if key == newKey { isLoading = false } }
+        var officialProblem = ""
+        if source != .comments {
+            let result = await DanmakuService.shared.fetch(seriesId: seriesId, vid: vid, fresh: fresh)
+            guard key == newKey else { return }
+            if source == .official || !result.items.isEmpty {
+                stage.load(result.items)
+                total = result.total
+                notice = result.success ? (result.notice.isEmpty ? nil : result.notice) : result.error
+                return
+            }
+            officialProblem = result.success ? "本集暂无时间轴弹幕" : "时间轴弹幕暂不可用"
+        }
+        // 本集评论（备用）: the episode's public comments spread over the episode.
+        do {
+            let comments = try await Self.commentService.comments(seriesId: seriesId, vid: vid)
+            guard key == newKey else { return }
+            let items = comments.danmakuItems(duration: duration)
+            stage.load(items)
+            total = items.count
+            usingComments = !items.isEmpty
+            let prefix = officialProblem.isEmpty ? "" : "\(officialProblem)，"
+            notice = items.isEmpty ? "\(prefix)本集也暂无可显示的公开评论" : "\(prefix)正在用本集 \(items.count) 条公开评论作弹幕"
+        } catch {
+            guard key == newKey else { return }
+            let message = (error as? HongguoError)?.message ?? "本集评论加载失败"
+            notice = officialProblem.isEmpty ? message : "\(officialProblem)；\(message)"
+        }
     }
 
     func clear() {
@@ -95,9 +122,13 @@ struct DanmakuOverlay: View {
             }
         }
         .allowsHitTesting(false)
-        .task(id: "\(controller.episodes?.seriesId ?? ""):\(currentVid ?? "")") {
+        .task(id: "\(controller.episodes?.seriesId ?? ""):\(currentVid ?? ""):\(settings.source.rawValue)") {
             guard let seriesId = controller.episodes?.seriesId, let vid = currentVid else { model.clear(); return }
-            await model.load(seriesId: seriesId, vid: vid)
+            // Give the item a moment to report its length so comment bullets can be spread over it.
+            if settings.source != .official, controller.duration <= 0 { try? await Task.sleep(for: .seconds(1.5)) }
+            guard !Task.isCancelled else { return }
+            await model.load(seriesId: seriesId, vid: vid, source: settings.source,
+                             duration: controller.duration > 0 ? controller.duration : nil)
         }
     }
 }
@@ -113,6 +144,14 @@ struct DanmakuSettingsPanel: View {
                 Text("弹幕").font(.system(size: 15, weight: .bold))
                 Spacer()
                 Toggle("显示弹幕", isOn: $app.settings.danmaku.enabled).toggleStyle(.switch).labelsHidden().tint(.hongguoRed)
+            }
+            row("来源") {
+                Picker("", selection: $app.settings.danmaku.source) {
+                    Text("自动").tag(DanmakuSettings.Source.auto)
+                    Text("时间轴").tag(DanmakuSettings.Source.official)
+                    Text("本集评论").tag(DanmakuSettings.Source.comments)
+                }
+                .pickerStyle(.segmented).labelsHidden()
             }
             Text(statusLine).font(.system(size: 11)).foregroundStyle(.secondary)
             slider("不透明度", value: $app.settings.danmaku.opacity, range: 20...100, format: { "\(Int($0))%" })
@@ -149,6 +188,7 @@ struct DanmakuSettingsPanel: View {
     private var statusLine: String {
         if model.isLoading { return "正在加载本集弹幕…" }
         if let notice = model.notice { return notice }
+        if model.usingComments { return "正在用本集 \(model.total) 条公开评论作弹幕" }
         return model.total > 0 ? "本集共 \(model.total) 条弹幕" : "本集暂无弹幕"
     }
 

@@ -73,3 +73,21 @@ public final class EpisodeCommentService: Sendable {
                                likeCount: count(social["episode_like_count"]), notice: EpisodeComments.limitedNotice)
     }
 }
+
+extension EpisodeComments {
+    /// The comments as scrolling danmaku ("本集评论（备用）"). The page has no timestamps, so the
+    /// comments are spread evenly over the episode (every 3 s when the length is unknown).
+    public func danmakuItems(duration: Double? = nil) -> [DanmakuItem] {
+        let texts = items.map { $0.content.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .map { $0.count > 60 ? String($0.prefix(58)) + "…" : $0 }
+        guard !texts.isEmpty else { return [] }
+        let spacing: Double
+        if let duration, duration.isFinite, duration > 10 {
+            spacing = min(8, max(1.5, (duration - 4) / Double(texts.count)))
+        } else {
+            spacing = 3
+        }
+        return texts.enumerated().map { index, text in DanmakuItem(time: 1 + Double(index) * spacing, text: text) }
+    }
+}

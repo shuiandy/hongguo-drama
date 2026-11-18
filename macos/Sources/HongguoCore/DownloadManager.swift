@@ -5,7 +5,7 @@ public enum DownloadStatus: String, Codable, Sendable, CaseIterable {
 }
 
 public enum DownloadPhase: String, Codable, Sendable {
-    case resolving, transferring, decrypting
+    case resolving, transferring, decrypting, converting
 }
 
 /// One episode download. Persisted in `downloads.json`.
@@ -197,7 +197,8 @@ public actor DownloadManager {
     /// Adds episodes of one series. Episodes already queued or downloaded (file present) are
     /// skipped; stopped, failed or missing-file ones are queued again. Returns how many were queued.
     @discardableResult
-    public func enqueue(seriesId: String, seriesTitle: String, cover: String = "", episodes: [Episode]) throws -> Int {
+    public func enqueue(seriesId: String, seriesTitle: String, cover: String = "", episodes: [Episode],
+                        destination: (@Sendable (Episode) -> URL)? = nil) throws -> Int {
         guard !episodes.isEmpty else { return 0 }
         guard seriesId.matchesDigits(min: 1, max: 30) else { throw HongguoError(.input, "无效的剧集编号") }
         let cleanTitle = DownloadNaming.sanitizeFolderName(seriesTitle).isEmpty ? "红果短剧" : DownloadNaming.sanitizeFolderName(seriesTitle)
@@ -211,6 +212,12 @@ public actor DownloadManager {
                 let fileMissing = task.status == .completed && !FileManager.default.fileExists(atPath: task.savePath)
                 guard task.status == .paused || task.status == .failed || fileMissing else { continue }
                 retryTimers.removeValue(forKey: task.id)?.cancel()
+                if let target = destination?(episode).path, target != task.savePath {
+                    // 下载到 NAS: an unfinished task moves to the new place and starts over there.
+                    try? FileManager.default.removeItem(at: task.partialURL)
+                    task.savePath = target
+                    task.receivedBytes = 0; task.totalBytes = 0; task.validator = nil; task.finishedAt = nil
+                }
                 task.status = .pending
                 task.error = nil
                 task.retryAt = nil
@@ -222,8 +229,8 @@ public actor DownloadManager {
             }
             var filename = DownloadNaming.episodeFilename(format: configuration.nameFormat, seriesTitle: cleanTitle,
                                                           index: episode.index, episodeTitle: episode.title)
-            var path = directory.appendingPathComponent(filename).path
-            if tasks.contains(where: { $0.savePath == path && $0.vid != episode.vid }) {
+            var path = destination?(episode).path ?? directory.appendingPathComponent(filename).path
+            if destination == nil, tasks.contains(where: { $0.savePath == path && $0.vid != episode.vid }) {
                 filename = DownloadNaming.conflictSuffixed(filename, vid: episode.vid)
                 path = directory.appendingPathComponent(filename).path
             }
@@ -520,7 +527,20 @@ public actor DownloadManager {
             changed()
             let result = try await transferWithRestart(id: id, info: info)
             try Task.checkCancellation()
-            if info.isEncrypted {
+            if info.isByteVC2 {
+                // ByteVC2 兼容转换: the helper decrypts and converts to H.264 in one pass.
+                update(id) { $0.phase = .converting }
+                changed()
+                let key = info.contentKey ?? info.spadeA.flatMap(CencDecryptor.deriveKey)
+                if info.isEncrypted, key == nil { throw HongguoError(.decrypt, "片源密钥无法解析") }
+                let partial = self.task(id)?.partialURL ?? task.partialURL
+                let staging = finalURL.appendingPathExtension("converting")
+                try await ByteVC2Converter.shared.convert(input: partial, output: staging, key: key)
+                try Task.checkCancellation()
+                try Self.publish(fileAt: staging, to: finalURL)
+                try? fm.removeItem(at: partial)
+                complete(id, size: Self.fileSize(finalURL))
+            } else if info.isEncrypted {
                 update(id) { $0.phase = .decrypting }
                 changed()
                 guard let key = info.contentKey ?? info.spadeA.flatMap(CencDecryptor.deriveKey) else {

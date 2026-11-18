@@ -17,6 +17,11 @@ struct SeriesDetailView: View {
 
     @State private var showAllReviews = false
     @State private var downloadNotice: String?
+    // 查找下一季 (manual sequel finder).
+    @State private var foundSequels: [SeriesRef]?
+    @State private var similarSeries: [SeriesRef] = []
+    @State private var findingSequels = false
+    @State private var sequelError = ""
 
     var body: some View {
         ScrollView {
@@ -25,6 +30,7 @@ struct SeriesDetailView: View {
                 if let sequels = record?.sequels, !sequels.isEmpty {
                     sequelRow(sequels)
                 }
+                sequelFinder
                 episodePanel
                 if let reviews = details?.reviews, !reviews.isEmpty {
                     reviewList(reviews)
@@ -53,9 +59,9 @@ struct SeriesDetailView: View {
     }
 
     /// Later seasons found by the watch-update check.
-    private func sequelRow(_ sequels: [SeriesRef]) -> some View {
+    private func sequelRow(_ sequels: [SeriesRef], label: String = "续作") -> some View {
         HStack(spacing: 8) {
-            Label("续作", systemImage: "rectangle.stack.badge.plus").font(.system(size: 13, weight: .semibold))
+            Label(label, systemImage: "rectangle.stack.badge.plus").font(.system(size: 13, weight: .semibold))
             ScrollView(.horizontal) {
                 HStack(spacing: 8) {
                     ForEach(sequels, id: \.seriesId) { ref in
@@ -66,6 +72,50 @@ struct SeriesDetailView: View {
                 }
             }
             .scrollIndicators(.never)
+        }
+    }
+
+    /// 查找当前剧的下一季: searches by the title without its season marker and lists later seasons,
+    /// plus similarly named series that may be renamed sequels.
+    @ViewBuilder
+    private var sequelFinder: some View {
+        if SourceRouter.isHongguo(summary.seriesId), foundSequels != nil || findingSequels || !sequelError.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                if findingSequels {
+                    HStack(spacing: 8) { ProgressView().controlSize(.small); Text("正在查找下一季…").foregroundStyle(.secondary) }
+                        .font(.system(size: 12))
+                } else if !sequelError.isEmpty {
+                    Text(sequelError).font(.system(size: 12)).foregroundStyle(.secondary)
+                } else if let foundSequels {
+                    let known = Set((record?.sequels ?? []).map(\.seriesId))
+                    let fresh = foundSequels.filter { !known.contains($0.seriesId) }
+                    if !fresh.isEmpty { sequelRow(fresh, label: "找到的续作") }
+                    if !similarSeries.isEmpty { sequelRow(similarSeries, label: "可能的续作，请核对剧名") }
+                    if fresh.isEmpty && similarSeries.isEmpty {
+                        Text(known.isEmpty ? "没有找到下一季" : "没有找到更多续作").font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func findSequels() async {
+        guard !findingSequels else { return }
+        findingSequels = true
+        sequelError = ""
+        defer { findingSequels = false }
+        let current = SeriesRef(seriesId: summary.seriesId, title: title)
+        let keyword = WatchHistory.sequelKeyword(title)
+        guard !keyword.isEmpty else { sequelError = "这部剧的名称无法用来查找续作"; return }
+        do {
+            let result = try await HongguoSearch.shared.search(keyword, appFirst: model.settings.searchAppFirst)
+            let candidates = result.results.map { SeriesRef(seriesId: $0.seriesId, title: $0.title) }
+            let sequels = WatchHistory.findSequels(of: current, in: candidates)
+            foundSequels = sequels
+            let taken = Set(sequels.map(\.seriesId))
+            similarSeries = WatchHistory.findSimilar(to: current, in: candidates).filter { !taken.contains($0.seriesId) }
+        } catch {
+            sequelError = "查找失败：\(describe(error))"
         }
     }
 
@@ -126,6 +176,12 @@ struct SeriesDetailView: View {
                     .buttonStyle(GlassButtonStyle(size: .large))
                     .help(favorite ? "取消收藏" : "加入我的剧库")
                     if SourceRouter.isHongguo(summary.seriesId) {
+                        Button { Task { await findSequels() } } label: { Label("查找下一季", systemImage: "rectangle.stack.badge.plus") }
+                            .buttonStyle(GlassButtonStyle(size: .large))
+                            .disabled(findingSequels)
+                            .help("按剧名查找这部剧的下一季和可能的续作")
+                    }
+                    if SourceRouter.isHongguo(summary.seriesId) {
                     Menu {
                         if let episodes {
                             Button("下载全部 \(episodes.total) 集") { download(episodes.episodes) }
@@ -136,6 +192,16 @@ struct SeriesDetailView: View {
                             let missing = episodes.episodes.filter { model.localFiles[$0.vid] == nil }
                             if missing.count != episodes.total, !missing.isEmpty {
                                 Button("下载剩余 \(missing.count) 集") { download(missing) }
+                            }
+                            Divider()
+                            Button("下载到 NAS…") {
+                                Task { if let message = await model.downloadToNAS(episodes, cover: cover) { downloadNotice = message } }
+                            }
+                            let localCount = episodes.episodes.filter { model.localFiles[$0.vid] != nil }.count
+                            if localCount >= 2 {
+                                Divider()
+                                Button("合并已下载的 \(localCount) 集（快速，不重新编码）") { merge(.fast) }
+                                Button("合并为兼容格式（H.264，较慢）") { merge(.compatible) }
                             }
                             Divider()
                             Button("打开下载管理") { model.selection = .downloads }
@@ -156,7 +222,7 @@ struct SeriesDetailView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .task(id: downloadNotice) {
-                            try? await Task.sleep(for: .seconds(4))
+                            try? await Task.sleep(for: .seconds(8))
                             self.downloadNotice = nil
                         }
                 }
@@ -248,6 +314,11 @@ struct SeriesDetailView: View {
             let added = await model.download(list, seriesId: id, title: title, cover: cover)
             downloadNotice = added > 0 ? "已加入下载队列：\(added) 集" : "这些集已经在下载列表里了"
         }
+    }
+
+    private func merge(_ mode: MergeExporter.Mode) {
+        let id = summary.seriesId, title = title
+        Task { downloadNotice = await model.startMerge(seriesId: id, title: title, mode: mode) }
     }
 
     private func load(force: Bool = false) async {

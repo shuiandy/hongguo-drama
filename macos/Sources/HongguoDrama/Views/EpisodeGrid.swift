@@ -67,6 +67,13 @@ struct EpisodeCell: View {
     let action: () -> Void
 
     private var isDownloaded: Bool { AppModel.shared.localFiles[episode.vid] != nil }
+    private var isLiked: Bool { AppModel.shared.isEpisodeLiked(seriesId: episode.seriesId, vid: episode.vid) }
+
+    private var seriesTitle: String {
+        let player = PlayerController.shared
+        if player.episodes?.seriesId == episode.seriesId, let title = player.episodes?.title { return title }
+        return AppModel.shared.library.series(episode.seriesId)?.title ?? ""
+    }
 
     var body: some View {
         Button(action: action) {
@@ -87,6 +94,14 @@ struct EpisodeCell: View {
                     Circle().fill(Color.hongguoGold).frame(width: 7, height: 7).shadow(color: .black.opacity(0.35), radius: 1).padding(7)
                 }
             }
+            .overlay(alignment: .topLeading) {
+                if isLiked {
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Color.hongguoRed)
+                        .padding(6)
+                }
+            }
             .overlay(alignment: .bottomTrailing) {
                 if isDownloaded {
                     Image(systemName: "arrow.down.circle.fill")
@@ -99,6 +114,10 @@ struct EpisodeCell: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
+            Button(isLiked ? "取消小红心" : "给这一集加小红心") {
+                AppModel.shared.toggleEpisodeLike(seriesId: episode.seriesId, title: seriesTitle, vid: episode.vid)
+            }
+            Divider()
             if !isDownloaded, SourceRouter.isHongguo(episode.seriesId) {
                 Button("下载这一集") {
                     let model = AppModel.shared
@@ -113,6 +132,9 @@ struct EpisodeCell: View {
             } else {
                 Button("在访达中显示") {
                     if let url = AppModel.shared.localFiles[episode.vid] { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                }
+                Button("用系统播放器打开") {
+                    if let url = AppModel.shared.localFiles[episode.vid] { NSWorkspace.shared.open(url) }
                 }
             }
         }

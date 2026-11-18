@@ -404,7 +404,8 @@ actor AppSource {
     struct Row { var item: JSONValue; var codec: String; var codecRank: Int; var pixels: Int; var width: Int; var height: Int }
 
     /// Stream choice for "auto": H.264 > HEVC, then the highest tier. Every compatible encoding at the
-    /// best tier is tried before failing; lower tiers are never used silently. ByteVC2 is skipped.
+    /// best tier is tried before failing; lower tiers are never used silently. ByteVC2 is used last,
+    /// and only when the conversion helper is available.
     static func parsePlayModel(_ info: JSONValue, vid: String, inline: Bool, requireEncryptionMetadata: Bool? = nil,
                                minimumPixels: Int = 0) throws -> PlayInfo {
         let requireMetadata = requireEncryptionMetadata ?? inline
@@ -415,7 +416,9 @@ actor AppSource {
         let rows: [Row] = items.compactMap { item in
             guard item.object != nil, item["main_url"].string != nil || item["backup_url"].string != nil || item["backup_url_list"].array != nil else { return nil }
             let codec = (item["codec_type"].string ?? item["video_meta"]["codec_type"].string ?? "").trimmingCharacters(in: .whitespaces).lowercased()
-            let rank = ["h264", "avc", "avc1"].contains(codec) ? 0 : ["hevc", "h265", "hvc1", "hev1", "bytevc1"].contains(codec) ? 1 : 3
+            let rank = ["h264", "avc", "avc1"].contains(codec) ? 0 : ["hevc", "h265", "hvc1", "hev1", "bytevc1"].contains(codec) ? 1
+                // ByteVC2 only when nothing else is offered and 兼容转换 can turn it into H.264.
+                : codec == "bytevc2" && ByteVC2Converter.isEnabled ? 2 : 3
             let meta = item["video_meta"]
             let pairs = [(item["vwidth"], item["vheight"]), (item["width"], item["height"]), (meta["vwidth"], meta["vheight"]), (meta["width"], meta["height"])]
             let size = pairs.lazy.map { (Int($0.0.number ?? 0), Int($0.1.number ?? 0)) }.first { $0.0 > 0 && $0.1 > 0 } ?? (0, 0)
@@ -429,7 +432,9 @@ actor AppSource {
         guard let best = rows.first else {
             let onlyByteVC2 = items.contains { ($0["codec_type"].string ?? $0["video_meta"]["codec_type"].string)?.lowercased() == "bytevc2" }
             throw AppSourceError(.noCompatibleSource, onlyByteVC2
-                ? "本集仅提供播放器不支持的 ByteVC2 编码，当前无法播放，请在官方 App 观看"
+                ? (ByteVC2Converter.executableURL == nil
+                    ? "本集仅提供 ByteVC2 编码，未找到兼容转换组件，请重新安装完整版本"
+                    : "本集仅提供 ByteVC2 编码，已在设置中关闭兼容转换；打开设置 > 下载 > ByteVC2 兼容转换后可播放")
                 : "本集暂未提供兼容的 H.264/HEVC 片源")
         }
         let seed = info["key_seed"].string.map(AppCrypto.base64Decode)

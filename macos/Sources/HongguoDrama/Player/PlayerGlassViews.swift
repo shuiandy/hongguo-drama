@@ -352,6 +352,17 @@ struct PlayerControlBar: View {
                 .frame(maxWidth: 160, alignment: .leading)
             }
 
+            if let episode = controller.currentEpisode {
+                let liked = AppModel.shared.isEpisodeLiked(seriesId: episode.seriesId, vid: episode.vid)
+                Button {
+                    AppModel.shared.toggleEpisodeLike(seriesId: episode.seriesId, title: controller.episodes?.title ?? "", vid: episode.vid)
+                } label: {
+                    Image(systemName: liked ? "heart.fill" : "heart").foregroundStyle(liked ? Color.hongguoRed : Color.white)
+                }
+                .buttonStyle(BarIconButtonStyle(size: 32, active: liked))
+                .help(liked ? "取消本集小红心" : "给本集加小红心（只存在本机）")
+            }
+
             Spacer(minLength: 8)
 
             Button { controller.toggleMute() } label: {

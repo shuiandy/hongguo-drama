@@ -25,7 +25,8 @@ public final class PlaybackCache: @unchecked Sendable {
 
     func fileURL(for info: PlayInfo) -> URL {
         let tier = info.quality.map { "-\($0.shortSide)" } ?? ""
-        return directory.appendingPathComponent("\(info.vid.filter(\.isNumber))\(tier).mp4")
+        let converted = info.isByteVC2 ? "-h264" : ""
+        return directory.appendingPathComponent("\(info.vid.filter(\.isNumber))\(tier)\(converted).mp4")
     }
 
     public func cachedFile(for info: PlayInfo) -> URL? {
@@ -33,9 +34,10 @@ public final class PlaybackCache: @unchecked Sendable {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    /// Returns a local decrypted file for an encrypted `PlayInfo`. Concurrent calls share one download.
-    public func prepare(_ info: PlayInfo) async throws -> URL {
-        guard info.isEncrypted else { throw HongguoError(.input, "片源未加密，无需解密缓存") }
+    /// Returns a local playable file for an encrypted or ByteVC2 `PlayInfo` (decrypted, or
+    /// converted to H.264). Concurrent calls share one download. `progress` reports conversion.
+    public func prepare(_ info: PlayInfo, progress: (@Sendable (String) -> Void)? = nil) async throws -> URL {
+        guard info.needsLocalFile else { throw HongguoError(.input, "片源未加密，无需解密缓存") }
         if let url = cachedFile(for: info) {
             try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
             return url
@@ -44,19 +46,29 @@ public final class PlaybackCache: @unchecked Sendable {
             if let existing = inflight[fileURL(for: info).lastPathComponent] { return existing }
             let created = Task { () throws -> URL in
                 defer { self.lock.withLock { self.inflight[self.fileURL(for: info).lastPathComponent] = nil } }
-                guard let key = info.contentKey ?? info.spadeA.flatMap(CencDecryptor.deriveKey) else {
-                    throw HongguoError(.decrypt, "片源密钥无法解析")
-                }
+                let key = info.contentKey ?? info.spadeA.flatMap(CencDecryptor.deriveKey)
+                if info.isEncrypted, key == nil { throw HongguoError(.decrypt, "片源密钥无法解析") }
                 var options = HTTPClient.Options()
                 options.headers = info.httpHeaders
                 options.timeout = 120
                 options.maxBytes = 1024 * 1024 * 1024
                 let response = try await self.http.get(info.url, options: options)
                 try Task.checkCancellation()
-                let plain = try CencDecryptor.decryptMP4(response.data, key: key)
                 let target = self.fileURL(for: info)
                 let partial = target.appendingPathExtension("part")
-                try plain.write(to: partial, options: [.atomic])
+                if info.isByteVC2 {
+                    // The helper decrypts and converts in one pass.
+                    let source = target.appendingPathExtension("src")
+                    try response.data.write(to: source, options: [.atomic])
+                    defer { try? FileManager.default.removeItem(at: source) }
+                    progress?("正在进行 ByteVC2 兼容转换…")
+                    try await ByteVC2Converter.shared.convert(input: source, output: partial, key: key) { seconds in
+                        progress?("正在进行 ByteVC2 兼容转换… \(Int(seconds)) 秒")
+                    }
+                } else {
+                    let plain = try CencDecryptor.decryptMP4(response.data, key: key!)
+                    try plain.write(to: partial, options: [.atomic])
+                }
                 _ = try? FileManager.default.removeItem(at: target)
                 try FileManager.default.moveItem(at: partial, to: target)
                 self.prune()

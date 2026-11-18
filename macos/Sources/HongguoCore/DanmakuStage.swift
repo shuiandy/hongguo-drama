@@ -7,6 +7,9 @@ import Foundation
 public struct DanmakuSettings: Codable, Equatable, Sendable {
     public enum Area: String, Codable, CaseIterable, Sendable { case quarter, half, full }
     public enum Density: String, Codable, CaseIterable, Sendable { case sparse, normal, dense }
+    /// Where the bullets come from: timed danmaku, this episode's public comments, or timed danmaku
+    /// with the comments as a fallback when the episode has none or the request fails.
+    public enum Source: String, Codable, CaseIterable, Sendable { case auto, official, comments }
 
     public var enabled: Bool = true
     /// 20...100 (%).
@@ -20,6 +23,7 @@ public struct DanmakuSettings: Codable, Equatable, Sendable {
     public var sensitiveFilter: Bool = true
     /// User words separated by newlines, commas or semicolons (full or half width).
     public var blockedWords: String = ""
+    public var source: Source = .auto
 
     public init() {}
 
@@ -34,6 +38,7 @@ public struct DanmakuSettings: Codable, Equatable, Sendable {
         density = (try? c.decodeIfPresent(Density.self, forKey: .density)) ?? d.density
         sensitiveFilter = (try? c.decodeIfPresent(Bool.self, forKey: .sensitiveFilter)) ?? d.sensitiveFilter
         blockedWords = (try? c.decodeIfPresent(String.self, forKey: .blockedWords)) ?? d.blockedWords
+        source = (try? c.decodeIfPresent(Source.self, forKey: .source)) ?? d.source
         self = normalized()
     }
 

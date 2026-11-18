@@ -167,6 +167,10 @@ public struct PlayInfo: Sendable, Equatable {
     }
 
     public var isEncrypted: Bool { spadeA != nil || contentKey != nil }
+    /// Only playable after 兼容转换 to H.264 (see `ByteVC2Converter`).
+    public var isByteVC2: Bool { codec == "bytevc2" }
+    /// Needs a local file before AVPlayer can play it (decryption or conversion).
+    public var needsLocalFile: Bool { isEncrypted || isByteVC2 }
 
     public var httpHeaders: [String: String] {
         var headers = ["User-Agent": userAgent]

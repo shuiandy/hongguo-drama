@@ -15,6 +15,12 @@ struct SearchView: View {
     @State private var others: [OtherSourceResults] = []
     @State private var othersLoading = false
     @State private var searchToken = UUID()
+    /// Channel and cursor page 1 used (官网 / App / App 上新), needed to load more.
+    @State private var channel: HongguoSearchResult.Channel?
+    @State private var appCursor: AppSearchCursor?
+    @State private var newReleaseIds: Set<String> = []
+    @State private var releasedTodayIds: Set<String> = []
+    @State private var notice = ""
 
     @FocusState private var fieldFocused: Bool
 
@@ -122,11 +128,21 @@ struct SearchView: View {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("“\(submitted)”的结果").font(.system(size: 18, weight: .bold))
                 Text("\(items.count) 部\(hasMore ? "+" : "")").font(.system(size: 12)).foregroundStyle(.secondary)
+                if channel == .app || channel == .appNew {
+                    Text(channel == .app ? "App 搜索" : "App 上新").font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Color.hongguoRed.opacity(0.15), in: Capsule())
+                        .foregroundStyle(Color.hongguoRed)
+                }
                 Spacer()
+            }
+            if !notice.isEmpty {
+                Label(notice, systemImage: "info.circle").font(.system(size: 12)).foregroundStyle(.secondary)
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 14)], spacing: 14) {
                 ForEach(items) { item in
-                    SearchResultCard(item: item, keyword: submitted)
+                    SearchResultCard(item: item, keyword: submitted,
+                                     badge: releasedTodayIds.contains(item.seriesId) ? "今日上新" : newReleaseIds.contains(item.seriesId) ? "新剧" : nil)
                         .onAppear { if item.id == items.last?.id { Task { await loadMore() } } }
                 }
             }
@@ -205,6 +221,11 @@ struct SearchView: View {
         items = []
         page = 0
         hasMore = false
+        channel = nil
+        appCursor = nil
+        newReleaseIds = []
+        releasedTodayIds = []
+        notice = ""
         let token = UUID()
         searchToken = token
         let keyword = submitted
@@ -222,11 +243,21 @@ struct SearchView: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            let result = try await model.search.search(submitted, page: target)
+            // The Electron search flow: optional App search first, the website with looser
+            // queries, and the App new-release list when no title matches exactly.
+            let result = try await HongguoSearch.shared.search(submitted, page: target, appFirst: model.settings.searchAppFirst,
+                                                               channel: target > 1 ? channel : nil, appCursor: target > 1 ? appCursor : nil)
             let known = Set(items.map(\.id))
             items += result.results.filter { !known.contains($0.id) }
             page = result.page
-            hasMore = result.hasMore || (result.totalPages > result.page)
+            hasMore = result.hasMore
+            if target == 1 {
+                channel = result.channel
+                notice = result.notice
+                newReleaseIds = result.newReleaseIds
+                releasedTodayIds = result.releasedTodayIds
+            }
+            appCursor = result.appCursor
         } catch {
             self.error = describe(error)
         }
@@ -237,6 +268,8 @@ struct SearchView: View {
 struct SearchResultCard: View {
     let item: SeriesSummary
     let keyword: String
+    /// "新剧" / "今日上新" for results found through the App new-release list.
+    var badge: String? = nil
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -244,7 +277,14 @@ struct SearchResultCard: View {
             HStack(alignment: .top, spacing: 14) {
                 CoverImage(url: item.cover, cornerRadius: 14).frame(width: 96, height: 128)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(highlighted).font(.system(size: 15, weight: .bold)).lineLimit(2)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(highlighted).font(.system(size: 15, weight: .bold)).lineLimit(2)
+                        if let badge {
+                            Text(badge).font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.hongguoRed, in: Capsule())
+                        }
+                    }
                     Text(meta).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                     if !item.description.isEmpty {
                         Text(item.description).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)

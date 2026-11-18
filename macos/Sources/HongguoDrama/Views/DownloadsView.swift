@@ -122,6 +122,16 @@ struct DownloadGroupCard: View {
                         .disabled(completed == 0)
                     Button("导出全剧评论…") { run { await TextExportActions.exportReviews(seriesId: first.seriesId, seriesTitle: first.seriesTitle) } }
                     Divider()
+                    Button("合并已下载的集（快速，不重新编码）") {
+                        run { await model.startMerge(seriesId: first.seriesId, title: first.seriesTitle, mode: .fast) }
+                    }
+                    .disabled(completed < 2 || mergeJob?.status == .running)
+                    Button("合并为兼容格式（H.264，较慢）") {
+                        run { await model.startMerge(seriesId: first.seriesId, title: first.seriesTitle, mode: .compatible) }
+                    }
+                    .disabled(completed < 2 || mergeJob?.status == .running)
+                    Button("下载到 NAS…") { run { await sendToNAS() } }
+                    Divider()
                     Button("重新扫描本地文件") { run { await rescan() } }
                     Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([first.fileURL.deletingLastPathComponent()]) }
                     Divider()
@@ -139,6 +149,7 @@ struct DownloadGroupCard: View {
                     .buttonStyle(GlassIconButtonStyle(diameter: 32))
                     .help(expanded ? "收起" : "展开")
             }
+            if let job = mergeJob { mergeRow(job) }
             if let notice {
                 Label(notice, systemImage: "info.circle").font(.system(size: 12)).foregroundStyle(.secondary)
                     .task(id: notice) {
@@ -164,6 +175,44 @@ struct DownloadGroupCard: View {
             Button("删除", role: .destructive) { deleteSeries() }
         } message: {
             Text("会删除已下载的视频、未完成的部分和导出的弹幕评论文件。正在下载时不能删除。")
+        }
+    }
+
+    private var mergeJob: MergeExporter.Job? { model.mergeJobs.first { $0.seriesId == first.seriesId } }
+
+    @ViewBuilder
+    private func mergeRow(_ job: MergeExporter.Job) -> some View {
+        HStack(spacing: 10) {
+            switch job.status {
+            case .running:
+                ProgressView(value: job.progress).tint(.hongguoRed).controlSize(.small).frame(maxWidth: 220)
+                Text("正在合并 \(job.episodes) 集\(job.mode == .compatible ? "（兼容格式）" : "") \(Int(job.progress * 100))%")
+                Button("取消") { Task { await MergeExporter.shared.cancel(job.seriesId) } }.buttonStyle(.link)
+            case .completed:
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Text("合并完成：\(job.output?.lastPathComponent ?? "")").lineLimit(1)
+                Button("在访达中显示") { if let url = job.output { NSWorkspace.shared.activateFileViewerSelecting([url]) } }.buttonStyle(.link)
+                Button("知道了") { Task { await MergeExporter.shared.dismiss(job.seriesId) } }.buttonStyle(.link)
+            case .failed(let message):
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text(message).lineLimit(2)
+                Button("知道了") { Task { await MergeExporter.shared.dismiss(job.seriesId) } }.buttonStyle(.link)
+            case .cancelled:
+                Text("已取消合并")
+                Button("知道了") { Task { await MergeExporter.shared.dismiss(job.seriesId) } }.buttonStyle(.link)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 12))
+        .foregroundStyle(.secondary)
+    }
+
+    private func sendToNAS() async -> String? {
+        do {
+            let list = try await SourceRouter.episodes(seriesId: first.seriesId)
+            return await model.downloadToNAS(list, cover: first.cover)
+        } catch {
+            return "读取分集失败：\(describe(error))"
         }
     }
 
@@ -267,6 +316,7 @@ struct DownloadTaskRow: View {
         case .resolving: return "解析片源"
         case .transferring: return "下载中"
         case .decrypting: return "解密中"
+        case .converting: return "ByteVC2 转换中"
         }
     }
 

@@ -89,6 +89,20 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var autoExportText: Bool = false
     /// Merge the signed-in account's cloud watch history into 观看记录.
     public var cloudHistorySync: Bool = true
+    /// App 搜索优先: try the Hongguo App search before the website (falls back automatically).
+    public var searchAppFirst: Bool = false
+    /// 同时保存整剧资料: cover, intro and NFO files next to downloaded episodes.
+    public var downloadMetadata: Bool = false
+    /// ByteVC2 兼容转换: convert episodes only offered as ByteVC2 to H.264 with the bundled helper.
+    public var byteVC2Conversion: Bool = true
+    /// 快速转换: more decoder threads for ByteVC2 conversion (uses more CPU).
+    public var fastConversion: Bool = false
+    /// 网络代理 (the password is in the keychain).
+    public var proxy = ProxySettings()
+    /// Last NAS share folder chosen for 下载到 NAS.
+    public var nasRoot: String?
+    /// 下载到 NAS 时自动创建剧名文件夹.
+    public var nasCreateFolder: Bool = true
 
     public static let startPages = ["last", "discover", "history", "library", "downloads"]
     public static let cacheLimits = [2, 5, 10, 20, 0]
@@ -191,6 +205,13 @@ public struct AppSettings: Codable, Equatable, Sendable {
         checkUpdatesAtLaunch = (try? c.decodeIfPresent(Bool.self, forKey: .checkUpdatesAtLaunch)) ?? d.checkUpdatesAtLaunch
         autoExportText = (try? c.decodeIfPresent(Bool.self, forKey: .autoExportText)) ?? d.autoExportText
         cloudHistorySync = (try? c.decodeIfPresent(Bool.self, forKey: .cloudHistorySync)) ?? d.cloudHistorySync
+        searchAppFirst = (try? c.decodeIfPresent(Bool.self, forKey: .searchAppFirst)) ?? d.searchAppFirst
+        downloadMetadata = (try? c.decodeIfPresent(Bool.self, forKey: .downloadMetadata)) ?? d.downloadMetadata
+        byteVC2Conversion = (try? c.decodeIfPresent(Bool.self, forKey: .byteVC2Conversion)) ?? d.byteVC2Conversion
+        fastConversion = (try? c.decodeIfPresent(Bool.self, forKey: .fastConversion)) ?? d.fastConversion
+        proxy = (try? c.decodeIfPresent(ProxySettings.self, forKey: .proxy)) ?? d.proxy
+        nasRoot = try? c.decodeIfPresent(String.self, forKey: .nasRoot)
+        nasCreateFolder = (try? c.decodeIfPresent(Bool.self, forKey: .nasCreateFolder)) ?? d.nasCreateFolder
         self = normalized()
     }
 }

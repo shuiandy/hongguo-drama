@@ -22,10 +22,32 @@ public struct HTTPResponse: Sendable {
 public final class HTTPClient: @unchecked Sendable {
     public static let shared = HTTPClient()
 
-    let session: URLSession
+    private let lock = NSLock()
+    private var currentSession: URLSession
+    /// Proxy revision the session was built with; nil for an injected configuration (tests),
+    /// which is never rebuilt.
+    private var proxyRevision: Int?
 
-    public init(configuration: URLSessionConfiguration = HTTPClient.defaultConfiguration()) {
-        session = URLSession(configuration: configuration)
+    /// The session, rebuilt after the proxy setting changed (see `NetworkProxy`).
+    var session: URLSession {
+        lock.withLock {
+            if let built = proxyRevision, built != NetworkProxy.shared.revision {
+                currentSession.finishTasksAndInvalidate()
+                currentSession = URLSession(configuration: Self.defaultConfiguration())
+                proxyRevision = NetworkProxy.shared.revision
+            }
+            return currentSession
+        }
+    }
+
+    public init() {
+        proxyRevision = NetworkProxy.shared.revision
+        currentSession = URLSession(configuration: Self.defaultConfiguration())
+    }
+
+    public init(configuration: URLSessionConfiguration) {
+        proxyRevision = nil
+        currentSession = URLSession(configuration: configuration)
     }
 
     public static func defaultConfiguration() -> URLSessionConfiguration {
@@ -36,11 +58,11 @@ public final class HTTPClient: @unchecked Sendable {
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.timeoutIntervalForRequest = 30
         config.httpMaximumConnectionsPerHost = 6
-        // Connect directly instead of through the system HTTP proxy, like the Electron app's
-        // default ("未启用（所有请求直连）"). A local proxy's CONNECT tunnel (e.g. Surge on
-        // 127.0.0.1:6152) stalled TLS handshakes to some CDNs such as 河马's; a TUN-mode proxy
-        // still sees the traffic. An empty dictionary turns the system proxy off.
-        config.connectionProxyDictionary = [:]
+        // By default connect directly instead of through the system HTTP proxy, like the
+        // Electron app's default ("未启用（所有请求直连）"). A local proxy's CONNECT tunnel (e.g.
+        // Surge on 127.0.0.1:6152) stalled TLS handshakes to some CDNs such as 河马's; a TUN-mode
+        // proxy still sees the traffic. 设置 > 网络 can switch to the system or a manual proxy.
+        NetworkProxy.shared.configure(config)
         return config
     }
 

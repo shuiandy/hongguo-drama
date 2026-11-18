@@ -6,6 +6,27 @@ final class AppSourceParsingTests: XCTestCase {
     // Key material produced by scripts/gen-signing-vectors.cjs (encodedKey of 00112233…eeff).
     let spade = "kLMT9VuyEvtZshL5X7UR+0G2DvlfqSbQXakm0luuJdClrA=="
 
+    // These cases describe a Mac without the ByteVC2 helper, whatever is installed on the build machine.
+    override func setUp() { ByteVC2Converter.setExecutableForTesting(nil) }
+    override func tearDown() { ByteVC2Converter.setExecutableForTesting(nil) }
+
+    func testByteVC2IsUsedLastWhenTheHelperExists() throws {
+        ByteVC2Converter.setExecutableForTesting(URL(fileURLWithPath: "/usr/bin/true"))
+        ByteVC2Converter.configure(enabled: true, fast: false)
+        let only = try model(["video_1": row("bytevc2", 1080, 1920, url: "https://a.qznovelvod.com/b2.mp4", spade: spade)])
+        let play = try AppSource.parsePlayModel(only, vid: "1", inline: true)
+        XCTAssertTrue(play.isByteVC2)
+        XCTAssertTrue(play.needsLocalFile)
+        // H.264 at the same tier still wins.
+        let mixed = try model(["video_1": row("bytevc2", 1080, 1920, url: "https://a.qznovelvod.com/b2.mp4", spade: spade),
+                               "video_2": row("h264", 1080, 1920, url: "https://a.qznovelvod.com/a.mp4", spade: spade)])
+        XCTAssertEqual(try AppSource.parsePlayModel(mixed, vid: "1", inline: true).codec, "h264")
+        // Turned off in settings: reported again.
+        ByteVC2Converter.configure(enabled: false, fast: false)
+        XCTAssertThrowsError(try AppSource.parsePlayModel(only, vid: "1", inline: true))
+        ByteVC2Converter.configure(enabled: true, fast: false)
+    }
+
     func model(_ list: [String: Any], extra: [String: Any] = [:]) throws -> JSONValue {
         var object: [String: Any] = ["video_list": list, "video_id": "v01", "video_duration": 60.5]
         object.merge(extra) { $1 }

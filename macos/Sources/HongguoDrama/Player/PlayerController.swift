@@ -320,11 +320,18 @@ final class PlayerController {
     private nonisolated static func makeItem(for info: PlayInfo, episode: Episode, prepared: CencStreamMap?, preferFile: Bool,
                                              progress: @escaping @Sendable (String) -> Void) async throws
         -> (AVPlayerItem, PlaybackPipeline, StreamingResourceLoader?) {
-        guard info.isEncrypted else {
+        guard info.needsLocalFile else {
             let streaming = StreamingResourceLoader(source: info.url, headers: info.httpHeaders)
             return (AVPlayerItem(asset: streaming.makeAsset()), .stream, streaming)
         }
         if let file = PlaybackCache.shared.cachedFile(for: info) {
+            return (AVPlayerItem(url: file), .decryptedFile, nil)
+        }
+        if info.isByteVC2 {
+            // ByteVC2 兼容转换: download the whole episode, then decode it to H.264 locally.
+            progress("正在下载第 \(episode.index) 集，随后进行 ByteVC2 兼容转换…")
+            let file = try await PlaybackCache.shared.prepare(info, progress: progress)
+            try Task.checkCancellation()
             return (AVPlayerItem(url: file), .decryptedFile, nil)
         }
         if !preferFile {
@@ -428,8 +435,8 @@ final class PlayerController {
             guard let self, self.episodes?.seriesId == list.seriesId else { return }
             self.prefetched = (next.vid, raw, Date())
             let info = raw.selecting(shortSide: preferred)
-            guard info.isEncrypted, PlaybackCache.shared.cachedFile(for: info) == nil else { return }
-            if let map = try? await CencStreamLoader.open(info),
+            guard info.needsLocalFile, PlaybackCache.shared.cachedFile(for: info) == nil else { return }
+            if !info.isByteVC2, let map = try? await CencStreamLoader.open(info),
                self.episodes?.seriesId == list.seriesId, self.storedPreferredQuality == preferred {
                 self.preparedMaps = [Self.mapKey(info): map]
             }

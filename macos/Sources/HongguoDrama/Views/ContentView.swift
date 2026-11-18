@@ -56,9 +56,11 @@ struct ContentView: View {
         @Bindable var model = model
         return List(selection: $model.selection) {
                 Section("发现") {
+                    SidebarRow(title: "热播推荐", style: SidebarStyle.of(.feed)).tag(SidebarItem.feed)
                     ForEach(CatalogKind.categories) { kind in
                         SidebarRow(title: kind.label, style: SidebarStyle.of(.category(kind))).tag(SidebarItem.category(kind))
                     }
+                    SidebarRow(title: "上新日历", style: SidebarStyle.of(.calendar)).tag(SidebarItem.calendar)
                 }
                 Section("榜单") {
                     ForEach(CatalogKind.rankings) { kind in
@@ -95,6 +97,8 @@ struct ContentView: View {
         case .category(let kind): CatalogView(kind: kind)
         case .ranking(let kind): CatalogView(kind: kind)
         case .search: SearchView()
+        case .feed: FeedView()
+        case .calendar: ReleaseCalendarView()
         case .history: HistoryView()
         case .library: LibraryView()
         case .downloads: DownloadsView()
@@ -124,6 +128,8 @@ struct SidebarStyle {
         case .ranking(.hotRealDrama): return SidebarStyle(symbol: "chart.bar.fill", colors: [Color(red: 0.96, green: 0.45, blue: 0.71), Color(red: 0.75, green: 0.09, blue: 0.36)])
         case .ranking(.hotComicDrama): return SidebarStyle(symbol: "chart.bar.fill", colors: [Color(red: 0.75, green: 0.52, blue: 0.99), Color(red: 0.58, green: 0.2, blue: 0.92)])
         case .ranking: return SidebarStyle(symbol: "chart.bar.fill", colors: [Color(red: 0.38, green: 0.65, blue: 0.98), Color(red: 0.11, green: 0.31, blue: 0.85)])
+        case .feed: return SidebarStyle(symbol: "dice.fill", colors: [Color(red: 1, green: 0.55, blue: 0.35), Color(red: 0.93, green: 0.25, blue: 0.3)])
+        case .calendar: return SidebarStyle(symbol: "calendar", colors: [Color(red: 0.4, green: 0.8, blue: 0.75), Color(red: 0.05, green: 0.5, blue: 0.55)])
         case .search: return SidebarStyle(symbol: "magnifyingglass", colors: [Color(red: 0.58, green: 0.64, blue: 0.72), Color(red: 0.28, green: 0.33, blue: 0.41)])
         case .history: return SidebarStyle(symbol: "clock.fill", colors: [Color(red: 0.2, green: 0.83, blue: 0.6), Color(red: 0.02, green: 0.47, blue: 0.34)])
         case .library: return SidebarStyle(symbol: "heart.fill", colors: [Color(red: 1, green: 0.45, blue: 0.55), Color(red: 0.86, green: 0.15, blue: 0.35)])
@@ -304,26 +310,26 @@ extension View {
 
 // MARK: Update and announcements
 
-/// Sidebar card shown when GitHub has a newer release; opens this project's release page.
+/// Sidebar card shown when GitHub has a newer release: download and install in the app when the
+/// release has an archive, otherwise open the release page.
 struct UpdateAvailableCard: View {
     let release: AvailableRelease
 
     var body: some View {
-        Button { NSWorkspace.shared.open(release.url) } label: {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Image(systemName: "arrow.down.app.fill").font(.system(size: 18)).foregroundStyle(Color.hongguoRed)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("新版本 \(release.version)").font(.system(size: 13, weight: .semibold))
-                    Text("点击前往下载页").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Button("查看更新说明") { NSWorkspace.shared.open(release.url) }
+                        .buttonStyle(.link).font(.system(size: 11))
                 }
                 Spacer(minLength: 0)
             }
-            .padding(10)
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .glassSurface(in: RoundedRectangle(cornerRadius: 14, style: .continuous), interactive: true)
+            UpdateControls(release: release, compact: true)
         }
-        .buttonStyle(.plain)
-        .help("在浏览器打开 GitHub 发布页")
+        .padding(10)
+        .glassSurface(in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 

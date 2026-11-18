@@ -6,6 +6,10 @@ enum SidebarItem: Hashable, Identifiable {
     case category(CatalogKind)
     case ranking(CatalogKind)
     case search
+    /// 热播推荐 (one series at a time, plus 摇一摇).
+    case feed
+    /// 上新日历.
+    case calendar
     case history
     case library
     case downloads
@@ -17,6 +21,8 @@ enum SidebarItem: Hashable, Identifiable {
         switch self {
         case .category(let kind), .ranking(let kind): return kind.rawValue
         case .search: return "search"
+        case .feed: return "feed"
+        case .calendar: return "calendar"
         case .history: return "history"
         case .library: return "library"
         case .downloads: return "downloads"
@@ -29,6 +35,8 @@ enum SidebarItem: Hashable, Identifiable {
         switch self {
         case .category(let kind), .ranking(let kind): return kind.label
         case .search: return "搜索"
+        case .feed: return "热播推荐"
+        case .calendar: return "上新日历"
         case .history: return "观看记录"
         case .library: return "我的剧库"
         case .downloads: return "下载"
@@ -54,6 +62,8 @@ enum SidebarItem: Hashable, Identifiable {
         case "ranking": if let raw = parts.last, let kind = CatalogKind(rawValue: raw) { self = .ranking(kind) } else { return nil }
         case "source": guard parts.count == 2 else { return nil }; self = .source(parts[1])
         case "search": self = .search
+        case "feed": self = .feed
+        case "calendar": self = .calendar
         case "history": self = .history
         case "library": self = .library
         case "downloads": self = .downloads
@@ -69,6 +79,8 @@ enum SidebarItem: Hashable, Identifiable {
         case .category: return "sparkles"
         case .ranking: return "flame"
         case .search: return "magnifyingglass"
+        case .feed: return "sparkles.tv"
+        case .calendar: return "calendar"
         case .history: return "clock.arrow.circlepath"
         case .library: return "heart"
         case .downloads: return "arrow.down.circle"
@@ -103,6 +115,9 @@ final class AppModel {
             store.settings = settings
             if settings.theme != oldValue.theme { applyTheme() }
             if settings.playbackCacheLimitGB != oldValue.playbackCacheLimitGB { applyCacheLimit() }
+            if settings.byteVC2Conversion != oldValue.byteVC2Conversion || settings.fastConversion != oldValue.fastConversion {
+                ByteVC2Converter.configure(enabled: settings.byteVC2Conversion, fast: settings.fastConversion)
+            }
             if settings.preferredQuality != oldValue.preferredQuality || settings.downloadNameFormat != oldValue.downloadNameFormat
                 || settings.maxConcurrentDownloads != oldValue.maxConcurrentDownloads || settings.downloadRoot != oldValue.downloadRoot {
                 applyDownloadSettings()
@@ -110,6 +125,17 @@ final class AppModel {
         }
     }
     var history: [WatchRecord] = []
+    /// Set when the saved manual proxy could not be used at launch (the app connects directly).
+    var proxyStartupError: String?
+
+    /// Saves and applies 网络代理 settings; `password` nil keeps the saved one.
+    func applyProxy(_ proxy: ProxySettings, password: String?) throws {
+        try proxy.validate()
+        if let password { try ProxyKeychain.save(password) }
+        try NetworkProxy.shared.apply(proxy, password: password)
+        settings.proxy = proxy
+        proxyStartupError = nil
+    }
     /// Query typed into a page header search field, consumed by the search page.
     var pendingSearch: String?
     /// Settings are a mode of the main window: the sidebar lists the categories and the detail
@@ -140,6 +166,9 @@ final class AppModel {
     private init() {
         let settings = LibraryStore.shared.settings
         self.settings = settings
+        ByteVC2Converter.configure(enabled: settings.byteVC2Conversion, fast: settings.fastConversion)
+        // A broken manual proxy falls back to a direct connection so the window can still open.
+        do { try NetworkProxy.shared.apply(settings.proxy) } catch { proxyStartupError = describe(error) }
         selection = Self.startSelection(settings)
         history = LibraryStore.shared.history()
         downloads = DownloadManager(configuration: Self.downloadConfiguration(settings))
@@ -182,9 +211,31 @@ final class AppModel {
         return config
     }
 
+    /// Bumped on every library change so views reading per-episode likes re-render.
+    private(set) var libraryRevision = 0
+
     func refreshLibrary() {
         favorites = library.favorites()
         recentSeries = library.recent(limit: 60)
+        libraryRevision &+= 1
+    }
+
+    /// The local "little red heart" on one episode (本机分集小红心).
+    func isEpisodeLiked(seriesId: String, vid: String) -> Bool {
+        _ = libraryRevision
+        return library.series(seriesId)?.likedEpisodeIds.contains(vid) ?? false
+    }
+
+    @discardableResult
+    func toggleEpisodeLike(seriesId: String, title: String, vid: String) -> Bool {
+        do {
+            let liked = try library.toggleEpisodeLike(seriesId: seriesId, title: title, vid: vid)
+            refreshLibrary()
+            return liked
+        } catch {
+            PlayerController.shared.show(toast: describe(error))
+            return isEpisodeLiked(seriesId: seriesId, vid: vid)
+        }
     }
 
     func isFavorite(_ seriesId: String) -> Bool { favorites.contains { $0.seriesId == seriesId } }
@@ -228,7 +279,12 @@ final class AppModel {
     @discardableResult
     func download(_ episodes: [Episode], seriesId: String, title: String, cover: String) async -> Int {
         do {
-            return try await downloads.enqueue(seriesId: seriesId, seriesTitle: title, cover: cover, episodes: episodes)
+            let added = try await downloads.enqueue(seriesId: seriesId, seriesTitle: title, cover: cover, episodes: episodes)
+            if settings.downloadMetadata, SourceRouter.isHongguo(seriesId) {
+                let directory = DownloadNaming.seriesDirectory(root: Self.downloadConfiguration(settings).root, seriesId: seriesId, seriesTitle: title)
+                Task.detached(priority: .utility) { await Self.saveSeriesMetadata(seriesId: seriesId, title: title, cover: cover, into: directory) }
+            }
+            return added
         } catch {
             PlayerController.shared.show(toast: describe(error))
             return 0
@@ -347,6 +403,55 @@ final class AppModel {
             updateMessage = availableRelease.map { "发现新版本 \($0.version)" } ?? "已是最新版本（\(UpdateChecker.currentVersion)）"
         } catch {
             if manual { updateMessage = (error as? HongguoError)?.message ?? "检查更新失败，请稍后重试" }
+        }
+    }
+
+    // MARK: Merge export
+
+    private(set) var mergeJobs: [MergeExporter.Job] = []
+    private var observingMerges = false
+
+    /// 合并导出: joins the downloaded episodes of a series into one MP4 next to them.
+    func startMerge(seriesId: String, title: String, mode: MergeExporter.Mode) async -> String {
+        if !observingMerges {
+            observingMerges = true
+            Task { for await jobs in await MergeExporter.shared.updates() { mergeJobs = jobs.sorted { $0.seriesTitle < $1.seriesTitle } } }
+        }
+        let files = await downloads.localFiles(seriesId: seriesId)
+        let total = library.series(seriesId)?.episodeCount ?? store.record(for: seriesId)?.total
+        do {
+            let output = try await MergeExporter.shared.start(seriesId: seriesId, seriesTitle: title, files: files,
+                                                              total: total.flatMap { $0 > 0 ? $0 : nil }, mode: mode)
+            return "开始合并 \(files.count) 集，完成后保存为“\(output.lastPathComponent)”"
+        } catch {
+            return describe(error)
+        }
+    }
+
+    // MARK: In-app update
+
+    private(set) var updatePhase: AppUpdateInstaller.Phase = .idle
+    private var observingUpdates = false
+
+    /// 下载更新: downloads, checks and unpacks the release archive in the background.
+    func downloadUpdate() {
+        guard let release = availableRelease else { return }
+        if !observingUpdates {
+            observingUpdates = true
+            Task { for await phase in await AppUpdateInstaller.shared.updates() { updatePhase = phase } }
+        }
+        Task { await AppUpdateInstaller.shared.prepare(release) }
+    }
+
+    func cancelUpdate() { Task { await AppUpdateInstaller.shared.cancel() } }
+
+    /// 重启并安装: hands over to the helper that swaps the app, then quits.
+    func installUpdate() async {
+        do {
+            try await AppUpdateInstaller.shared.installAndRelaunch()
+            NSApp.terminate(nil)
+        } catch {
+            updateMessage = describe(error)
         }
     }
 

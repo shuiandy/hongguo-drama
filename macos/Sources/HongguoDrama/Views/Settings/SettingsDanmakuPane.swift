@@ -14,6 +14,16 @@ struct SettingsDanmakuPane: View {
                 Toggle(isOn: $model.settings.danmaku.enabled) {
                     SettingLabel("显示弹幕", note: "播放器里按 B 或点弹幕按钮也能随时开关。")
                 }
+                LabeledContent {
+                    Picker("弹幕来源", selection: $model.settings.danmaku.source) {
+                        Text("自动").tag(DanmakuSettings.Source.auto)
+                        Text("时间轴弹幕").tag(DanmakuSettings.Source.official)
+                        Text("本集评论").tag(DanmakuSettings.Source.comments)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                } label: {
+                    SettingLabel("弹幕来源", note: "自动：优先时间轴弹幕，本集没有或加载失败时改用本集公开评论。")
+                }
                 slider("不透明度", value: $model.settings.danmaku.opacity, range: 20...100, step: 5) { "\(Int($0))%" }
                 slider("字号", value: $model.settings.danmaku.fontSize, range: 16...32, step: 1) { "\(Int($0)) pt" }
                 slider("速度", value: $model.settings.danmaku.speed, range: 0.5...2, step: 0.1) { String(format: "%.1fx", $0) }

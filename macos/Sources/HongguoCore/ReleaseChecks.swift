@@ -13,10 +13,48 @@ public struct AvailableRelease: Equatable, Sendable {
     public var version: String
     /// Always this project's own release page, never a URL taken from the response.
     public var url: URL
+    /// The native app archive for in-app installation, when the release has one.
+    public var asset: ReleaseAsset? = nil
 }
 
-/// Checks the latest GitHub release (port of app-update.js `availableRelease`). Only reports;
-/// installing stays with the user (or a later Sparkle integration).
+/// A release file usable by `AppUpdateInstaller`: `HongguoDrama-*.zip` with a SHA-256 digest.
+public struct ReleaseAsset: Equatable, Sendable {
+    public var name: String
+    public var url: URL
+    public var size: Int64
+    /// Lower-case hex SHA-256 from GitHub's `digest` field.
+    public var sha256: String
+
+    static let allowedHosts: Set<String> = ["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"]
+
+    /// Picks the archive for this Mac: universal or matching architecture, never the Electron files.
+    static func pick(_ assets: [JSONValue]) -> ReleaseAsset? {
+        #if arch(arm64)
+        let arch = "arm64"
+        #else
+        let arch = "x86_64"
+        #endif
+        let candidates: [(ReleaseAsset, Int)] = assets.compactMap { item in
+            guard let name = item["name"].string, name.hasPrefix("HongguoDrama"), name.lowercased().hasSuffix(".zip"),
+                  let raw = item["browser_download_url"].string, let url = URL(string: raw), url.scheme == "https",
+                  let host = url.host, allowedHosts.contains(host),
+                  let digest = item["digest"].string, digest.hasPrefix("sha256:") else { return nil }
+            let hex = String(digest.dropFirst("sha256:".count)).lowercased()
+            guard hex.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else { return nil }
+            let size = Int64(item["size"].number ?? 0)
+            guard size > 0, size < 600 * 1024 * 1024 else { return nil }
+            let lower = name.lowercased()
+            let otherArch = arch == "arm64" ? "x86_64" : "arm64"
+            if lower.contains(otherArch) && !lower.contains("universal") { return nil }
+            let score = lower.contains(arch) ? 0 : lower.contains("universal") ? 1 : 2
+            return (ReleaseAsset(name: name, url: url, size: size, sha256: hex), score)
+        }
+        return candidates.min { $0.1 < $1.1 }?.0
+    }
+}
+
+/// Checks the latest GitHub release (port of app-update.js `availableRelease`). Installing is
+/// `AppUpdateInstaller`'s job.
 public final class UpdateChecker: Sendable {
     private let http: HTTPClient
     public init(http: HTTPClient = .shared) { self.http = http }
@@ -43,7 +81,8 @@ public final class UpdateChecker: Sendable {
         var version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
         if version.hasSuffix(".0"), version.split(separator: ".").count == 3 { version.removeLast(2) }
         // The tag passed `versionParts`, so it is only digits, dots and an optional "v".
-        return AvailableRelease(version: version, url: ReleaseRepo.releasesURL.appendingPathComponent("tag").appendingPathComponent(tag))
+        return AvailableRelease(version: version, url: ReleaseRepo.releasesURL.appendingPathComponent("tag").appendingPathComponent(tag),
+                                asset: ReleaseAsset.pick(data["assets"].array ?? []))
     }
 
     public func check(currentVersion: String = UpdateChecker.currentVersion) async throws -> AvailableRelease? {

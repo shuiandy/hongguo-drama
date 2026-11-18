@@ -57,10 +57,33 @@ struct SettingsDownloadsPane: View {
                 Toggle(isOn: $model.settings.autoExportText) {
                     SettingLabel("同时导出弹幕和评论", note: "一部剧下载完成后，在视频旁边保存同名的弹幕和评论文件。")
                 }
+                Toggle(isOn: $model.settings.downloadMetadata) {
+                    SettingLabel("同时保存整剧资料", note: "下载时在剧的文件夹里保存封面（poster）、简介和 tvshow.nfo，方便 Jellyfin、Emby、Infuse 等识别。")
+                }
+            }
+
+            Section("NAS 与兼容转换") {
+                Toggle(isOn: $model.settings.nasCreateFolder) {
+                    SettingLabel("下载到 NAS 时自动创建剧名文件夹", note: "在详情页或下载页的菜单里选“下载到 NAS…”。文件按“剧名/Season 01/剧名 S01E001.mp4”存放，并附带每集的 NFO。")
+                }
+                Toggle(isOn: $model.settings.byteVC2Conversion) {
+                    SettingLabel("ByteVC2 兼容转换", note: converterNote)
+                }
+                .disabled(ByteVC2Converter.executableURL == nil)
+                Toggle(isOn: $model.settings.fastConversion) {
+                    SettingLabel("快速转换", note: "转换时多用一倍解码线程，更快但更占 CPU。")
+                }
+                .disabled(ByteVC2Converter.executableURL == nil || !model.settings.byteVC2Conversion)
             }
 
             StorageSettingsSection()
         }
+    }
+
+    private var converterNote: String {
+        ByteVC2Converter.executableURL == nil
+            ? "未找到转换组件（librempeg）。只提供 ByteVC2 编码的集暂时无法播放和下载。"
+            : "少数集只提供 Mac 无法直接解码的 ByteVC2 编码。打开后会在本机转成 H.264 再播放或保存，首次播放需要等待转换。"
     }
 
     private var example: String {
