@@ -2,14 +2,52 @@ import AVFoundation
 import AppKit
 import HongguoCore
 
-/// The single app-wide player: episode queue, source resolution, auto-next, speed and
-/// position persistence. Windows (main player, mini panel, PiP) only render `player`.
+/// How the current episode reaches AVPlayer.
+enum PlaybackPipeline: String, Sendable {
+    /// Plain media streamed through `StreamingResourceLoader`.
+    case stream
+    /// Encrypted media streamed and decrypted range by range (no full download first).
+    case progressiveDecrypt
+    /// Encrypted media downloaded and decrypted to a cache file before playback (fallback).
+    case decryptedFile
+    /// A downloaded episode played from disk.
+    case localFile
+}
+
+/// Video scaling inside the player surface.
+enum VideoFillMode: String, CaseIterable, Identifiable, Sendable {
+    case fit, fill, stretch
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .fit: return "适应"
+        case .fill: return "填充"
+        case .stretch: return "拉伸"
+        }
+    }
+    var gravity: AVLayerVideoGravity {
+        switch self {
+        case .fit: return .resizeAspect
+        case .fill: return .resizeAspectFill
+        case .stretch: return .resize
+        }
+    }
+}
+
+/// The single app-wide player: episode queue, source resolution, progressive decryption,
+/// auto-next, speed and position persistence. Views only read state and call the methods
+/// in the "Public playback API" section; they never touch sources or the network.
 @MainActor
 @Observable
 final class PlayerController {
     static let shared = PlayerController()
 
+    /// Speed choices offered by menus.
+    static let rateOptions: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 2, 3]
+
     let player = AVPlayer()
+
+    // MARK: Observable state
 
     private(set) var episodes: SeriesEpisodes?
     private(set) var cover = ""
@@ -19,23 +57,53 @@ final class PlayerController {
     private(set) var loadingText = ""
     private(set) var errorMessage: String?
     private(set) var isPlaying = false
+    /// Playing is requested but AVPlayer is waiting for data.
+    private(set) var isBuffering = false
     private(set) var videoSize = CGSize(width: 9, height: 16)
     private(set) var currentSource: PlaySource?
+    private(set) var pipeline: PlaybackPipeline?
+    /// Seconds, refreshed 4 times per second.
+    private(set) var currentTime: Double = 0
+    private(set) var duration: Double = 0
+    /// End of the loaded range that contains the playhead, in seconds.
+    private(set) var bufferedTime: Double = 0
+    /// Milliseconds from episode request to `readyToPlay` (diagnostics).
+    private(set) var startupMilliseconds: Int?
+    /// Short message shown over the video (speed changes, auto-next toggles).
+    private(set) var toast: String?
+
     private var storedRate: Float = 1.0
     var rate: Float {
         get { storedRate }
         set {
-            storedRate = newValue
-            if isPlaying, !holdingSpeed { player.rate = newValue }
-            if AppModel.shared.settings.rememberSpeed { AppModel.shared.settings.playbackRate = newValue }
+            storedRate = max(0.25, min(4, newValue))
+            if isPlaying, !holdingSpeed { player.rate = storedRate }
+            if AppModel.shared.settings.rememberSpeed { AppModel.shared.settings.playbackRate = storedRate }
         }
     }
+    private var storedVolume: Float = 1.0
+    var volume: Float {
+        get { storedVolume }
+        set {
+            storedVolume = max(0, min(1, newValue))
+            player.volume = storedVolume
+            AppModel.shared.settings.volume = storedVolume
+        }
+    }
+    private var storedMuted = false
+    var isMuted: Bool {
+        get { storedMuted }
+        set { storedMuted = newValue; player.isMuted = newValue }
+    }
+    /// Views apply `fillMode.gravity` to their AVPlayerView / AVPlayerLayer.
+    var fillMode: VideoFillMode = .fit
     var autoNext: Bool {
         get { AppModel.shared.settings.autoNext }
         set { AppModel.shared.settings.autoNext = newValue }
     }
-    /// Short message shown over the video (speed changes, auto-next toggles).
-    private(set) var toast: String?
+
+    /// Optional hook for the download manager: return a local file for an episode to play it from disk.
+    @ObservationIgnored var localFileProvider: ((Episode) -> URL?)?
 
     @ObservationIgnored private var loader: StreamingResourceLoader?
     @ObservationIgnored private var currentInfo: PlayInfo?
@@ -47,7 +115,11 @@ final class PlayerController {
     @ObservationIgnored private var endObserver: NSObjectProtocol?
     @ObservationIgnored private var lastSaved = Date.distantPast
     @ObservationIgnored private var retriedWithoutWeb = false
+    @ObservationIgnored private var retriedWithFile = false
     @ObservationIgnored private var holdingSpeed = false
+    @ObservationIgnored private var loadStarted = Date()
+    /// Header maps prepared ahead of time for the next episode, keyed by vid.
+    @ObservationIgnored private var preparedMaps: [String: CencStreamMap] = [:]
 
     var currentEpisode: Episode? {
         guard let episodes, index >= 1, index <= episodes.episodes.count else { return nil }
@@ -61,24 +133,38 @@ final class PlayerController {
 
     var hasNext: Bool { (episodes?.episodes.count ?? 0) > index }
     var hasPrevious: Bool { index > 1 }
+    var hasItem: Bool { player.currentItem != nil }
 
     private init() {
         let settings = AppModel.shared.settings
         storedRate = settings.rememberSpeed ? max(0.25, min(4, settings.playbackRate)) : 1
-        player.volume = settings.volume
+        storedVolume = max(0, min(1, settings.volume))
+        player.volume = storedVolume
         player.preventsDisplaySleepDuringVideoPlayback = true
         player.actionAtItemEnd = .pause
 
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 600), queue: .main) { [weak self] _ in
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
         observations.append(player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
-            let playing = player.timeControlStatus != .paused
-            Task { @MainActor in self?.isPlaying = playing }
+            let status = player.timeControlStatus
+            Task { @MainActor in
+                self?.isPlaying = status != .paused
+                self?.isBuffering = status == .waitingToPlayAtSpecifiedRate
+            }
         })
-        observations.append(player.observe(\.volume, options: [.new]) { player, _ in
-            let volume = player.volume
-            Task { @MainActor in AppModel.shared.settings.volume = volume }
+        // Volume changed from AVPlayerView's own slider.
+        observations.append(player.observe(\.volume, options: [.new]) { [weak self] player, _ in
+            let value = player.volume
+            Task { @MainActor in
+                guard let self, abs(self.storedVolume - value) > 0.001 else { return }
+                self.storedVolume = value
+                AppModel.shared.settings.volume = value
+            }
+        })
+        observations.append(player.observe(\.isMuted, options: [.new]) { [weak self] player, _ in
+            let muted = player.isMuted
+            Task { @MainActor in if self?.storedMuted != muted { self?.storedMuted = muted } }
         })
     }
 
@@ -101,6 +187,7 @@ final class PlayerController {
 
     func open(episodes list: SeriesEpisodes, cover: String, index: Int, startAt: Double = 0) {
         persistPosition()
+        if episodes?.seriesId != list.seriesId { preparedMaps.removeAll() }
         episodes = list
         self.cover = cover.isEmpty ? list.cover : cover
         PlayerWindows.shared.showPlayer()
@@ -112,55 +199,95 @@ final class PlayerController {
         if target != index { persistPosition() }
         index = target
         retriedWithoutWeb = false
+        retriedWithFile = false
         load(startAt: startAt, force: force)
     }
 
-    private func load(startAt: Double, force: Bool) {
+    private func load(startAt: Double, force: Bool, preferFile: Bool = false) {
         guard let episode = currentEpisode, let list = episodes else { return }
         loadTask?.cancel()
         loader?.cancelAll()
         player.pause()
         isLoading = true
         errorMessage = nil
+        startupMilliseconds = nil
+        loadStarted = Date()
+        currentTime = max(0, startAt)
+        duration = 0
+        bufferedTime = 0
+
+        if !force, let file = localFileProvider?(episode), FileManager.default.isReadableFile(atPath: file.path) {
+            loader = nil
+            pipeline = .localFile
+            currentSource = nil
+            currentInfo = nil
+            start(item: AVPlayerItem(url: file), info: nil, startAt: startAt)
+            return
+        }
+
         loadingText = "正在获取第 \(episode.index) 集片源…"
         let service = AppModel.shared.series
+        let prepared = preparedMaps.removeValue(forKey: episode.vid)
         loadTask = Task { [weak self] in
             do {
                 let info = try await service.playInfo(vid: episode.vid, seriesId: list.seriesId, force: force)
                 try Task.checkCancellation()
                 try await URLGuard.check(info.url)
-                let item: AVPlayerItem
-                if info.isEncrypted {
-                    await MainActor.run { self?.loadingText = "正在下载并解密第 \(episode.index) 集…" }
-                    let file = try await PlaybackCache.shared.prepare(info)
-                    try Task.checkCancellation()
-                    item = AVPlayerItem(url: file)
-                    await MainActor.run { self?.loader = nil }
-                } else {
-                    let streaming = StreamingResourceLoader(source: info.url, headers: info.httpHeaders)
-                    streaming.onMediaFailure = { message in
-                        Task { @MainActor in self?.mediaFailed(message) }
-                    }
-                    item = AVPlayerItem(asset: streaming.makeAsset())
-                    await MainActor.run { self?.loader = streaming }
+                let (item, pipeline, streaming) = try await Self.makeItem(for: info, episode: episode, prepared: force ? nil : prepared,
+                                                                          preferFile: preferFile) { text in
+                    Task { @MainActor in self?.loadingText = text }
                 }
                 try Task.checkCancellation()
-                await MainActor.run { self?.start(item: item, info: info, startAt: startAt) }
+                streaming?.onMediaFailure = { message in
+                    Task { @MainActor in self?.mediaFailed(message) }
+                }
+                guard let self else { return }
+                self.loader = streaming
+                self.pipeline = pipeline
+                self.start(item: item, info: info, startAt: startAt)
             } catch is CancellationError {
             } catch let error as HongguoError where error.kind == .cancelled {
             } catch {
-                await MainActor.run {
-                    self?.isLoading = false
-                    self?.errorMessage = describe(error)
-                }
+                self?.isLoading = false
+                self?.errorMessage = describe(error)
             }
         }
     }
 
-    private func start(item: AVPlayerItem, info: PlayInfo, startAt: Double) {
+    /// Chooses the pipeline: cached decrypted file > progressive decrypt > full decrypt; plain media streams.
+    private nonisolated static func makeItem(for info: PlayInfo, episode: Episode, prepared: CencStreamMap?, preferFile: Bool,
+                                             progress: @escaping @Sendable (String) -> Void) async throws
+        -> (AVPlayerItem, PlaybackPipeline, StreamingResourceLoader?) {
+        guard info.isEncrypted else {
+            let streaming = StreamingResourceLoader(source: info.url, headers: info.httpHeaders)
+            return (AVPlayerItem(asset: streaming.makeAsset()), .stream, streaming)
+        }
+        if let file = PlaybackCache.shared.cachedFile(for: info) {
+            return (AVPlayerItem(url: file), .decryptedFile, nil)
+        }
+        if !preferFile {
+            do {
+                let map: CencStreamMap
+                if let prepared, prepared.inputLength > 0 { map = prepared } else { map = try await CencStreamLoader.open(info) }
+                try Task.checkCancellation()
+                let streaming = StreamingResourceLoader(source: info.url, headers: info.httpHeaders, map: map)
+                return (AVPlayerItem(asset: streaming.makeAsset()), .progressiveDecrypt, streaming)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Unsupported layout or no range support: fall through to the full download.
+            }
+        }
+        progress("正在下载并解密第 \(episode.index) 集…")
+        let file = try await PlaybackCache.shared.prepare(info)
+        try Task.checkCancellation()
+        return (AVPlayerItem(url: file), .decryptedFile, nil)
+    }
+
+    private func start(item: AVPlayerItem, info: PlayInfo?, startAt: Double) {
         currentInfo = info
-        currentSource = info.source
-        item.preferredForwardBufferDuration = 15
+        currentSource = info?.source
+        item.preferredForwardBufferDuration = 20
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         endObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.episodeEnded() }
@@ -183,6 +310,7 @@ final class PlayerController {
         switch status {
         case .readyToPlay:
             isLoading = false
+            if startupMilliseconds == nil { startupMilliseconds = Int(Date().timeIntervalSince(loadStarted) * 1000) }
             if size.width > 0, size.height > 0 {
                 videoSize = size
                 PlayerWindows.shared.videoSizeChanged(size)
@@ -194,27 +322,40 @@ final class PlayerController {
         }
     }
 
-    /// A web media URL failed: penalise the web source and retry once with the fallback order.
+    /// Recovery: a failed web URL is penalised and re-resolved once; a failed progressive
+    /// stream falls back once to the full download-and-decrypt path.
     private func mediaFailed(_ message: String) {
+        let resumeAt = player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0
         if let info = currentInfo, info.source == .web, !retriedWithoutWeb {
             retriedWithoutWeb = true
             let service = AppModel.shared.series
             Task {
                 await service.markWebMediaFailure(info)
-                self.load(startAt: self.player.currentTime().seconds, force: true)
+                self.load(startAt: resumeAt, force: true)
             }
+            return
+        }
+        if pipeline == .progressiveDecrypt, !retriedWithFile {
+            retriedWithFile = true
+            load(startAt: resumeAt, force: false, preferFile: true)
             return
         }
         isLoading = false
         errorMessage = "播放失败：\(message)"
     }
 
+    /// Resolves the next episode's source and, if encrypted, its header map, so it starts instantly.
     private func prefetchNext() {
         guard let list = episodes, hasNext else { return }
         let next = list.episodes[index]
+        if localFileProvider?(next) != nil { return }
         let service = AppModel.shared.series
-        Task.detached(priority: .utility) {
-            _ = try? await service.playInfo(vid: next.vid, seriesId: list.seriesId)
+        Task { [weak self] in
+            guard let info = try? await service.playInfo(vid: next.vid, seriesId: list.seriesId), info.isEncrypted,
+                  PlaybackCache.shared.cachedFile(for: info) == nil,
+                  let map = try? await CencStreamLoader.open(info) else { return }
+            guard let self, self.episodes?.seriesId == list.seriesId else { return }
+            self.preparedMaps = [next.vid: map]
         }
     }
 
@@ -225,7 +366,7 @@ final class PlayerController {
         }
     }
 
-    // MARK: Controls
+    // MARK: Public playback API
 
     func togglePlay() {
         guard player.currentItem != nil else { return }
@@ -237,6 +378,9 @@ final class PlayerController {
         }
     }
 
+    func playIfPaused() { if player.currentItem != nil, player.timeControlStatus == .paused { player.playImmediately(atRate: rate) } }
+    func pause() { player.pause(); persistPosition() }
+
     func next() { if hasNext { play(index: index + 1) } }
     func previous() { if hasPrevious { play(index: index - 1) } }
 
@@ -244,18 +388,56 @@ final class PlayerController {
         load(startAt: player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0, force: true)
     }
 
+    /// Absolute seek, clamped to the item.
+    func seek(to seconds: Double, precise: Bool = false) {
+        guard player.currentItem != nil else { return }
+        var target = max(0, seconds)
+        if duration > 0 { target = min(target, max(0, duration - 0.25)) }
+        currentTime = target
+        let time = CMTime(seconds: target, preferredTimescale: 600)
+        if precise {
+            player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+        } else {
+            player.seek(to: time)
+        }
+    }
+
     func seek(by seconds: Double) {
-        guard let item = player.currentItem else { return }
-        let duration = item.duration.seconds
-        var target = player.currentTime().seconds + seconds
-        if duration.isFinite { target = min(target, max(0, duration - 0.5)) }
-        player.seek(to: CMTime(seconds: max(0, target), preferredTimescale: 600))
+        seek(to: player.currentTime().seconds + seconds)
+    }
+
+    /// Seek to a fraction (0...1) of the episode, for timeline scrubbing.
+    func seek(fraction: Double) {
+        guard duration > 0 else { return }
+        seek(to: duration * max(0, min(1, fraction)), precise: true)
+    }
+
+    func stepFrame(forward: Bool) {
+        player.pause()
+        player.currentItem?.step(byCount: forward ? 1 : -1)
     }
 
     func changeRate(by delta: Float) {
         let value = ((rate + delta) * 100).rounded() / 100
-        rate = max(0.25, min(4, value))
+        rate = value
         show(toast: formatRate(rate))
+    }
+
+    func changeVolume(by delta: Float) {
+        volume += delta
+        if isMuted, delta > 0 { isMuted = false }
+        show(toast: "音量 \(Int((volume * 100).rounded()))%")
+    }
+
+    func toggleMute() {
+        isMuted.toggle()
+        show(toast: isMuted ? "已静音" : "音量 \(Int((volume * 100).rounded()))%")
+    }
+
+    func cycleFillMode() {
+        let all = VideoFillMode.allCases
+        fillMode = all[(all.firstIndex(of: fillMode)! + 1) % all.count]
+        show(toast: "画面：\(fillMode.label)")
     }
 
     func toggleAutoNext() {
@@ -293,11 +475,23 @@ final class PlayerController {
         loader?.cancelAll()
         player.pause()
         player.replaceCurrentItem(with: nil)
+        pipeline = nil
     }
 
-    // MARK: Persistence
+    // MARK: Time & persistence
 
     private func tick() {
+        if let item = player.currentItem {
+            let now = player.currentTime().seconds
+            if now.isFinite { currentTime = now }
+            let total = item.duration.seconds
+            if total.isFinite, total > 0 { duration = total }
+            let ranges = item.loadedTimeRanges.map(\.timeRangeValue)
+            if let range = ranges.first(where: { $0.containsTime(player.currentTime()) }) ?? ranges.last {
+                let end = range.end.seconds
+                if end.isFinite { bufferedTime = end }
+            }
+        }
         if Date().timeIntervalSince(lastSaved) >= 5, isPlaying { persistPosition() }
     }
 
