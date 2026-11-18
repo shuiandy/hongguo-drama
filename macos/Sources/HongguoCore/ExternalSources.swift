@@ -25,7 +25,12 @@ public struct SourcePage: Sendable {
 }
 
 public enum MediaSources {
-    public struct Entry: Equatable, Sendable { public var id: String; public var label: String; public var optIn: Bool }
+    public struct Entry: Equatable, Sendable {
+        public var id: String
+        public var label: String
+        public var optIn: Bool
+        public var custom = false
+    }
     public static let builtin: [Entry] = [
         Entry(id: "hongguo", label: "红果", optIn: false), Entry(id: "xifan", label: "西饭", optIn: false),
         Entry(id: "hema", label: "河马", optIn: false),
@@ -33,9 +38,38 @@ public enum MediaSources {
     ]
 
     /// Sources shown in the switcher: Hongguo always, 西饭/河马 unless turned off, overseas ones only when turned on.
-    public static func enabled(_ switches: [String: Bool]) -> [Entry] {
+    public static func enabled(_ switches: [String: Bool], custom: [CustomSourceConfig] = []) -> [Entry] {
         builtin.filter { entry in
             entry.id == "hongguo" || (entry.optIn ? switches[entry.id] == true : switches[entry.id] != false)
+        } + custom.filter(\.enabled).map { Entry(id: "custom:\($0.id)", label: $0.name, optIn: false, custom: true) }
+    }
+
+    /// One instance per built-in source so genre caches survive between calls.
+    static let shared = (xifan: XifanSource(), hema: HemaSource(), reelshort: ReelShortSource(), dramabox: DramaBoxSource())
+
+    /// The catalogue behind a source or series id under the current settings; nil for Hongguo
+    /// (which has its own services). Throws when the source is turned off or deleted.
+    public static func source(for id: String, settings: @escaping @Sendable () -> AppSettings) throws -> MediaSource? {
+        let kind = sourceId(of: id)
+        let current = settings()
+        switch kind {
+        case "hongguo": return nil
+        case "xifan", "hema", "reelshort", "dramabox":
+            guard enabled(current.builtinSources).contains(where: { $0.id == kind }) else {
+                throw HongguoError(.unavailable, "此来源已关闭，可在设置中重新开启")
+            }
+            switch kind {
+            case "xifan": return shared.xifan
+            case "hema": return shared.hema
+            case "reelshort": return shared.reelshort
+            default: return shared.dramabox
+            }
+        default:
+            let uuid = try CustomSource.sourceId(id)
+            guard let config = current.customSources.first(where: { $0.id == uuid && $0.enabled }) else {
+                throw HongguoError(.unavailable, "该自定义源已禁用或删除")
+            }
+            return CustomSource(config: config, current: { uuid in settings().customSources.first { $0.id == uuid } })
         }
     }
 
