@@ -8,7 +8,9 @@ import SwiftUI
 final class PlayerWindows: NSObject, NSWindowDelegate {
     static let shared = PlayerWindows()
 
-    static let episodePanelWidth: CGFloat = 248
+    static let episodePanelWidth: CGFloat = 424
+    /// The video stage never gets narrower than this, so the control bar fits; ambient light fills the rest.
+    static let minimumStageWidth: CGFloat = 700
 
     private(set) var isMini = false
     private(set) var showEpisodes = true
@@ -35,7 +37,7 @@ final class PlayerWindows: NSObject, NSWindowDelegate {
 
     private func makePlayerWindow() -> NSWindow {
         let height = min(820, (NSScreen.main?.visibleFrame.height ?? 900) * 0.85)
-        let videoWidth = (height * lastAspect).rounded()
+        let videoWidth = max(Self.minimumStageWidth, (height * lastAspect).rounded())
         let size = NSSize(width: videoWidth + (showEpisodes ? Self.episodePanelWidth : 0), height: height)
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -47,8 +49,11 @@ final class PlayerWindows: NSObject, NSWindowDelegate {
         window.backgroundColor = .black
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 320, height: 360)
-        window.contentView = NSHostingView(rootView: PlayerScreen(controller: controller, windows: self))
+        window.minSize = NSSize(width: Self.minimumStageWidth, height: 520)
+        let hosting = NSHostingView(rootView: PlayerScreen(controller: controller, windows: self))
+        // The window decides its size; SwiftUI content must not grow it (that pushed the drawer header off-screen).
+        hosting.sizingOptions = []
+        window.contentView = hosting
         window.delegate = self
         window.setFrameAutosaveName("HongguoPlayerWindow")
         if !window.setFrameUsingName("HongguoPlayerWindow") { window.center() }
@@ -85,7 +90,7 @@ final class PlayerWindows: NSObject, NSWindowDelegate {
         if let window = playerWindow, !window.styleMask.contains(.fullScreen) {
             var frame = window.frame
             let contentHeight = window.contentLayoutRect.height
-            let width = contentHeight * aspect + (showEpisodes ? Self.episodePanelWidth : 0)
+            let width = max(Self.minimumStageWidth, contentHeight * aspect) + (showEpisodes ? Self.episodePanelWidth : 0)
             frame.origin.x += (frame.width - width) / 2
             frame.size.width = width
             window.setFrame(frame, display: true, animate: true)
@@ -145,7 +150,9 @@ final class PlayerWindows: NSObject, NSWindowDelegate {
         }
         let panel = MiniPanel(contentRect: frame)
         panel.contentAspectRatio = NSSize(width: lastAspect * 1000, height: 1000)
-        panel.contentView = NSHostingView(rootView: MiniPlayerView(controller: controller, windows: self))
+        let miniHosting = NSHostingView(rootView: MiniPlayerView(controller: controller, windows: self))
+        miniHosting.sizingOptions = []
+        panel.contentView = miniHosting
         panel.delegate = self
         miniPanel = panel
         return panel

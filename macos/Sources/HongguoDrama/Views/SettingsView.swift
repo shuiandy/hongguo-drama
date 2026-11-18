@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import HongguoCore
 
@@ -45,10 +46,41 @@ struct SettingsView: View {
                 }
             }
             .tabItem { Label("播放", systemImage: "play.rectangle") }
+
+            Form {
+                LabeledContent("下载位置") {
+                    HStack {
+                        Text(AppModel.downloadConfiguration(model.settings).root.path)
+                            .lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+                        Button("更改…") { chooseFolder() }
+                    }
+                }
+                Stepper("同时下载 \(model.settings.maxConcurrentDownloads) 集", value: $model.settings.maxConcurrentDownloads, in: 1...10)
+                TextField("文件命名", text: $model.settings.downloadNameFormat)
+                Toggle("看完后自动删除已下载的集", isOn: $model.settings.autoDeleteWatched)
+                Toggle("播放时预先准备下一集", isOn: $model.settings.cacheNextEpisode)
+                Section("追剧") {
+                    Toggle("检查已看剧集的更新", isOn: $model.settings.watchUpdatesEnabled)
+                    Toggle("检查续作", isOn: $model.settings.watchSequelsEnabled)
+                }
+            }
+            .tabItem { Label("下载", systemImage: "arrow.down.circle") }
         }
         .formStyle(.grouped)
         .frame(width: 460, height: 420)
         .onAppear { cacheBytes = PlaybackCache.shared.usageBytes() }
+        .onChange(of: model.settings.maxConcurrentDownloads) { model.applyDownloadSettings() }
+        .onChange(of: model.settings.downloadNameFormat) { model.applyDownloadSettings() }
+        .onChange(of: model.settings.downloadRoot) { model.applyDownloadSettings() }
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "选择"
+        if panel.runModal() == .OK, let url = panel.url { model.settings.downloadRoot = url.path }
     }
 
     private func shortcut(_ key: String, _ action: String) -> some View {

@@ -1,63 +1,5 @@
-import AVKit
-import Combine
+import AppKit
 import SwiftUI
-import HongguoCore
-
-/// AVPlayerView with native floating controls, PiP button and full-screen toggle.
-struct NativePlayerView: NSViewRepresentable {
-    let player: AVPlayer
-
-    func makeNSView(context: Context) -> AVPlayerView {
-        let view = AVPlayerView()
-        view.player = player
-        view.controlsStyle = .floating
-        view.videoGravity = .resizeAspect
-        view.allowsPictureInPicturePlayback = true
-        view.showsFullScreenToggleButton = true
-        view.showsSharingServiceButton = false
-        view.allowsMagnification = false
-        return view
-    }
-
-    func updateNSView(_ view: AVPlayerView, context: Context) {
-        if view.player !== player { view.player = player }
-    }
-}
-
-/// Bare video layer, no controls (used by the mini panel).
-struct VideoLayerView: NSViewRepresentable {
-    let player: AVPlayer
-
-    final class LayerView: NSView {
-        let playerLayer = AVPlayerLayer()
-        override init(frame: NSRect) {
-            super.init(frame: frame)
-            wantsLayer = true
-            layer = CALayer()
-            layer?.backgroundColor = NSColor.black.cgColor
-            playerLayer.videoGravity = .resizeAspect
-            layer?.addSublayer(playerLayer)
-        }
-        required init?(coder: NSCoder) { fatalError() }
-        override func layout() {
-            super.layout()
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            playerLayer.frame = bounds
-            CATransaction.commit()
-        }
-    }
-
-    func makeNSView(context: Context) -> LayerView {
-        let view = LayerView()
-        view.playerLayer.player = player
-        return view
-    }
-
-    func updateNSView(_ view: LayerView, context: Context) {
-        if view.playerLayer.player !== player { view.playerLayer.player = player }
-    }
-}
 
 /// Transparent area that drags the window; double click runs `onDoubleClick`.
 struct WindowDragArea: NSViewRepresentable {
@@ -81,246 +23,133 @@ struct WindowDragArea: NSViewRepresentable {
     func updateNSView(_ view: DragView, context: Context) { view.onDoubleClick = onDoubleClick }
 }
 
-struct PlayerOverlays: View {
-    let controller: PlayerController
 
-    var body: some View {
-        ZStack {
-            if controller.isLoading {
-                VStack(spacing: 10) {
-                    ProgressView().controlSize(.large).tint(.white)
-                    Text(controller.loadingText).font(.callout).foregroundStyle(.white.opacity(0.85))
-                }
-                .padding(18)
-                .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
-            } else if let error = controller.errorMessage {
-                VStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle.fill").font(.largeTitle).foregroundStyle(.yellow)
-                    Text(error).multilineTextAlignment(.center).foregroundStyle(.white).frame(maxWidth: 340)
-                    HStack {
-                        Button("重试") { controller.retry() }
-                        if controller.hasNext { Button("下一集") { controller.next() } }
-                    }
-                }
-                .padding(20)
-                .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
-            }
-            if let toast = controller.toast {
-                Text(toast)
-                    .font(.title3.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16).padding(.vertical, 8)
-                    .background(.black.opacity(0.55), in: Capsule())
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .padding(.top, 54)
-                    .transition(.opacity)
-            }
-        }
-        .animation(.easeOut(duration: 0.15), value: controller.toast)
-        .allowsHitTesting(controller.errorMessage != nil)
-    }
-}
+/// Wide resize zones for a borderless window: edges and corners pick up drags well inside the
+/// window (AppKit only gives a borderless window a few pixels), keeping `contentAspectRatio`.
+/// The interior returns nil from hit testing so clicks and drags there reach the views below.
+struct WindowResizeEdges: NSViewRepresentable {
+    var thickness: CGFloat = 12
+    var corner: CGFloat = 26
 
-/// Main player window content: video on the left, episode list on the right.
-struct PlayerScreen: View {
-    let controller: PlayerController
-    let windows: PlayerWindows
-    @State private var hovering = false
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ZStack(alignment: .top) {
-                Color.black
-                NativePlayerView(player: controller.player)
-                PlayerOverlays(controller: controller)
-                topBar
-                    .opacity(hovering || controller.player.currentItem == nil ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.2), value: hovering)
-            }
-            .onContinuousHover { phase in
-                if case .active = phase { hovering = true } else { hovering = false }
-            }
-            if windows.showEpisodes {
-                EpisodePanel(controller: controller)
-                    .frame(width: PlayerWindows.episodePanelWidth)
-                    .transition(.move(edge: .trailing))
-            }
-        }
-        .background(Color.black)
-        .ignoresSafeArea()
-        .preferredColorScheme(.dark)
+    struct Edges: OptionSet {
+        let rawValue: Int
+        static let left = Edges(rawValue: 1)
+        static let right = Edges(rawValue: 2)
+        static let bottom = Edges(rawValue: 4)
+        static let top = Edges(rawValue: 8)
     }
 
-    private var topBar: some View {
-        HStack(spacing: 14) {
-            Text(controller.title)
-                .font(.headline)
-                .lineLimit(1)
-                .foregroundStyle(.white)
-            Spacer()
-            Menu {
-                ForEach([Float(0.5), 0.75, 1, 1.25, 1.5, 2, 3], id: \.self) { value in
-                    Button { controller.rate = value } label: {
-                        if value == controller.rate { Label(formatRate(value), systemImage: "checkmark") } else { Text(formatRate(value)) }
-                    }
-                }
-            } label: {
-                Text(formatRate(controller.rate)).font(.callout.monospacedDigit())
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("播放速度（S / D）")
-            iconButton(controller.autoNext ? "repeat.circle.fill" : "repeat.circle", help: "自动连播（A）") { controller.toggleAutoNext() }
-            iconButton("pip.enter", help: "悬浮小窗（M）") { windows.enterMini() }
-            iconButton("sidebar.right", help: "选集（E）") { windows.toggleEpisodes() }
-        }
-        .padding(.leading, 84) // traffic lights
-        .padding(.trailing, 14)
-        .frame(height: 40)
-        .background {
-            ZStack {
-                LinearGradient(colors: [.black.opacity(0.7), .clear], startPoint: .top, endPoint: .bottom)
-                    .allowsHitTesting(false)
-                WindowDragArea { NSApp.keyWindow?.zoom(nil) }
-            }
-        }
-    }
+    final class EdgeView: NSView {
+        var thickness: CGFloat = 12
+        var corner: CGFloat = 26
+        private var startFrame = NSRect.zero
+        private var startMouse = NSPoint.zero
+        private var dragging: Edges = []
 
-    private func iconButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 15, weight: .medium)).foregroundStyle(.white)
+        func edges(at p: NSPoint) -> Edges {
+            let w = bounds.width, h = bounds.height
+            var e: Edges = []
+            if p.x < thickness { e.insert(.left) } else if p.x > w - thickness { e.insert(.right) }
+            if p.y < thickness { e.insert(.bottom) } else if p.y > h - thickness { e.insert(.top) }
+            guard !e.isEmpty else { return e }
+            // Near a corner, an edge hit becomes a corner hit.
+            if p.x < corner { e.insert(.left) } else if p.x > w - corner { e.insert(.right) }
+            if p.y < corner { e.insert(.bottom) } else if p.y > h - corner { e.insert(.top) }
+            return e
         }
-        .buttonStyle(.plain)
-        .help(help)
-    }
-}
 
-struct EpisodePanel: View {
-    let controller: PlayerController
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard let superview else { return nil }
+            return edges(at: convert(point, from: superview)).isEmpty ? nil : self
+        }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(controller.episodes?.title ?? "选集").font(.headline).lineLimit(2)
-                if let total = controller.episodes?.total {
-                    Text("共 \(total) 集\(controller.currentSource.map { " · 片源：\(sourceName($0))" } ?? "")")
-                        .font(.caption).foregroundStyle(.secondary)
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func resetCursorRects() {
+            let w = bounds.width, h = bounds.height, t = thickness, c = corner
+            let horizontal = NSCursor.resizeLeftRight, vertical = NSCursor.resizeUpDown
+            addCursorRect(NSRect(x: 0, y: c, width: t, height: max(0, h - 2 * c)), cursor: horizontal)
+            addCursorRect(NSRect(x: w - t, y: c, width: t, height: max(0, h - 2 * c)), cursor: horizontal)
+            addCursorRect(NSRect(x: c, y: 0, width: max(0, w - 2 * c), height: t), cursor: vertical)
+            addCursorRect(NSRect(x: c, y: h - t, width: max(0, w - 2 * c), height: t), cursor: vertical)
+            let corners: [(NSRect, Bool)] = [
+                (NSRect(x: 0, y: 0, width: c, height: c), false),          // bottom left
+                (NSRect(x: w - c, y: h - c, width: c, height: c), false),  // top right
+                (NSRect(x: 0, y: h - c, width: c, height: c), true),       // top left
+                (NSRect(x: w - c, y: 0, width: c, height: c), true),       // bottom right
+            ]
+            for (rect, isTopLeftDiagonal) in corners {
+                for strip in [NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: t),
+                              NSRect(x: rect.minX, y: rect.maxY - t, width: rect.width, height: t),
+                              NSRect(x: rect.minX, y: rect.minY, width: t, height: rect.height),
+                              NSRect(x: rect.maxX - t, y: rect.minY, width: t, height: rect.height)] {
+                    addCursorRect(strip.intersection(rect), cursor: diagonalCursor(topLeft: isTopLeftDiagonal))
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 40)
-            .padding(.bottom, 10)
-            Divider()
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5), spacing: 6) {
-                        ForEach(controller.episodes?.episodes ?? []) { episode in
-                            let current = episode.index == controller.index
-                            Button { controller.play(index: episode.index) } label: {
-                                Text("\(episode.index)")
-                                    .font(.callout.monospacedDigit())
-                                    .frame(maxWidth: .infinity, minHeight: 30)
-                                    .background(current ? Color.accentColor : Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
-                                    .foregroundStyle(current ? .white : .primary)
-                            }
-                            .buttonStyle(.plain)
-                            .id(episode.index)
-                        }
-                    }
-                    .padding(12)
-                }
-                .onChange(of: controller.index) { _, value in
-                    withAnimation { proxy.scrollTo(value, anchor: .center) }
-                }
-                .onAppear { proxy.scrollTo(controller.index, anchor: .center) }
-            }
         }
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.96))
+
+        private func diagonalCursor(topLeft: Bool) -> NSCursor {
+            if #available(macOS 15.0, *) {
+                return NSCursor.frameResize(position: topLeft ? .topLeft : .topRight, directions: .all)
+            }
+            return .crosshair
+        }
+
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
+            window?.invalidateCursorRects(for: self)
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            guard let window else { return }
+            dragging = edges(at: convert(event.locationInWindow, from: nil))
+            startFrame = window.frame
+            startMouse = NSEvent.mouseLocation
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            guard let window, !dragging.isEmpty else { return }
+            let mouse = NSEvent.mouseLocation
+            let dx = mouse.x - startMouse.x, dy = mouse.y - startMouse.y
+            var width = startFrame.width, height = startFrame.height
+            if dragging.contains(.right) { width += dx }
+            if dragging.contains(.left) { width -= dx }
+            if dragging.contains(.top) { height += dy }
+            if dragging.contains(.bottom) { height -= dy }
+
+            let ratio = window.contentAspectRatio
+            let horizontal = dragging.contains(.left) || dragging.contains(.right)
+            if ratio.width > 0, ratio.height > 0 {
+                let aspect = ratio.width / ratio.height
+                let minWidth = max(window.minSize.width, window.minSize.height * aspect)
+                let maxWidth = (window.screen?.visibleFrame.height ?? 2000) * aspect
+                if !horizontal { width = height * aspect }
+                width = min(max(width, minWidth), max(minWidth, maxWidth))
+                height = width / aspect
+            } else {
+                width = max(width, window.minSize.width)
+                height = max(height, window.minSize.height)
+            }
+
+            // Keep the edges opposite the drag where they were.
+            let x = dragging.contains(.left) ? startFrame.maxX - width : startFrame.minX
+            let y = dragging.contains(.bottom) ? startFrame.minY + startFrame.height - height
+                : (dragging.contains(.top) ? startFrame.minY : startFrame.maxY - height)
+            window.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
+        }
+
+        override func mouseUp(with event: NSEvent) { dragging = [] }
     }
 
-    private func sourceName(_ source: PlaySource) -> String {
-        switch source {
-        case .web: return "官网"
-        case .api: return "旧接口"
-        case .app: return "App"
-        }
-    }
-}
-
-/// Content of the borderless floating window: video, drag-to-move, hover controls.
-struct MiniPlayerView: View {
-    let controller: PlayerController
-    let windows: PlayerWindows
-    @State private var hovering = false
-
-    var body: some View {
-        ZStack {
-            VideoLayerView(player: controller.player)
-            WindowDragArea { windows.exitMini() }
-            PlayerOverlays(controller: controller)
-            if hovering {
-                VStack {
-                    HStack {
-                        miniButton("xmark", help: "关闭") { windows.closeMini() }
-                        Spacer()
-                        miniButton("arrow.up.left.and.arrow.down.right", help: "返回播放器（双击）") { windows.exitMini() }
-                    }
-                    Spacer()
-                    HStack(spacing: 18) {
-                        miniButton("backward.end.fill", help: "上一集") { controller.previous() }.disabled(!controller.hasPrevious)
-                        miniButton(controller.isPlaying ? "pause.fill" : "play.fill", help: "播放 / 暂停", size: 22) { controller.togglePlay() }
-                        miniButton("forward.end.fill", help: "下一集") { controller.next() }.disabled(!controller.hasNext)
-                    }
-                    .padding(.bottom, 4)
-                    MiniProgress(player: controller.player)
-                }
-                .padding(10)
-                .background(LinearGradient(colors: [.black.opacity(0.55), .clear, .black.opacity(0.6)], startPoint: .top, endPoint: .bottom).allowsHitTesting(false))
-                .transition(.opacity)
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .onHover { value in withAnimation(.easeOut(duration: 0.15)) { hovering = value } }
-        .preferredColorScheme(.dark)
+    func makeNSView(context: Context) -> EdgeView {
+        let view = EdgeView()
+        view.thickness = thickness
+        view.corner = corner
+        return view
     }
 
-    private func miniButton(_ symbol: String, help: String, size: CGFloat = 14, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: size, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 30, height: 30)
-                .background(.black.opacity(0.35), in: Circle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-    }
-}
-
-/// Thin progress bar for the mini window; click to seek.
-struct MiniProgress: View {
-    let player: AVPlayer
-    @State private var progress: Double = 0
-    private let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.25))
-                Capsule().fill(.white).frame(width: proxy.size.width * progress)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { location in
-                guard let duration = player.currentItem?.duration.seconds, duration.isFinite, duration > 0 else { return }
-                let fraction = max(0, min(1, location.x / proxy.size.width))
-                player.seek(to: CMTime(seconds: duration * fraction, preferredTimescale: 600))
-                progress = fraction
-            }
-        }
-        .frame(height: 4)
-        .onReceive(timer) { _ in
-            guard let duration = player.currentItem?.duration.seconds, duration.isFinite, duration > 0 else { progress = 0; return }
-            progress = max(0, min(1, player.currentTime().seconds / duration))
-        }
+    func updateNSView(_ view: EdgeView, context: Context) {
+        view.thickness = thickness
+        view.corner = corner
     }
 }

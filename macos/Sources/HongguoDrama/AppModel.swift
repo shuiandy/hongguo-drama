@@ -6,12 +6,16 @@ enum SidebarItem: Hashable, Identifiable {
     case ranking(CatalogKind)
     case search
     case history
+    case library
+    case downloads
 
     var id: String {
         switch self {
         case .category(let kind), .ranking(let kind): return kind.rawValue
         case .search: return "search"
         case .history: return "history"
+        case .library: return "library"
+        case .downloads: return "downloads"
         }
     }
 
@@ -20,6 +24,8 @@ enum SidebarItem: Hashable, Identifiable {
         case .category(let kind), .ranking(let kind): return kind.label
         case .search: return "搜索"
         case .history: return "观看记录"
+        case .library: return "我的剧库"
+        case .downloads: return "下载"
         }
     }
 
@@ -31,6 +37,8 @@ enum SidebarItem: Hashable, Identifiable {
         case .ranking: return "flame"
         case .search: return "magnifyingglass"
         case .history: return "clock.arrow.circlepath"
+        case .library: return "heart"
+        case .downloads: return "arrow.down.circle"
         }
     }
 }
@@ -52,10 +60,81 @@ final class AppModel {
         didSet { if settings != oldValue { store.settings = settings; applyTheme() } }
     }
     var history: [WatchRecord] = []
+    /// Query typed into a page header search field, consumed by the search page.
+    var pendingSearch: String?
+
+    // MARK: Library (favorites and recently opened series)
+
+    let library = SeriesLibrary.shared
+    private(set) var favorites: [LibrarySeries] = []
+    private(set) var recentSeries: [LibrarySeries] = []
+
+    // MARK: Downloads
+
+    let downloads: DownloadManager
+    private(set) var downloadTasks: [DownloadTask] = []
+    /// Completed downloads by episode vid, read synchronously by the player.
+    private(set) var localFiles: [String: URL] = [:]
 
     private init() {
-        settings = LibraryStore.shared.settings
+        let settings = LibraryStore.shared.settings
+        self.settings = settings
         history = LibraryStore.shared.history()
+        downloads = DownloadManager(configuration: Self.downloadConfiguration(settings))
+        refreshLibrary()
+        library.onChange = { Task { @MainActor in AppModel.shared.refreshLibrary() } }
+        Task { await observeDownloads() }
+    }
+
+    /// Called once at launch (not from init: PlayerController's init reads AppModel.shared).
+    func connectPlayer() {
+        PlayerController.shared.localFileProvider = { episode in
+            MainActor.assumeIsolated { AppModel.shared.localFiles[episode.vid] }
+        }
+    }
+
+    static func downloadConfiguration(_ settings: AppSettings) -> DownloadConfiguration {
+        var config = DownloadConfiguration(nameFormat: settings.downloadNameFormat, maxConcurrent: settings.maxConcurrentDownloads)
+        if let root = settings.downloadRoot, !root.isEmpty { config.root = URL(fileURLWithPath: root, isDirectory: true) }
+        return config
+    }
+
+    func refreshLibrary() {
+        favorites = library.favorites()
+        recentSeries = library.recent(limit: 60)
+    }
+
+    func isFavorite(_ seriesId: String) -> Bool { favorites.contains { $0.seriesId == seriesId } }
+
+    @discardableResult
+    func toggleFavorite(seriesId: String, title: String, cover: String) -> Bool {
+        let value = (try? library.toggleFavorite(seriesId: seriesId, title: title, cover: cover)) ?? false
+        refreshLibrary()
+        return value
+    }
+
+    private func observeDownloads() async {
+        for await tasks in await downloads.updates() {
+            downloadTasks = tasks
+            localFiles = Dictionary(tasks.filter { $0.status == .completed }.map { ($0.vid, $0.fileURL) },
+                                    uniquingKeysWith: { first, _ in first })
+        }
+    }
+
+    func applyDownloadSettings() {
+        let config = Self.downloadConfiguration(settings)
+        Task { await downloads.setConfiguration(config) }
+    }
+
+    /// Queues episodes for download; returns how many were added.
+    @discardableResult
+    func download(_ episodes: [Episode], seriesId: String, title: String, cover: String) async -> Int {
+        do {
+            return try await downloads.enqueue(seriesId: seriesId, seriesTitle: title, cover: cover, episodes: episodes)
+        } catch {
+            PlayerController.shared.show(toast: describe(error))
+            return 0
+        }
     }
 
     func refreshHistory() {
