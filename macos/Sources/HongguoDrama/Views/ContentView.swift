@@ -172,11 +172,7 @@ struct SidebarRow: View {
 struct BrandHeader: View {
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "play.fill")
-                .font(.system(size: 17, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 40, height: 40)
-                .glassSurface(in: RoundedRectangle(cornerRadius: 12, style: .continuous), tint: .hongguoRed)
+            AppIconMark(size: 46)
             VStack(alignment: .leading, spacing: 2) {
                 Text("红果短剧").font(.system(size: 18, weight: .heavy))
                 Text("Mac 原生版").font(.system(size: 11)).foregroundStyle(.secondary)

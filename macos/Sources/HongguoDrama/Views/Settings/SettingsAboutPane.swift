@@ -12,11 +12,7 @@ struct SettingsAboutPane: View {
         Form {
             Section {
                 VStack(spacing: 8) {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 30, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 72, height: 72)
-                        .glassSurface(in: RoundedRectangle(cornerRadius: 20, style: .continuous), tint: .hongguoRed)
+                    AppIconMark(size: 80)
                     Text("红果短剧").font(.system(size: 20, weight: .heavy)).padding(.top, 4)
                     Text("Mac 原生版 · 版本 \(UpdateChecker.currentVersion)").font(.caption).foregroundStyle(.secondary)
                     HStack(spacing: 8) {
