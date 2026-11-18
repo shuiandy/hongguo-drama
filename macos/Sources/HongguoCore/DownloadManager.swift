@@ -260,6 +260,126 @@ public actor DownloadManager {
         return count
     }
 
+    // MARK: Storage
+
+    public struct SeriesUsage: Equatable, Sendable, Identifiable {
+        public var id: String { seriesId }
+        public var seriesId: String
+        public var seriesTitle: String
+        public var bytes: Int64
+        public var files: Int
+    }
+
+    /// Files that belong to one episode: the video, its partial download and exported text.
+    static func fileFamily(_ task: DownloadTask) -> [URL] {
+        let video = task.fileURL
+        var family = [video, task.partialURL]
+        if let danmaku = TextExport.sidecar(video, "danmaku") { family.append(danmaku) }
+        if let comments = TextExport.sidecar(video, "comments") { family.append(comments) }
+        return family
+    }
+
+    /// Disk use per series (videos, partial files and exported text), largest first.
+    public func seriesUsage() -> [SeriesUsage] {
+        var bySeries: [String: SeriesUsage] = [:]
+        for task in tasks {
+            var usage = bySeries[task.seriesId] ?? SeriesUsage(seriesId: task.seriesId, seriesTitle: task.seriesTitle, bytes: 0, files: 0)
+            for file in Self.fileFamily(task) where Self.isRegularFile(file) {
+                usage.bytes += Self.fileSize(file)
+                usage.files += 1
+            }
+            bySeries[task.seriesId] = usage
+        }
+        return bySeries.values.filter { $0.files > 0 }.sorted { ($0.bytes, $0.seriesId) > ($1.bytes, $1.seriesId) }
+    }
+
+    static func isRegularFile(_ url: URL) -> Bool {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType) == .typeRegular
+    }
+
+    /// Deletes every downloaded file of a series and its task records. Refused while one of its
+    /// episodes is downloading. Records whose files could not be deleted are kept.
+    @discardableResult
+    public func deleteSeries(_ seriesId: String) throws -> (count: Int, freed: Int64) {
+        let owned = tasks.filter { $0.seriesId == seriesId }
+        guard !owned.contains(where: { running[$0.id] != nil || $0.status == .downloading }) else {
+            throw HongguoError(.input, "该剧正在下载，暂不删除")
+        }
+        var freed: Int64 = 0, count = 0, failed = 0
+        var removed = Set<String>()
+        for task in owned {
+            retryTimers.removeValue(forKey: task.id)?.cancel()
+            var ok = true
+            for file in Self.fileFamily(task) where FileManager.default.fileExists(atPath: file.path) {
+                let size = Self.fileSize(file)
+                do { try FileManager.default.removeItem(at: file); freed += size; if file == task.fileURL { count += 1 } }
+                catch { ok = false }
+            }
+            if ok { removed.insert(task.id) } else { failed += 1 }
+        }
+        tasks.removeAll { removed.contains($0.id) }
+        // Drop the series folder when nothing else is left in it.
+        for directory in Set(owned.map { $0.fileURL.deletingLastPathComponent() }) {
+            if let left = try? FileManager.default.contentsOfDirectory(atPath: directory.path), left.allSatisfy({ $0 == ".DS_Store" }) {
+                try? FileManager.default.removeItem(at: directory)
+            }
+        }
+        try persist(force: true)
+        changed()
+        if failed > 0 { throw HongguoError(.input, "部分文件删除失败，对应记录已保留") }
+        return (count, freed)
+    }
+
+    /// Deletes the downloads of every series that is not downloading right now.
+    @discardableResult
+    public func deleteAllDownloaded() -> (count: Int, freed: Int64, skipped: Int, failed: Int) {
+        var count = 0, freed: Int64 = 0, skipped = 0, failed = 0
+        for seriesId in Set(tasks.map(\.seriesId)) {
+            do {
+                let result = try deleteSeries(seriesId)
+                count += result.count
+                freed += result.freed
+            } catch let error as HongguoError where error.message == "该剧正在下载，暂不删除" {
+                skipped += 1
+            } catch { failed += 1 }
+        }
+        return (count, freed, skipped, failed)
+    }
+
+    /// Finds episode files already in a series folder that have no task (downloads from another
+    /// session, or a cleared list) and adds them as completed. Port of `rescanDownloadsFromDisk`.
+    @discardableResult
+    public func rescan(seriesId: String, seriesTitle: String, cover: String = "", episodes: [Episode]) throws -> Int {
+        let cleanTitle = DownloadNaming.sanitizeFolderName(seriesTitle).isEmpty ? "红果短剧" : DownloadNaming.sanitizeFolderName(seriesTitle)
+        let directory = DownloadNaming.seriesDirectory(root: configuration.root, seriesId: seriesId, seriesTitle: cleanTitle)
+        let formats = [configuration.nameFormat, "剧名 集数", "剧名 集数 标题", "剧名"]
+        var added = 0
+        for episode in episodes where episode.index >= 1 && episode.vid.matchesDigits(min: 1, max: 30) {
+            guard !tasks.contains(where: { $0.vid == episode.vid || ($0.seriesId == seriesId && $0.episodeIndex == episode.index) }) else { continue }
+            var seen = Set<String>()
+            for format in formats {
+                let name = DownloadNaming.episodeFilename(format: format, seriesTitle: cleanTitle, index: episode.index, episodeTitle: episode.title)
+                guard seen.insert(name).inserted else { continue }
+                let file = directory.appendingPathComponent(name)
+                // A tiny or non-regular file is not a finished episode.
+                guard Self.isRegularFile(file), Self.fileSize(file) > 100 * 1024,
+                      !tasks.contains(where: { $0.savePath == file.path }) else { continue }
+                let size = Self.fileSize(file)
+                tasks.append(DownloadTask(id: UUID().uuidString, seriesId: seriesId, seriesTitle: cleanTitle, vid: episode.vid,
+                                          episodeIndex: episode.index, episodeTitle: episode.title, cover: cover, status: .completed,
+                                          phase: nil, receivedBytes: size, totalBytes: size, savePath: file.path, error: nil,
+                                          createdAt: Date(), finishedAt: Date(), retryCount: 0, retryAt: nil, validator: nil))
+                added += 1
+                break
+            }
+        }
+        if added > 0 {
+            try persist(force: true)
+            changed()
+        }
+        return added
+    }
+
     // MARK: Control
 
     /// Pauses a pending, running or retry-scheduled task. The partial file stays for resume.

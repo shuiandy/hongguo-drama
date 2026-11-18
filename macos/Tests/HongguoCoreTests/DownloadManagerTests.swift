@@ -201,6 +201,40 @@ final class DownloadManagerTests: XCTestCase {
         XCTAssertEqual(settings.downloadConfiguration.preferredQuality, 480)
     }
 
+    func testSeriesUsageDeleteAndRescan() async throws {
+        let transfer = FakeTransfer(size: 200 * 1024)
+        let manager = DownloadManager(configuration: config(), store: nil, resolver: FakeResolver(), transfer: transfer)
+        let list = episodes(3)
+        try await manager.enqueue(seriesId: "7200000000000000002", seriesTitle: "测试剧", episodes: list)
+        try await waitUntil { await manager.queueStatus().completed == 3 }
+        let first = await manager.allTasks().first { $0.episodeIndex == 1 }!
+        try Data("{}".utf8).write(to: TextExport.sidecar(first.fileURL, "danmaku")!)
+        let usage = await manager.seriesUsage()
+        XCTAssertEqual(usage.count, 1)
+        XCTAssertEqual(usage[0].files, 4)
+        XCTAssertEqual(usage[0].bytes, 3 * 200 * 1024 + 2)
+        // Forget the records but keep the files: a rescan finds them again by name.
+        let folder = first.fileURL.deletingLastPathComponent()
+        let backup = root.appendingPathComponent("backup", isDirectory: true)
+        try FileManager.default.copyItem(at: folder, to: backup)
+        let deleted = try await manager.deleteSeries("7200000000000000002")
+        XCTAssertEqual(deleted.count, 3)
+        XCTAssertEqual(deleted.freed, 3 * 200 * 1024 + 2)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path), "empty series folder removed")
+        let afterDelete = await manager.allTasks()
+        XCTAssertTrue(afterDelete.isEmpty)
+        try FileManager.default.moveItem(at: backup, to: folder)
+        let found = try await manager.rescan(seriesId: "7200000000000000002", seriesTitle: "测试剧", episodes: list)
+        XCTAssertEqual(found, 3)
+        let again = try await manager.rescan(seriesId: "7200000000000000002", seriesTitle: "测试剧", episodes: list)
+        XCTAssertEqual(again, 0)
+        let local = await manager.localFiles(seriesId: "7200000000000000002")
+        XCTAssertEqual(local.count, 3)
+        let all = await manager.deleteAllDownloaded()
+        XCTAssertEqual(all.count, 3)
+        XCTAssertEqual(all.skipped, 0)
+    }
+
     func testTransientFailureRetriesAutomatically() async throws {
         let transfer = FakeTransfer(failures: 1)
         let manager = DownloadManager(configuration: config(), store: nil, resolver: FakeResolver(), transfer: transfer)

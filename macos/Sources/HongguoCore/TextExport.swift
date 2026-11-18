@@ -185,7 +185,8 @@ public enum TextExport {
     /// Identity of the file at `url` (nil when missing); a change means someone else wrote it.
     struct Stamp: Equatable {
         var exists: Bool
-        var inode: UInt64?, size: UInt64?, modified: Date?, regular: Bool
+        var inode: UInt64? = nil, size: UInt64? = nil, modified: Date? = nil
+        var regular: Bool
     }
 
     static func stamp(_ url: URL) -> Stamp {
