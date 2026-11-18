@@ -8,25 +8,24 @@ struct ContentView: View {
     var body: some View {
         @Bindable var model = model
         NavigationSplitView {
-            if model.showingSettings {
-                SettingsSidebar()
-                    .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
-            } else {
-                mainSidebar
-            }
+            mainSidebar
         } detail: {
-            if model.showingSettings {
-                NavigationStack { SettingsDetail() }
-            } else if let item = model.selection {
-                NavigationStack(path: model.path(for: item)) {
-                    root(for: item)
-                        .navigationDestination(for: SeriesSummary.self) { summary in
-                            SeriesDetailView(summary: summary)
-                        }
+            Group {
+                if let item = model.selection {
+                    NavigationStack(path: model.path(for: item)) {
+                        root(for: item)
+                            .navigationDestination(for: SeriesSummary.self) { summary in
+                                SeriesDetailView(summary: summary)
+                            }
+                    }
+                    .id(item)
+                } else {
+                    ContentUnavailableView("选择一个栏目", systemImage: "play.rectangle")
                 }
-                .id(item)
-            } else {
-                ContentUnavailableView("选择一个栏目", systemImage: "play.rectangle")
+            }
+            .toolbar { MainToolbarButtons(model: model) }
+            .sheet(isPresented: $model.showingSettings) {
+                SettingsPanel().environment(model)
             }
         }
         .tint(.hongguoRed)
@@ -45,7 +44,7 @@ struct ContentView: View {
         .background {
             // ⌘K jumps to search from anywhere in the main window. Search has no sidebar row:
             // the header search field on 发现 and 剧库 opens the same results page.
-            Button("搜索") { model.closeSettings(); model.selection = .search }
+            Button("搜索") { model.selection = .search }
                 .keyboardShortcut("k", modifiers: .command)
                 .opacity(0)
                 .frame(width: 0, height: 0)
@@ -73,8 +72,6 @@ struct ContentView: View {
                     SidebarRow(title: "我的剧库", style: SidebarStyle.of(.library),
                                badge: model.favorites.isEmpty ? nil : "\(model.favorites.count)").tag(SidebarItem.library)
                     SidebarRow(title: "下载", style: SidebarStyle.of(.downloads), badge: downloadBadge).tag(SidebarItem.downloads)
-                    SidebarRow(title: "账号", style: SidebarStyle.of(.account), badge: AccountState.shared.profile?.nickname ?? "未登录")
-                        .tag(SidebarItem.account)
                 }
             }
             .safeAreaInset(edge: .top, spacing: 0) { BrandHeader() }
@@ -86,8 +83,8 @@ struct ContentView: View {
                     if let record = model.history.first {
                         ContinueWatchingCard(record: record).padding(.horizontal, 10).padding(.top, 10)
                     }
-                    SettingsEntryRow().padding(.vertical, 8)
                 }
+                .padding(.bottom, 10)
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
     }

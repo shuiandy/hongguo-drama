@@ -93,69 +93,126 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     ]
 }
 
-/// Sidebar shown in place of the main sidebar while settings are open: a back row, a search
-/// field and the categories, as native List rows in the same style as the main sidebar.
-struct SettingsSidebar: View {
+/// Settings panel shown as a sheet over the main window, in the canvas design language:
+/// an inner glass card with search and categories on the left, the selected category on the right.
+/// It draws no window chrome of its own, so nothing sits under the traffic lights.
+struct SettingsPanel: View {
     @Environment(AppModel.self) private var model
     @State private var query = ""
 
     var body: some View {
-        @Bindable var model = model
-        List(selection: Binding<SettingsPane?>(get: { model.settingsPane }, set: { if let pane = $0 { model.settingsPane = pane } })) {
-            ForEach(Array(SettingsPane.groups.enumerated()), id: \.offset) { _, group in
-                let panes = group.1.filter { $0.matches(query) }
-                if !panes.isEmpty {
-                    Section(group.0) {
-                        ForEach(panes) { pane in
-                            SidebarRow(title: pane.title, style: SidebarStyle(symbol: pane.symbol, colors: pane.tile)).tag(pane)
+        HStack(spacing: 0) {
+            categories
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(model.settingsPane.title).font(.system(size: 26, weight: .heavy))
+                        Text(model.settingsPane.subtitle).font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    Button("完成") { model.closeSettings() }
+                        .buttonStyle(GlassButtonStyle(prominent: true, size: .small))
+                        .keyboardShortcut(.cancelAction)
+                        .help("关闭设置（esc）")
+                }
+                .padding(.horizontal, 26)
+                .padding(.top, 22)
+                .padding(.bottom, 4)
+                pane
+                    .formStyle(.grouped)
+                    .scrollContentBackground(.hidden)
+                    .toggleStyle(.switch)
+                    .tint(.hongguoRed)
+                    .padding(.horizontal, 10)
+                    .id(model.settingsPane)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .frame(width: 900, height: 640)
+        .background { ambient }
+    }
+
+    private var categories: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 8) {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .glassSurface(in: RoundedRectangle(cornerRadius: 9, style: .continuous), tint: .hongguoRed)
+                Text("设置").font(.system(size: 18, weight: .heavy))
+            }
+            .padding(.horizontal, 6)
+            .padding(.bottom, 12)
+
+            HStack(spacing: 7) {
+                Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                TextField("搜索设置", text: $query).textFieldStyle(.plain).font(.system(size: 13))
+                    .onSubmit {
+                        if let first = SettingsPane.allCases.first(where: { $0.matches(query) }) { model.settingsPane = first }
+                    }
+                if !query.isEmpty {
+                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                        .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .glassSurface(.clear, in: Capsule())
+            .padding(.bottom, 4)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(Array(SettingsPane.groups.enumerated()), id: \.offset) { _, group in
+                        let panes = group.1.filter { $0.matches(query) }
+                        if !panes.isEmpty {
+                            if !group.0.isEmpty {
+                                Text(group.0).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                                    .padding(.horizontal, 10).padding(.top, 12).padding(.bottom, 4)
+                            } else {
+                                Spacer().frame(height: 12)
+                            }
+                            ForEach(panes) { pane in row(pane) }
                         }
+                    }
+                    if SettingsPane.allCases.allSatisfy({ !$0.matches(query) }) {
+                        Text("没有匹配的设置").font(.system(size: 12)).foregroundStyle(.secondary).padding(10)
                     }
                 }
             }
+            .scrollIndicators(.never)
         }
-        .searchable(text: $query, placement: .sidebar, prompt: "搜索设置")
-        .onSubmit(of: .search) {
-            if let first = SettingsPane.allCases.first(where: { $0.matches(query) }) { model.settingsPane = first }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: 10) {
-                Button { model.closeSettings() } label: {
-                    Label("返回", systemImage: "chevron.left").font(.system(size: 13, weight: .semibold))
-                }
-                .buttonStyle(GlassButtonStyle(size: .small))
-                .keyboardShortcut(.cancelAction)
-                .help("返回主界面（esc）")
-                Text("设置").font(.system(size: 18, weight: .heavy))
+        .padding(12)
+        .frame(width: 236)
+        .frame(maxHeight: .infinity)
+        .glassSurface(in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(12)
+    }
+
+    private func row(_ pane: SettingsPane) -> some View {
+        let selected = model.settingsPane == pane
+        return Button { model.settingsPane = pane } label: {
+            HStack(spacing: 11) {
+                Image(systemName: pane.symbol)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 24, height: 24)
+                    .background(LinearGradient(colors: pane.tile, startPoint: .top, endPoint: .bottom),
+                                in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                Text(pane.title).font(.system(size: 14, weight: selected ? .bold : .medium))
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 6)
-            .padding(.bottom, 10)
+            .padding(.horizontal, 10)
+            .frame(height: 36)
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background {
+                if selected {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.primary.opacity(0.1))
+                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(.primary.opacity(0.1)))
+                }
+            }
         }
-    }
-}
-
-/// Detail column while settings are open: page header plus the selected category's form.
-struct SettingsDetail: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            PageHeader(title: model.settingsPane.title, subtitle: model.settingsPane.subtitle) { EmptyView() }
-                .padding(.horizontal, 28)
-                .padding(.top, 6)
-            pane
-                .formStyle(.grouped)
-                .scrollContentBackground(.hidden)
-                .toggleStyle(.switch)
-                .tint(.hongguoRed)
-                .frame(maxWidth: 820, alignment: .leading)
-                .padding(.horizontal, 12)
-                .id(model.settingsPane)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .navigationTitle("设置 · \(model.settingsPane.title)")
-        .transparentToolbar()
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -172,21 +229,34 @@ struct SettingsDetail: View {
         case .about: SettingsAboutPane()
         }
     }
+
+    /// Soft brand light behind the glass, like the canvas mockup.
+    private var ambient: some View {
+        ZStack {
+            Circle().fill(Color.hongguoRed.opacity(0.18)).frame(width: 520).offset(x: -340, y: -260)
+            Circle().fill(Color.purple.opacity(0.14)).frame(width: 480).offset(x: 320, y: 260)
+        }
+        .blur(radius: 110)
+        .allowsHitTesting(false)
+    }
 }
 
-/// Footer row of the main sidebar that opens settings.
-struct SettingsEntryRow: View {
-    @Environment(AppModel.self) private var model
+/// Top right of the main window: account and settings, as toolbar buttons.
+struct MainToolbarButtons: ToolbarContent {
+    let model: AppModel
+    private var account: AccountState { AccountState.shared }
 
-    var body: some View {
-        Button { model.showSettings() } label: {
-            SidebarRow(title: "设置", style: SidebarStyle(symbol: "gearshape.fill", colors: SettingsPane.general.tile))
-                .padding(.horizontal, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+    var body: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button { model.selection = .account } label: {
+                Label("账号", systemImage: account.profile == nil ? "person.crop.circle" : "person.crop.circle.fill")
+            }
+            .help(account.profile?.nickname.map { "账号：\($0)" } ?? "账号：未登录")
+            Button { model.showSettings() } label: {
+                Label("设置", systemImage: "gearshape")
+            }
+            .help("设置（⌘,）")
         }
-        .buttonStyle(.plain)
-        .help("设置（⌘,）")
     }
 }
 
