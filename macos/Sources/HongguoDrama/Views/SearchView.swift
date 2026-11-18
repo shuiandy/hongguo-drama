@@ -17,9 +17,10 @@ struct SearchView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 22) {
+                PageHeader(title: "搜索", subtitle: "剧名、演员，或粘贴红果分享链接、剧集编号") { EmptyView() }
                 searchField
                     .frame(maxWidth: 680)
-                    .padding(.top, 26)
+                    .padding(.top, 8)
 
                 if submitted.isEmpty {
                     idleContent.frame(maxWidth: 680, alignment: .leading)
@@ -33,8 +34,9 @@ struct SearchView: View {
                     results
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 24)
+            .padding(.horizontal, 28)
+            .padding(.top, 6)
+            .padding(.bottom, 28)
             .frame(maxWidth: .infinity)
         }
         .background(alignment: .top) {
@@ -53,7 +55,15 @@ struct SearchView: View {
             .allowsHitTesting(false)
         }
         .navigationTitle(submitted.isEmpty ? "搜索" : "“\(submitted)”")
-        .onAppear { fieldFocused = true }
+        .transparentToolbar()
+        .onAppear {
+            fieldFocused = true
+            if let pending = model.pendingSearch {
+                model.pendingSearch = nil
+                query = pending
+                Task { await submit() }
+            }
+        }
     }
 
     private var searchField: some View {

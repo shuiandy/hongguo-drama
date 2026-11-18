@@ -52,6 +52,8 @@ final class AppModel {
         didSet { if settings != oldValue { store.settings = settings; applyTheme() } }
     }
     var history: [WatchRecord] = []
+    /// Query typed into a page header search field, consumed by the search page.
+    var pendingSearch: String?
 
     private init() {
         settings = LibraryStore.shared.settings

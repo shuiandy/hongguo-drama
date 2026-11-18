@@ -11,6 +11,12 @@ struct HistoryView: View {
                 ContentUnavailableView("还没有观看记录", systemImage: "clock", description: Text("播放过的短剧会出现在这里。"))
             } else {
                 ScrollView {
+                    PageHeader(title: "观看记录", subtitle: "\(model.history.count) 部") {
+                        Button(role: .destructive) { confirmClear = true } label: { Label("清空", systemImage: "trash") }
+                            .buttonStyle(GlassButtonStyle())
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.top, 6)
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 380), spacing: 14)], spacing: 14) {
                         ForEach(model.history) { record in
                             HistoryRow(record: record) { resume(record) }
@@ -25,7 +31,9 @@ struct HistoryView: View {
                                 }
                         }
                     }
-                    .padding(24)
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 28)
+                    .padding(.top, 8)
                 }
                 .background(alignment: .top) {
                     if let cover = model.history.first?.cover, !cover.isEmpty {
@@ -39,12 +47,7 @@ struct HistoryView: View {
             }
         }
         .navigationTitle("观看记录")
-        .toolbar {
-            ToolbarItem {
-                Button(role: .destructive) { confirmClear = true } label: { Label("清空", systemImage: "trash") }
-                    .disabled(model.history.isEmpty)
-            }
-        }
+        .transparentToolbar()
         .confirmationDialog("清空全部观看记录？", isPresented: $confirmClear) {
             Button("清空", role: .destructive) {
                 model.store.clearHistory()
