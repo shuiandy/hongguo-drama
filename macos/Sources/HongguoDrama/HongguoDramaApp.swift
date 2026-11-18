@@ -16,6 +16,7 @@ struct HongguoDramaApp: App {
         .defaultSize(width: 1180, height: 760)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            SettingsCommands()
             CommandMenu("播放") {
                 Button("播放 / 暂停") { PlayerController.shared.togglePlay() }
                     .keyboardShortcut(.space, modifiers: [.command])
@@ -30,10 +31,25 @@ struct HongguoDramaApp: App {
                     .keyboardShortcut("0", modifiers: [.command])
             }
         }
+    }
+}
 
-        Settings {
-            SettingsView()
-                .environment(model)
+/// ⌘, opens settings inside the main window (there is no separate settings window).
+struct SettingsCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("设置…") {
+                AppModel.shared.showSettings()
+                if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true && $0.isVisible }) {
+                    window.makeKeyAndOrderFront(nil)
+                } else {
+                    openWindow(id: "main")
+                }
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            .keyboardShortcut(",", modifiers: .command)
         }
     }
 }

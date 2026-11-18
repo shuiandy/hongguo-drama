@@ -223,7 +223,14 @@ final class PlayerController {
 
     func open(episodes list: SeriesEpisodes, cover: String, index: Int, startAt: Double = 0) {
         persistPosition()
-        if episodes?.seriesId != list.seriesId { preparedMaps.removeAll(); prefetched = nil }
+        if episodes?.seriesId != list.seriesId {
+            preparedMaps.removeAll()
+            prefetched = nil
+            // Per-series picture mode, else the default from settings; 打开播放器时的音量.
+            let settings = AppModel.shared.settings
+            fillMode = settings.pictureMode(for: list.seriesId) == .width ? .fill : .fit
+            if let start = settings.startVolume { volume = Float(start) / 100 }
+        }
         episodes = list
         self.cover = cover.isEmpty ? list.cover : cover
         PlayerWindows.shared.showPlayer()
@@ -519,8 +526,24 @@ final class PlayerController {
 
     func cycleFillMode() {
         let all = VideoFillMode.allCases
-        fillMode = all[(all.firstIndex(of: fillMode)! + 1) % all.count]
+        setFillMode(all[(all.firstIndex(of: fillMode)! + 1) % all.count])
         show(toast: "画面：\(fillMode.label)")
+    }
+
+    /// Changes the picture mode and remembers 适应 / 填充 for the current series (拉伸 is not remembered).
+    func setFillMode(_ mode: VideoFillMode) {
+        fillMode = mode
+        guard let seriesId = episodes?.seriesId else { return }
+        switch mode {
+        case .fit: AppModel.shared.settings.pictureModes[seriesId] = .fit
+        case .fill: AppModel.shared.settings.pictureModes[seriesId] = .width
+        case .stretch: break
+        }
+    }
+
+    func toggleDanmaku() {
+        AppModel.shared.settings.danmaku.enabled.toggle()
+        show(toast: AppModel.shared.settings.danmaku.enabled ? "弹幕：开" : "弹幕：关")
     }
 
     func toggleAutoNext() {

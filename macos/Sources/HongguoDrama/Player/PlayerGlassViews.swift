@@ -423,7 +423,7 @@ struct PlayerControlBar: View {
 
             Menu {
                 ForEach(VideoFillMode.allCases) { mode in
-                    Button { controller.fillMode = mode } label: {
+                    Button { controller.setFillMode(mode) } label: {
                         if mode == controller.fillMode { Label(fillModeTitle(mode), systemImage: "checkmark") } else { Text(fillModeTitle(mode)) }
                     }
                 }

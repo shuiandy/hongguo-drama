@@ -192,8 +192,8 @@ final class PlayerWindows: NSObject, NSWindowDelegate {
         }
         guard event.type == .keyDown else { return event }
         switch event.keyCode {
-        case 123: controller.seek(by: -5)
-        case 124: controller.seek(by: 5)
+        case 123: controller.seek(by: event.modifierFlags.contains(.shift) ? -10 : -5)
+        case 124: controller.seek(by: event.modifierFlags.contains(.shift) ? 10 : 5)
         case 126: if !event.isARepeat { controller.previous() }
         case 125: if !event.isARepeat { controller.next() }
         case 53: // escape
@@ -207,6 +207,7 @@ final class PlayerWindows: NSObject, NSWindowDelegate {
             case "f": if !event.isARepeat { toggleFullScreen() }
             case "m": if !event.isARepeat { toggleMini() }
             case "e": if !event.isARepeat, !isMini { toggleEpisodes() }
+            case "b": if !event.isARepeat { controller.toggleDanmaku() }
             default: return event
             }
         }

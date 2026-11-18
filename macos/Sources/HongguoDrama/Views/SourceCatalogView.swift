@@ -141,7 +141,7 @@ struct SourcePicker: View {
                     }
                 }
                 Divider()
-                SettingsLink { Text("管理片源…") }
+                Button("管理片源…") { model.showSettings(.sources) }
             } label: {
                 Label("片源：\(SourceRouter.label(current))", systemImage: "film.stack")
             }
