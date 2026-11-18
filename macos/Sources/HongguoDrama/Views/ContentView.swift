@@ -4,12 +4,58 @@ import HongguoCore
 
 struct ContentView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         @Bindable var model = model
         NavigationSplitView {
-            List(selection: $model.selection) {
+            if model.showingSettings {
+                SettingsSidebar()
+                    .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
+            } else {
+                mainSidebar
+            }
+        } detail: {
+            if model.showingSettings {
+                NavigationStack { SettingsDetail() }
+            } else if let item = model.selection {
+                NavigationStack(path: model.path(for: item)) {
+                    root(for: item)
+                        .navigationDestination(for: SeriesSummary.self) { summary in
+                            SeriesDetailView(summary: summary)
+                        }
+                }
+                .id(item)
+            } else {
+                ContentUnavailableView("选择一个栏目", systemImage: "play.rectangle")
+            }
+        }
+        .tint(.hongguoRed)
+        .task {
+            // Test builds: HONGGUO_OPEN_SETTINGS=<pane> opens settings at launch for screenshots.
+            if let raw = ProcessInfo.processInfo.environment["HONGGUO_OPEN_SETTINGS"] {
+                model.showSettings(SettingsPane(rawValue: raw))
+            }
+            model.startBackgroundChecks()
+            await AccountState.shared.restore()
+            await model.syncCloudHistory(force: true)
+        }
+        .sheet(item: $model.announcement) { item in
+            AnnouncementSheet(announcement: item)
+        }
+        .background {
+            // ⌘K jumps to search from anywhere in the main window. Search has no sidebar row:
+            // the header search field on 发现 and 剧库 opens the same results page.
+            Button("搜索") { model.closeSettings(); model.selection = .search }
+                .keyboardShortcut("k", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var mainSidebar: some View {
+        @Bindable var model = model
+        return List(selection: $model.selection) {
                 Section("发现") {
                     ForEach(CatalogKind.categories) { kind in
                         SidebarRow(title: kind.label, style: SidebarStyle.of(.category(kind))).tag(SidebarItem.category(kind))
@@ -38,47 +84,12 @@ struct ContentView: View {
                         UpdateAvailableCard(release: release).padding(.horizontal, 10).padding(.top, 10)
                     }
                     if let record = model.history.first {
-                        ContinueWatchingCard(record: record).padding(10)
+                        ContinueWatchingCard(record: record).padding(.horizontal, 10).padding(.top, 10)
                     }
+                    SettingsEntryRow().padding(.vertical, 8)
                 }
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
-        } detail: {
-            if let item = model.selection {
-                NavigationStack(path: model.path(for: item)) {
-                    root(for: item)
-                        .navigationDestination(for: SeriesSummary.self) { summary in
-                            SeriesDetailView(summary: summary)
-                        }
-                }
-                .id(item)
-            } else {
-                ContentUnavailableView("选择一个栏目", systemImage: "play.rectangle")
-            }
-        }
-        .tint(.hongguoRed)
-        .task {
-            // Test builds: HONGGUO_OPEN_SETTINGS=<pane> opens the settings window at launch for screenshots.
-            if let raw = ProcessInfo.processInfo.environment["HONGGUO_OPEN_SETTINGS"] {
-                if let pane = SettingsPane(rawValue: raw) { model.settingsPane = pane }
-                openSettings()
-            }
-            model.startBackgroundChecks()
-            await AccountState.shared.restore()
-            await model.syncCloudHistory(force: true)
-        }
-        .sheet(item: $model.announcement) { item in
-            AnnouncementSheet(announcement: item)
-        }
-        .background {
-            // ⌘K jumps to search from anywhere in the main window. Search has no sidebar row:
-            // the header search field on 发现 and 剧库 opens the same results page.
-            Button("搜索") { model.selection = .search }
-                .keyboardShortcut("k", modifiers: .command)
-                .opacity(0)
-                .frame(width: 0, height: 0)
-                .accessibilityHidden(true)
-        }
     }
 
     @ViewBuilder

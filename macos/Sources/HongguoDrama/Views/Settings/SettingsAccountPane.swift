@@ -5,7 +5,6 @@ import HongguoCore
 /// (QR code and web login need the room).
 struct SettingsAccountPane: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.openWindow) private var openWindow
     @State private var account = AccountState.shared
     @State private var confirmLogout = false
 
@@ -75,9 +74,8 @@ struct SettingsAccountPane: View {
     }
 
     private func openLoginPage() {
+        model.closeSettings()
         model.selection = .account
-        openWindow(id: "main")
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func logout() {

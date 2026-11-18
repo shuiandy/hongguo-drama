@@ -91,6 +91,7 @@ final class AppModel {
 
     var selection: SidebarItem? = .category(.realDrama) {
         didSet {
+            if showingSettings, selection != oldValue { showingSettings = false }
             guard let key = selection?.persistKey, key != settings.lastPage else { return }
             settings.lastPage = key
         }
@@ -111,8 +112,17 @@ final class AppModel {
     var history: [WatchRecord] = []
     /// Query typed into a page header search field, consumed by the search page.
     var pendingSearch: String?
-    /// Category shown in the settings window (set before opening it to jump to one).
+    /// Settings are a mode of the main window: the sidebar lists the categories and the detail
+    /// column shows `settingsPane`.
+    var showingSettings = false
     var settingsPane: SettingsPane = .general
+
+    func showSettings(_ pane: SettingsPane? = nil) {
+        if let pane { settingsPane = pane }
+        showingSettings = true
+    }
+
+    func closeSettings() { showingSettings = false }
 
     // MARK: Library (favorites and recently opened series)
 

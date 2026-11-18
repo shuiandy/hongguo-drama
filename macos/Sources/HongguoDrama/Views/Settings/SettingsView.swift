@@ -93,112 +93,69 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     ]
 }
 
-/// ⌘, window: floating glass sidebar on the left, the selected category on the right.
-struct SettingsView: View {
+/// Sidebar shown in place of the main sidebar while settings are open: a back row, a search
+/// field and the categories, as native List rows in the same style as the main sidebar.
+struct SettingsSidebar: View {
     @Environment(AppModel.self) private var model
     @State private var query = ""
 
     var body: some View {
         @Bindable var model = model
-        HStack(spacing: 0) {
-            sidebar
-            VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(model.settingsPane.title).font(.system(size: 26, weight: .heavy))
-                    Text(model.settingsPane.subtitle).font(.system(size: 12)).foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 30)
-                .padding(.top, 30)
-                .padding(.bottom, 2)
-                pane
-                    .formStyle(.grouped)
-                    .scrollContentBackground(.hidden)
-                    .toggleStyle(.switch)
-                    .tint(.hongguoRed)
-                    .padding(.horizontal, 10)
-                    .id(model.settingsPane)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        }
-        .frame(width: 880, height: 660)
-        .background { ambient }
-        .ignoresSafeArea(.container, edges: .top)
-        .settingsWindowChrome()
-    }
-
-    private var sidebar: some View {
-        @Bindable var model = model
-        return VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
-                TextField("搜索设置", text: $query).textFieldStyle(.plain).font(.system(size: 13))
-                if !query.isEmpty {
-                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                        .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-            .glassSurface(.clear, in: Capsule())
-            .padding(.bottom, 6)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 1) {
-                    ForEach(Array(SettingsPane.groups.enumerated()), id: \.offset) { _, group in
-                        let panes = group.1.filter { $0.matches(query) }
-                        if !panes.isEmpty {
-                            if !group.0.isEmpty {
-                                Text(group.0).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                                    .padding(.horizontal, 10).padding(.top, 12).padding(.bottom, 4)
-                            } else {
-                                Spacer().frame(height: 12)
-                            }
-                            ForEach(panes) { pane in row(pane) }
+        List(selection: Binding<SettingsPane?>(get: { model.settingsPane }, set: { if let pane = $0 { model.settingsPane = pane } })) {
+            ForEach(Array(SettingsPane.groups.enumerated()), id: \.offset) { _, group in
+                let panes = group.1.filter { $0.matches(query) }
+                if !panes.isEmpty {
+                    Section(group.0) {
+                        ForEach(panes) { pane in
+                            SidebarRow(title: pane.title, style: SidebarStyle(symbol: pane.symbol, colors: pane.tile)).tag(pane)
                         }
                     }
-                    if SettingsPane.allCases.allSatisfy({ !$0.matches(query) }) {
-                        Text("没有匹配的设置").font(.system(size: 12)).foregroundStyle(.secondary).padding(10)
-                    }
                 }
             }
-            .scrollIndicators(.never)
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 44) // traffic lights
-        .padding(.bottom, 12)
-        .frame(width: 220)
-        .frame(maxHeight: .infinity)
-        .glassSurface(in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .padding(10)
-        .onSubmit {
+        .searchable(text: $query, placement: .sidebar, prompt: "搜索设置")
+        .onSubmit(of: .search) {
             if let first = SettingsPane.allCases.first(where: { $0.matches(query) }) { model.settingsPane = first }
         }
-    }
-
-    private func row(_ pane: SettingsPane) -> some View {
-        let selected = model.settingsPane == pane
-        return Button { model.settingsPane = pane } label: {
-            HStack(spacing: 11) {
-                Image(systemName: pane.symbol)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 24, height: 24)
-                    .background(LinearGradient(colors: pane.tile, startPoint: .top, endPoint: .bottom),
-                                in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                Text(pane.title).font(.system(size: 14, weight: selected ? .bold : .medium))
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack(spacing: 10) {
+                Button { model.closeSettings() } label: {
+                    Label("返回", systemImage: "chevron.left").font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(GlassButtonStyle(size: .small))
+                .keyboardShortcut(.cancelAction)
+                .help("返回主界面（esc）")
+                Text("设置").font(.system(size: 18, weight: .heavy))
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 10)
-            .frame(height: 38)
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .background {
-                if selected {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.primary.opacity(0.12))
-                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(.primary.opacity(0.12)))
-                }
-            }
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+            .padding(.bottom, 10)
         }
-        .buttonStyle(.plain)
+    }
+}
+
+/// Detail column while settings are open: page header plus the selected category's form.
+struct SettingsDetail: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PageHeader(title: model.settingsPane.title, subtitle: model.settingsPane.subtitle) { EmptyView() }
+                .padding(.horizontal, 28)
+                .padding(.top, 6)
+            pane
+                .formStyle(.grouped)
+                .scrollContentBackground(.hidden)
+                .toggleStyle(.switch)
+                .tint(.hongguoRed)
+                .frame(maxWidth: 820, alignment: .leading)
+                .padding(.horizontal, 12)
+                .id(model.settingsPane)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .navigationTitle("设置 · \(model.settingsPane.title)")
+        .transparentToolbar()
     }
 
     @ViewBuilder
@@ -215,28 +172,21 @@ struct SettingsView: View {
         case .about: SettingsAboutPane()
         }
     }
-
-    /// Soft brand light behind the glass, like the search page.
-    private var ambient: some View {
-        ZStack {
-            Rectangle().fill(.background)
-            Circle().fill(Color.hongguoRed.opacity(0.28)).frame(width: 520).offset(x: -320, y: -260)
-            Circle().fill(Color.purple.opacity(0.22)).frame(width: 480).offset(x: 300, y: 260)
-        }
-        .blur(radius: 110)
-        .ignoresSafeArea()
-    }
 }
 
-private extension View {
-    /// Hides the window title and lets the content run under the title bar where the OS allows it.
-    @ViewBuilder
-    func settingsWindowChrome() -> some View {
-        if #available(macOS 15.0, *) {
-            self.toolbar(removing: .title).toolbarBackground(.hidden, for: .windowToolbar)
-        } else {
-            self // macOS 14: the title bar keeps its title; .title removal needs macOS 15.
+/// Footer row of the main sidebar that opens settings.
+struct SettingsEntryRow: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Button { model.showSettings() } label: {
+            SidebarRow(title: "设置", style: SidebarStyle(symbol: "gearshape.fill", colors: SettingsPane.general.tile))
+                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .help("设置（⌘,）")
     }
 }
 
