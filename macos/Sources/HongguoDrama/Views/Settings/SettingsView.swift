@@ -246,12 +246,17 @@ struct MainToolbarButtons: ToolbarContent {
     let model: AppModel
     private var account: AccountState { AccountState.shared }
 
+    private var accountHelp: String {
+        if let name = account.profile?.nickname { return "账号：" + name }
+        return "账号：未登录"
+    }
+
     var body: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             Button { model.selection = .account } label: {
                 Label("账号", systemImage: account.profile == nil ? "person.crop.circle" : "person.crop.circle.fill")
             }
-            .help(account.profile?.nickname.map { "账号：\($0)" } ?? "账号：未登录")
+            .help(accountHelp)
             Button { model.showSettings() } label: {
                 Label("设置", systemImage: "gearshape")
             }
