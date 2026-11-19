@@ -141,6 +141,8 @@ final class PlayerController {
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var itemStatusObservation: NSKeyValueObservation?
     @ObservationIgnored private var endObserver: NSObjectProtocol?
+    /// Resume position asked for when the current item was started (0 once it has been judged).
+    @ObservationIgnored private var pendingStartAt: Double = 0
     @ObservationIgnored private var lastSaved = Date.distantPast
     @ObservationIgnored private var retriedWithoutWeb = false
     @ObservationIgnored private var retriedWithFile = false
@@ -368,6 +370,7 @@ final class PlayerController {
             Task { @MainActor in self?.itemStatusChanged(status, error: message, size: size) }
         }
         player.replaceCurrentItem(with: item)
+        pendingStartAt = startAt
         if startAt > 1 {
             player.seek(to: CMTime(seconds: startAt, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         }
@@ -381,8 +384,13 @@ final class PlayerController {
             isLoading = false
             // A resume point at the very end (a finished episode synced from another device)
             // would leave the player parked on the last frame: start over instead.
-            if let item = player.currentItem, Self.isAtEnd(position: player.currentTime().seconds, duration: item.duration.seconds) {
-                restartFromBeginning()
+            // The seek to the resume point may still be in flight here, so judge by where it was
+            // asked to go as well as by where the player is; seeking to zero cancels that seek.
+            if let item = player.currentItem {
+                let now = player.currentTime().seconds
+                let target = max(pendingStartAt, now.isFinite ? now : 0)
+                pendingStartAt = 0
+                if Self.isAtEnd(position: target, duration: item.duration.seconds) { restartFromBeginning() }
             }
             if startupMilliseconds == nil { startupMilliseconds = Int(Date().timeIntervalSince(loadStarted) * 1000) }
             if size.width > 0, size.height > 0 {
@@ -479,11 +487,23 @@ final class PlayerController {
 
     private func restartFromBeginning() {
         currentTime = 0
+        let item = player.currentItem
         player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
             Task { @MainActor in
-                guard let self else { return }
+                // Another episode may have been opened while the seek was in flight.
+                guard let self, self.player.currentItem === item else { return }
                 self.player.playImmediately(atRate: self.rate)
             }
+        }
+    }
+
+    /// Starts playback from the paused state. Play on the last frame does nothing in AVPlayer,
+    /// so there the episode starts again.
+    private func resumePlayback() {
+        if let item = player.currentItem, Self.isAtEnd(position: player.currentTime().seconds, duration: item.duration.seconds) {
+            restartFromBeginning()
+        } else {
+            player.playImmediately(atRate: rate)
         }
     }
 
@@ -492,19 +512,14 @@ final class PlayerController {
     func togglePlay() {
         guard player.currentItem != nil else { return }
         if player.timeControlStatus == .paused {
-            // Play pressed on the last frame does nothing in AVPlayer: start the episode again.
-            if let item = player.currentItem, Self.isAtEnd(position: player.currentTime().seconds, duration: item.duration.seconds) {
-                restartFromBeginning()
-            } else {
-                player.playImmediately(atRate: rate)
-            }
+            resumePlayback()
         } else {
             player.pause()
             persistPosition()
         }
     }
 
-    func playIfPaused() { if player.currentItem != nil, player.timeControlStatus == .paused { player.playImmediately(atRate: rate) } }
+    func playIfPaused() { if player.currentItem != nil, player.timeControlStatus == .paused { resumePlayback() } }
     func pause() { player.pause(); persistPosition() }
 
     func next() { if hasNext { play(index: index + 1) } }
