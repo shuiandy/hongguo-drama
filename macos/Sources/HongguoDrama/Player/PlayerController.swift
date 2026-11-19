@@ -379,6 +379,11 @@ final class PlayerController {
         switch status {
         case .readyToPlay:
             isLoading = false
+            // A resume point at the very end (a finished episode synced from another device)
+            // would leave the player parked on the last frame: start over instead.
+            if let item = player.currentItem, Self.isAtEnd(position: player.currentTime().seconds, duration: item.duration.seconds) {
+                restartFromBeginning()
+            }
             if startupMilliseconds == nil { startupMilliseconds = Int(Date().timeIntervalSince(loadStarted) * 1000) }
             if size.width > 0, size.height > 0 {
                 videoSize = size
@@ -460,6 +465,25 @@ final class PlayerController {
         persistPosition(finished: true)
         if autoNext, hasNext {
             play(index: index + 1)
+        } else {
+            // Last episode, or auto-next off: loop the episode like the official app.
+            restartFromBeginning()
+        }
+    }
+
+    /// Within the last second and a half of the item (or past it).
+    nonisolated static func isAtEnd(position: Double, duration: Double) -> Bool {
+        guard position.isFinite, duration.isFinite, duration > 3 else { return false }
+        return position >= duration - 1.5
+    }
+
+    private func restartFromBeginning() {
+        currentTime = 0
+        player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.player.playImmediately(atRate: self.rate)
+            }
         }
     }
 
@@ -468,7 +492,12 @@ final class PlayerController {
     func togglePlay() {
         guard player.currentItem != nil else { return }
         if player.timeControlStatus == .paused {
-            player.playImmediately(atRate: rate)
+            // Play pressed on the last frame does nothing in AVPlayer: start the episode again.
+            if let item = player.currentItem, Self.isAtEnd(position: player.currentTime().seconds, duration: item.duration.seconds) {
+                restartFromBeginning()
+            } else {
+                player.playImmediately(atRate: rate)
+            }
         } else {
             player.pause()
             persistPosition()
