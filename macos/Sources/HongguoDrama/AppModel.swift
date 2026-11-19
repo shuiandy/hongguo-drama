@@ -211,6 +211,51 @@ final class AppModel {
         return config
     }
 
+    // MARK: Release calendar backfill
+
+    /// Progress of the first-release date lookup shown on 上新日历, or nil when idle.
+    private(set) var publishBackfill: (done: Int, total: Int)?
+    /// Series already looked up since launch (found or not), so a page revisit does not ask again.
+    private var publishAttempted: Set<String> = []
+    private static let publishBackfillLimit = 60
+
+    /// Watched and kept Hongguo series that still have no first-release date, newest first.
+    private func publishBackfillCandidates() -> [(seriesId: String, title: String, cover: String, total: Int, openedAt: Date)] {
+        var seen = Set<String>()
+        var result: [(seriesId: String, title: String, cover: String, total: Int, openedAt: Date)] = []
+        func add(_ id: String, _ title: String, _ cover: String, _ total: Int, _ openedAt: Date) {
+            guard SourceRouter.isHongguo(id), id.count >= 6, id.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }), !title.isEmpty,
+                  !publishAttempted.contains(id), seen.insert(id).inserted,
+                  library.series(id)?.publishedAt == nil else { return }
+            result.append((id, title, cover, total, openedAt))
+        }
+        for record in LibraryStore.shared.history() { add(record.seriesId, record.title, record.cover, record.total, record.updatedAt) }
+        for item in library.recent() { add(item.seriesId, item.title, item.cover, item.episodeCount, item.lastOpenedAt) }
+        return result
+    }
+
+    /// Fills in first-release dates for 上新日历 from the public detail page: one series at a
+    /// time, about one request a second, at most 60 per launch. Read-only; cancelling the calling
+    /// task (leaving the page) stops it.
+    func backfillPublishDates() async {
+        guard publishBackfill == nil else { return }
+        let budget = Self.publishBackfillLimit - publishAttempted.count
+        let pending = Array(publishBackfillCandidates().prefix(max(0, budget)))
+        guard !pending.isEmpty else { return }
+        publishBackfill = (0, pending.count)
+        defer { publishBackfill = nil }
+        for (index, item) in pending.enumerated() {
+            if Task.isCancelled { return }
+            publishAttempted.insert(item.seriesId)
+            if let date = (try? await series.publicDetails(seriesId: item.seriesId))?.publishedAt {
+                _ = try? library.recordPublishDate(seriesId: item.seriesId, title: item.title, cover: item.cover,
+                                                   episodeCount: item.total, publishedAt: date, openedAt: item.openedAt)
+            }
+            publishBackfill = (index + 1, pending.count)
+            if index + 1 < pending.count { try? await Task.sleep(for: .seconds(1)) }
+        }
+    }
+
     /// Bumped on every library change so views reading per-episode likes re-render.
     private(set) var libraryRevision = 0
 

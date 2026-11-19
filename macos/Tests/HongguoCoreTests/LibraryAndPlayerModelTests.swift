@@ -45,6 +45,32 @@ final class SeriesLibraryTests: XCTestCase {
         XCTAssertEqual(months.map(\.month), ["2026-04"])
         XCTAssertEqual(months.first?.series.first?.publicDateKey, "2026-04-01")
     }
+
+    func testRecordPublishDateKeepsRecentOrder() throws {
+        let library = SeriesLibrary(directory: dir)
+        let t0 = Date(timeIntervalSince1970: 1_780_000_000)
+        let published = Date(timeIntervalSince1970: 1_774_976_400)
+        try library.recordOpened(seriesId: "7200000000000000006", title: "己", now: t0)
+        try library.recordOpened(seriesId: "7200000000000000007", title: "庚", now: t0.addingTimeInterval(10))
+        // Existing entry: gets the date, keeps its opened time, favourite flag and place in "recent".
+        try library.setFavorite(true, seriesId: "7200000000000000006", title: "己", now: t0.addingTimeInterval(20))
+        try library.recordPublishDate(seriesId: "7200000000000000006", title: "己", cover: "https://p3.example.com/b.jpg", episodeCount: 80,
+                                      publishedAt: published, openedAt: t0.addingTimeInterval(999), now: t0.addingTimeInterval(30))
+        let kept = try XCTUnwrap(library.series("7200000000000000006"))
+        XCTAssertEqual(kept.lastOpenedAt, t0)
+        XCTAssertTrue(kept.favorite)
+        XCTAssertEqual(kept.episodeCount, 80)
+        XCTAssertEqual(kept.publicDateKey, "2026-04-01")
+        XCTAssertEqual(library.recent().map(\.title), ["庚", "己"])
+        // New entry (only in watch history so far): filed under the time it was last watched.
+        try library.recordPublishDate(seriesId: "7200000000000000008", title: "辛", publishedAt: published,
+                                      openedAt: t0.addingTimeInterval(-50), now: t0.addingTimeInterval(40))
+        XCTAssertEqual(library.recent().map(\.title), ["庚", "己", "辛"])
+        XCTAssertEqual(library.series("7200000000000000008")?.lastOpenedAt, t0.addingTimeInterval(-50))
+        XCTAssertEqual(library.calendar().first?.series.count, 2)
+        XCTAssertThrowsError(try library.recordPublishDate(seriesId: "7200000000000000009", title: "壬",
+                                                           publishedAt: Date(timeIntervalSince1970: 0), openedAt: t0))
+    }
 }
 
 final class WatchHistoryTests: XCTestCase {

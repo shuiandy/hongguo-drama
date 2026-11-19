@@ -81,6 +81,25 @@ public final class SeriesLibrary: @unchecked Sendable {
         }
     }
 
+    /// Stores a first-release date found later (the release calendar's backfill). An existing
+    /// entry keeps its place in "recent"; a new one is filed under `openedAt` (when the series
+    /// was last watched), so backfilling never reorders the library.
+    @discardableResult
+    public func recordPublishDate(seriesId: String, title: String, cover: String = "", episodeCount: Int = 0,
+                                  publishedAt: Date, openedAt: Date, now: Date = Date()) throws -> LibrarySeries {
+        guard publishedAt.timeIntervalSince1970 > 0 else { throw HongguoError(.input, "公开日期无效") }
+        let known = series(seriesId.trimmingCharacters(in: .whitespaces)) != nil
+        return try mutate(seriesId: seriesId, title: title, now: now) { item in
+            if !known {
+                item.addedAt = openedAt
+                item.lastOpenedAt = openedAt
+            }
+            if item.cover.isEmpty, !cover.isEmpty, URLGuard.isPublicURL(cover) { item.cover = cover }
+            item.episodeCount = max(item.episodeCount, episodeCount)
+            item.publishedAt = publishedAt
+        }
+    }
+
     public func record(_ summary: SeriesSummary, now: Date = Date()) throws {
         try recordOpened(seriesId: summary.seriesId, title: summary.title, cover: summary.cover,
                          episodeCount: summary.episodeCount, publishedAt: summary.publishedAt, now: now)

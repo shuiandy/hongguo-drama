@@ -338,6 +338,10 @@ struct SeriesDetailView: View {
             self.error = describe(error)
         }
         details = await detailsTask
+        // Opened from history or search, the summary has no first-release date; the detail page does.
+        if summary.publishedAt == nil, let date = details?.publishedAt, let kept = model.library.series(seriesId), kept.publishedAt == nil {
+            _ = try? model.library.recordPublishDate(seriesId: seriesId, title: kept.title, publishedAt: date, openedAt: kept.lastOpenedAt)
+        }
     }
 
     private func play(index: Int, resume: Bool) {

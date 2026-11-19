@@ -170,7 +170,7 @@ struct SidebarRow: View {
                 Text(badge).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
     }
 }
 

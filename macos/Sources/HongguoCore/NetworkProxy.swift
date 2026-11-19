@@ -65,7 +65,8 @@ public final class NetworkProxy: @unchecked Sendable {
     /// Applies new settings. An invalid manual proxy falls back to a direct connection and throws,
     /// so a typo never leaves the app unable to reach anything.
     public func apply(_ settings: ProxySettings, password newPassword: String? = nil) throws {
-        let pass = newPassword ?? ProxyKeychain.load() ?? ""
+        // The keychain is only read for a manual proxy: the read is slow and this runs at launch.
+        let pass = newPassword ?? (settings.mode == .custom ? ProxyKeychain.load() : nil) ?? ""
         do {
             try settings.validate()
             lock.withLock {

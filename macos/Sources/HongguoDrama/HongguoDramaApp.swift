@@ -16,6 +16,10 @@ struct HongguoDramaApp: App {
         .defaultSize(width: 1180, height: 760)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            CommandGroup(replacing: .appTermination) {
+                Button("退出红果短剧") { AppDelegate.quit() }
+                    .keyboardShortcut("q", modifiers: .command)
+            }
             SettingsCommands()
             CommandMenu("播放") {
                 Button("播放 / 暂停") { PlayerController.shared.togglePlay() }
@@ -58,6 +62,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(handleQuitEvent(_:withReplyEvent:)),
+                                                     forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEQuitApplication))
         Task { @MainActor in
             AppModel.shared.applyTheme()
             AppModel.shared.connectPlayer()
@@ -65,6 +71,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Settings is a sheet on the main window, and AppKit refuses to quit while a sheet is up
+    /// (⌘Q beeps, a quit request from outside is answered "cancelled"). Both the menu command and
+    /// the quit Apple event come here: take the sheet down first, then quit.
+    @MainActor static func quit() {
+        let sheets = NSApp.windows.compactMap(\.attachedSheet)
+        guard !sheets.isEmpty else { NSApp.terminate(nil); return }
+        AppModel.shared.closeSettings()
+        for sheet in sheets { sheet.sheetParent?.endSheet(sheet) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { NSApp.terminate(nil) }
+    }
+
+    @objc private func handleQuitEvent(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
+        MainActor.assumeIsolated { Self.quit() }
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated { PlayerController.shared.persistPosition() }

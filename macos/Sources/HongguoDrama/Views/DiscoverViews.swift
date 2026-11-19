@@ -276,7 +276,8 @@ struct FeedView: View {
 }
 
 /// 上新日历 (port of ReleaseCalendar): the series kept on this Mac (opened or favourited) that
-/// have a public first-release date, grouped by month, newest first.
+/// have a public first-release date, grouped by month, newest first. Watched series without a
+/// date get one looked up in the background while the page is open.
 struct ReleaseCalendarView: View {
     @Environment(AppModel.self) private var model
     @State private var favoritesOnly = false
@@ -295,9 +296,15 @@ struct ReleaseCalendarView: View {
                     GlassSegments(options: [GlassOption(label: "全部", value: false), GlassOption(label: "只看收藏", value: true)],
                                   selection: $favoritesOnly)
                 }
+                if let progress = model.publishBackfill {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("正在补全上线日期 \(progress.done)/\(progress.total)").font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                }
                 if months.isEmpty {
                     ContentUnavailableView(favoritesOnly ? "收藏的剧里还没有带公开日期的" : "还没有带公开日期的剧", systemImage: "calendar",
-                                           description: Text("从“发现”里打开的剧会带上首播日期，自动出现在这里。"))
+                                           description: Text("看过、打开过或收藏的剧，查到首播日期后会自动出现在这里。"))
                         .frame(maxWidth: .infinity)
                         .padding(.top, 60)
                 } else {
@@ -329,6 +336,8 @@ struct ReleaseCalendarView: View {
         .navigationTitle("上新日历")
         .transparentToolbar()
         .onAppear { model.refreshLibrary() }
+        // Cancelled when the page goes away.
+        .task { await model.backfillPublishDates() }
     }
 
     /// "2026-11" to "2026 年 11 月".

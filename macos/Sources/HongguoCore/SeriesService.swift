@@ -279,7 +279,8 @@ public final class SeriesService: Sendable {
                              episodeLabel: meta.label, completionStatus: meta.status,
                              rating: social["rating"].number, ratingCount: count(social["rating_count"]),
                              likeCount: count(social["series_like_count"]), favoriteCount: count(social["series_favorite_count"]),
-                             reviewTotal: count(social["reviews"]["total_count"]), reviews: Array(reviews.prefix(reviewLimit)))
+                             reviewTotal: count(social["reviews"]["total_count"]), reviews: Array(reviews.prefix(reviewLimit)),
+                             publishedAt: meta.published)
     }
 
     // MARK: Share links

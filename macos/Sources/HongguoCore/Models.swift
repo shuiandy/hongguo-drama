@@ -110,6 +110,8 @@ public struct PublicDetails: Sendable {
     public var favoriteCount: Int?
     public var reviewTotal: Int?
     public var reviews: [Review]
+    /// Public first-release time, when the page gives one.
+    public var publishedAt: Date? = nil
 }
 
 public enum PlaySource: String, Sendable { case web, api, app }
