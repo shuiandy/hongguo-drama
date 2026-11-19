@@ -31,7 +31,12 @@ struct EpisodeGrid: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !ranges.isEmpty {
-                GlassSegments(options: ranges, selection: $range, compact: true)
+                // A long series has more ranges than the player's side panel is wide: scroll rather
+                // than squeeze the labels until they are unreadable.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    GlassSegments(options: ranges, selection: $range, compact: true).fixedSize()
+                }
+                .scrollClipDisabled()
             }
             GlassGroup(spacing: 6) {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: minimumCellWidth), spacing: 8)], spacing: 8) {

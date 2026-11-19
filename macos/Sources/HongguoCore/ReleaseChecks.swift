@@ -90,7 +90,13 @@ public final class UpdateChecker: Sendable {
         options.headers = ["Accept": "application/vnd.github+json", "User-Agent": "Hongguo-Drama-macOS"]
         options.timeout = 10
         options.maxBytes = 1024 * 1024
-        let response = try await http.get(ReleaseRepo.latestReleaseAPI, options: options)
+        let response: HTTPResponse
+        do {
+            response = try await http.get(ReleaseRepo.latestReleaseAPI, options: options)
+        } catch let error as HTTPStatusError where error.status == 404 {
+            // GitHub answers 404 while the repository has no published release: nothing to update to.
+            return nil
+        }
         return Self.availableRelease(try JSONValue.parse(response.data), currentVersion: currentVersion)
     }
 }
