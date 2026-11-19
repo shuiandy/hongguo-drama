@@ -70,7 +70,8 @@ macos/
     HTMLData.swift          只解析页面里的 JSON 字面量，不执行任何远端脚本
     SearchService.swift     官网搜索
     CatalogService.swift    分类与榜单
-    SeriesService.swift     分集、取源（官网非预览 → App → 旧接口）、详情、分享链接
+    SeriesService.swift     分集、取源（App 快速通道 → App 排队通道 → 旧接口 → 官网）、详情、分享链接
+    FastAppPlaybackSource.swift  App 快速通道：内存里复用一个匿名设备身份，批量预取
     AppSource.swift         App 播放取源：排队限速、选流、密钥与片源地址解密、域名白名单
     PlaybackDevice.swift    匿名播放设备注册（只在内存，失败冷却 10 秒）
     PlaybackSignerV5.swift  player/v1 的 v5 签名（Medusa / Helios）

@@ -149,7 +149,7 @@ final class PlayerController {
     @ObservationIgnored private var retriedFresh = false
     @ObservationIgnored private var usedPrefetched = false
     /// Source of the next episode resolved while the current one plays (all tiers), so auto-next
-    /// does not wait for the signed App request (3 to 5 s).
+    /// does not wait for the signed App request.
     @ObservationIgnored private var prefetched: (vid: String, info: PlayInfo, at: Date)?
     /// Signed media URLs stay valid far longer; a stale one is re-resolved on failure anyway.
     private static let prefetchLifetime: TimeInterval = 15 * 60
@@ -443,8 +443,15 @@ final class PlayerController {
            preparedMaps[Self.mapKey(p.info.selecting(shortSide: preferred))] != nil || !p.info.isEncrypted {
             return
         }
+        let playing = index
+        // The episodes after this one, in one request; the next one is then already answered.
+        let ahead = list.episodes[index..<min(index + 6, list.episodes.count)]
+            .filter { localFileProvider?($0) == nil }.map(\.vid)
         Task { [weak self] in
-            guard let raw = try? await SourceRouter.playInfo(vid: next.vid, seriesId: list.seriesId) else { return }
+            await SourceRouter.prefetchPlayInfo(seriesId: list.seriesId, vids: ahead)
+            // The viewer may have moved on while that request was out.
+            guard let current = self, current.episodes?.seriesId == list.seriesId, current.index == playing else { return }
+            guard let raw = await SourceRouter.prefetchedPlayInfo(vid: next.vid, seriesId: list.seriesId) else { return }
             guard let self, self.episodes?.seriesId == list.seriesId else { return }
             self.prefetched = (next.vid, raw, Date())
             let info = raw.selecting(shortSide: preferred)

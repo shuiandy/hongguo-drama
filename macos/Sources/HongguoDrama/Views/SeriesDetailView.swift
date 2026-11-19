@@ -332,6 +332,13 @@ struct SeriesDetailView: View {
         do {
             let list = try await SourceRouter.episodes(seriesId: seriesId, force: force)
             episodes = list
+            if hongguo {
+                // The episode the play button starts and the ones after it, in one request, so the
+                // first click does not wait for the play model.
+                let first = max(0, min((record?.episodeIndex ?? 1) - 1, list.episodes.count - 1))
+                let vids = list.episodes.dropFirst(first).prefix(6).map(\.vid)
+                Task { await SourceRouter.prefetchPlayInfo(seriesId: seriesId, vids: vids) }
+            }
             _ = try? model.library.recordOpened(seriesId: seriesId, title: list.title, cover: cover, episodeCount: list.total,
                                                 publishedAt: summary.publishedAt)
         } catch {

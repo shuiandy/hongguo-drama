@@ -382,6 +382,8 @@ final class AppModel {
     func startBackgroundChecks() {
         guard !backgroundStarted else { return }
         backgroundStarted = true
+        // Register the anonymous playback device now, so the first episode does not wait for it.
+        Task { await series.warmUpPlayback() }
         if settings.checkUpdatesAtLaunch { Task { await checkForUpdate(manual: false) } }
         Task {
             var first = true

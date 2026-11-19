@@ -6,6 +6,7 @@ public final class SeriesService: Sendable {
     private let http: HTTPClient
     private let api: LegacyAPI
     private let appSource: AppSource
+    private let fastSource: FastAppPlaybackSource
     private let episodeCache = TTLCache<SeriesEpisodes>(limit: 64)
     private let playCache = TTLCache<PlayInfo>(limit: 128)
     private let detailsCache = TTLCache<PublicDetails>(limit: 64)
@@ -16,6 +17,8 @@ public final class SeriesService: Sendable {
         self.api = LegacyAPI(http: http)
         // One process-wide App queue (pacing and refusal handling are shared, as in Electron).
         self.appSource = http === HTTPClient.shared ? .shared : AppSource(http: http)
+        // One process-wide device identity, shared by the player, prefetch and downloads.
+        self.fastSource = http === HTTPClient.shared ? .shared : FastAppPlaybackSource(http: http)
     }
 
     private var pageOptions: HTTPClient.Options {
@@ -107,16 +110,63 @@ public final class SeriesService: Sendable {
 
     // MARK: Play URL
 
-    /// Resolves a playable URL: official web page first (plain MP4, not the protected preview), then the
-    /// official App source (anonymous in-memory device, signed player/v1), then the legacy preload API
-    /// (CENC encrypted, needs `spadeA`). A recent web media failure moves the web source last.
+    /// Resolves a playable URL. Order: the fast App source (one anonymous device kept in memory,
+    /// signed player/v1; an empty reply is asked again at once), then the queued App source with
+    /// its legacy signature, then the legacy preload API, and the official web page last.
+    /// The web page comes last because it answers with a preview or 404 for nearly every
+    /// episode and costs about two seconds each time; a web address that just failed to play
+    /// is not asked again for five minutes.
     public func playInfo(vid: String, seriesId: String?, force: Bool = false) async throws -> PlayInfo {
+        try await playInfo(vid: vid, seriesId: seriesId, force: force, webAvailable: nil)
+    }
+
+    /// `webAvailable` is what the catalogue says about the web page having this episode.
+    /// It no longer changes the order (the web page is always last); `false` skips the web page.
+    public func playInfo(vid: String, seriesId: String?, force: Bool, webAvailable: Bool?) async throws -> PlayInfo {
         guard vid.matchesDigits(min: 1, max: 30) else { throw HongguoError(.input, "无效的分集编号") }
-        let skipWeb = await failedWeb.get(vid) == true
-        let key = "\(seriesId ?? ""):\(vid)\(skipWeb ? ":fallback" : "")"
+        let key = "\(seriesId ?? ""):\(vid)"
         if !force, let cached = await playCache.get(key) { return cached }
         var failures: [String] = []
-        if !skipWeb {
+        var refused = false
+        for attempt in 0..<2 {
+            do {
+                let info = try await fastSource.resolve(vid: vid, force: force || attempt > 0)
+                await playCache.set(key, info, ttl: 30)
+                return info
+            } catch let error as AppSourceError {
+                if error.code == .cancelled { throw error.hongguoError }
+                refused = error.isHardRejection
+                if attempt == 0, error.code == .emptyResponse { continue }
+                failures.append("App：\(Self.describe(error))")
+                break
+            } catch is CancellationError {
+                throw HongguoError(.cancelled, "已取消 App 片源请求")
+            } catch {
+                failures.append("App：\(Self.describe(error))")
+                break
+            }
+        }
+        // After an explicit refusal the same request through the queue would only be refused again.
+        if !refused {
+            do {
+                let info = try await appSource.playInfo(vid: vid)
+                await playCache.set(key, info, ttl: 30)
+                return info
+            } catch let error as AppSourceError where error.code == .cancelled {
+                throw error.hongguoError
+            } catch {
+                failures.append("App 排队通道：\(Self.describe(error))")
+            }
+        }
+        do {
+            let info = try await api.playInfo(vid: vid)
+            await playCache.set(key, info, ttl: 30)
+            return info
+        } catch {
+            failures.append("旧接口：\(Self.describe(error))")
+        }
+        let recentlyFailed = await failedWeb.get(vid) == true
+        if !recentlyFailed, webAvailable != false {
             do {
                 let info = try await playInfoFromWeb(vid: vid, seriesId: seriesId)
                 await playCache.set(key, info, ttl: 30)
@@ -127,33 +177,32 @@ public final class SeriesService: Sendable {
                 failures.append("网页：\(Self.describe(error))")
             }
         }
-        do {
-            let info = try await appSource.playInfo(vid: vid)
-            await playCache.set(key, info, ttl: 30)
-            return info
-        } catch let error as AppSourceError where error.code == .cancelled {
-            throw error.hongguoError
-        } catch {
-            failures.append("App：\(Self.describe(error))")
-        }
-        do {
-            let info = try await api.playInfo(vid: vid)
-            await playCache.set(key, info, ttl: 30)
-            return info
-        } catch {
-            failures.append("旧接口：\(Self.describe(error))")
-        }
-        if skipWeb {
-            do {
-                return try await playInfoFromWeb(vid: vid, seriesId: seriesId)
-            } catch {
-                failures.append("网页：\(Self.describe(error))")
-            }
-        }
         throw HongguoError(.unavailable, "本集取源失败：\(failures.joined(separator: "；"))。请重试或在官方 App 确认可播情况。")
     }
 
-    /// Call when a media request for a web URL failed, so retries prefer other sources for 5 minutes.
+    /// Registers the anonymous playback device ahead of the first episode, so that episode does
+    /// not wait for the registration (about half a second).
+    public func warmUpPlayback() async {
+        await fastSource.warmUpIdentity()
+    }
+
+    /// Asks for the play models of up to 6 episodes in one request, for episodes the viewer is
+    /// likely to pick next. Best effort: it steps aside for a viewer's own lookup and pauses for
+    /// 30 seconds after an empty reply.
+    public func prefetchPlayInfo(vids: [String]) async {
+        await fastSource.prefetchBatch(vids: vids)
+    }
+
+    /// One quiet try at an episode's source for prefetching: the fast App source only, no retry
+    /// and no other source. nil when it did not answer.
+    public func prefetchedPlayInfo(vid: String, seriesId: String?) async -> PlayInfo? {
+        guard vid.matchesDigits(min: 1, max: 30) else { return nil }
+        let key = "\(seriesId ?? ""):\(vid)"
+        if let cached = await playCache.get(key) { return cached }
+        return try? await fastSource.resolve(vid: vid)
+    }
+
+    /// Call when a media request for a web URL failed, so retries leave the web page out for 5 minutes.
     public func markWebMediaFailure(_ info: PlayInfo) async {
         guard info.source == .web else { return }
         await failedWeb.set(info.vid, true, ttl: 300)

@@ -27,6 +27,20 @@ enum SourceRouter {
         return try await series.playInfo(vid: vid, seriesId: seriesId, force: force)
     }
 
+    /// One quiet try at the source of an episode the viewer has not asked for yet.
+    static func prefetchedPlayInfo(vid: String, seriesId: String) async -> PlayInfo? {
+        if isHongguo(seriesId) { return await series.prefetchedPlayInfo(vid: vid, seriesId: seriesId) }
+        guard let source = try? source(for: seriesId) else { return nil }
+        return try? await source.playInfo(vid: vid, seriesId: seriesId)
+    }
+
+    /// Asks for several Hongguo episodes' play models in one request (at most 6 are sent).
+    /// Other catalogues have no such request and are left alone.
+    static func prefetchPlayInfo(seriesId: String, vids: [String]) async {
+        guard isHongguo(seriesId), !vids.isEmpty else { return }
+        await series.prefetchPlayInfo(vids: vids)
+    }
+
     /// Label of a source id ("xifan", "custom:<uuid>") for titles.
     static func label(_ sourceId: String) -> String {
         LibraryStore.shared.settings.mediaSources.first { $0.id == sourceId }?.label
