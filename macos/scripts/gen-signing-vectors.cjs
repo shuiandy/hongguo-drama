@@ -9,7 +9,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { gzipSync } = require('node:zlib');
 const { createRequire } = require('node:module');
-const native = path.join(__dirname, '../../src/native');
+const native = require('./upstream-native.cjs');
 
 function load(file, randomQueue, now, extra = '') {
   const filename = path.join(native, file);

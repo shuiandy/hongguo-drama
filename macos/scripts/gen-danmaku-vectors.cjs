@@ -4,7 +4,8 @@
 //   node macos/scripts/gen-danmaku-vectors.cjs > macos/Tests/HongguoCoreTests/Fixtures/danmaku-signing-vectors.json
 'use strict';
 const path = require('node:path');
-const sign = require(path.join(__dirname, '../../src/native/danmaku-sign.js'));
+const upstreamNative = require('./upstream-native.cjs');
+const sign = require(path.join(upstreamNative, 'danmaku-sign.js'));
 
 const cases = [
   { stampMs: 1763430000123, deviceId: '1234567890123456789', installId: '2234567890123456789', nonce: '0102030405060708090a0b' },
@@ -29,7 +30,7 @@ Module._load = function (request, ...rest) {
   if (request === 'axios') return { post() { throw new Error('offline'); } };
   return originalLoad.call(this, request, ...rest);
 };
-const danmaku = require(path.join(__dirname, '../../src/native/danmaku.js'));
+const danmaku = require(path.join(upstreamNative, 'danmaku.js'));
 Module._load = originalLoad;
 
 const VID = '7300000000000000001';

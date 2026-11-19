@@ -5,6 +5,7 @@
 //   node macos/scripts/gen-app-search-vectors.cjs > macos/Tests/HongguoCoreTests/Fixtures/app-search-signing-vectors.json
 'use strict';
 const path = require('node:path');
+const upstreamNative = require('./upstream-native.cjs');
 const crypto = require('node:crypto');
 
 const PROCESS_NONCE_HEX = '000102030405060708090a0b0c0d0e0f1011';
@@ -22,7 +23,7 @@ Module._load = function (request, ...rest) {
   if (request === 'axios') return {};
   return originalLoad.call(this, request, ...rest);
 };
-const app = require(path.join(__dirname, '../../src/native/app-source.js'));
+const app = require(path.join(upstreamNative, 'app-source.js'));
 
 let queue = [];
 const realRandom = Math.random;

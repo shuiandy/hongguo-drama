@@ -187,3 +187,11 @@ signing-v5-carrier.json。保留上游 drpys 22261adfa31435e3b3ef5a730b8a2a75bca
 远程签名服务、捕获的设备会话或任何第三方 PolyForm 实现。
 最终 query、实际 gzip 正文及统一时间戳共同签名，原分集、媒体和解密校验保留。
 发行及真实平台验证状态见 docs/release-7.5.md。
+
+六、原生 macOS 版
+----------------
+自 2026 年 11 月起，本仓库的工作区只保留 `macos/` 下从头实现的原生 Mac 客户端
+（Swift / SwiftUI），同样以 GNU General Public License v3.0 授权。上文列出的 Electron 版
+源码已从工作区移除，仍可在上游仓库和本仓库的 git 历史中取得。原生版不包含 Electron、
+React、axios 和内置 FFmpeg；ByteVC2 组件 librempeg（AGPL 3.0）是单独构建、单独运行的程序，
+构建脚本在 `macos/scripts/librempeg/`。
