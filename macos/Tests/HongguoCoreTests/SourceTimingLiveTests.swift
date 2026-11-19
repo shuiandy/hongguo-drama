@@ -4,7 +4,7 @@ import XCTest
 
 /// Opt-in live timing of episode source lookups, old order against the fast App source:
 /// `HONGGUO_LIVE=1 swift test --filter SourceTimingLiveTests`.
-/// Read-only requests, about thirty in all. Prints milliseconds and outcomes only: no device
+/// Read-only requests, about thirty-five in all. Prints milliseconds and outcomes only: no device
 /// identity, no episode ids and no signed addresses.
 final class SourceTimingLiveTests: XCTestCase {
     private func timed<T>(_ work: () async throws -> T) async -> (Result<T, Error>, Int) {
@@ -107,13 +107,20 @@ final class SourceTimingLiveTests: XCTestCase {
             if (try? result.get()) == nil { fastFailures += 1 }
         }
 
-        // What the app itself now does for one more episode, through SeriesService.
-        let (whole, wholeMs) = await timed { try await series.playInfo(vid: episode(24).vid, seriesId: list.seriesId) }
-        report.append("SeriesService ep24 (includes a registration): \(outcome(whole)) \(wholeMs) ms")
+        // What the app itself now does, through SeriesService and the process-wide fast source:
+        // the device is registered ahead (as at launch), then episodes are picked cold.
+        let (_, warmMs) = await timed { await series.warmUpPlayback() }
+        report.append("warm-up (registration): \(warmMs) ms")
+        var wholeFailures = 0
+        for index in [24, 12, 19] {
+            let (whole, wholeMs) = await timed { try await series.playInfo(vid: episode(index).vid, seriesId: list.seriesId) }
+            report.append("SeriesService ep\(index): \(outcome(whole)) \(wholeMs) ms")
+            if (try? whole.get()) == nil { wholeFailures += 1 }
+        }
 
         report.append("old totals \(oldTotals) ms, fast totals \(fastTotals) ms")
         print("SOURCE-TIMING-LIVE\n" + report.joined(separator: "\n"))
         XCTAssertEqual(fastFailures, 0, report.joined(separator: "\n"))
-        XCTAssertNotNil(try? whole.get(), report.joined(separator: "\n"))
+        XCTAssertEqual(wholeFailures, 0, report.joined(separator: "\n"))
     }
 }
