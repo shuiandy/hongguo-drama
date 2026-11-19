@@ -5,10 +5,10 @@ import XCTest
 /// Byte-for-byte parity with the Electron reference implementations.
 /// * `Fixtures/app-signing-vectors.json` comes from `scripts/gen-signing-vectors.cjs` (node, fixed
 ///   time and randomness, synthetic ids).
-/// * `src/native/fixtures/playback-v5-vectors` are the unmodified upstream hongguoTV vectors.
+/// * `Fixtures/playback-v5-vectors` are the unmodified upstream hongguoTV vectors (copied from
+///   `src/native/fixtures/playback-v5-vectors` of the Electron tree, which is no longer in this repository).
 final class AppSigningTests: XCTestCase {
     static let testsDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-    static let repoRoot = testsDir.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 
     func json(_ url: URL) throws -> Any {
         try JSONSerialization.jsonObject(with: Data(contentsOf: url))
@@ -27,7 +27,7 @@ final class AppSigningTests: XCTestCase {
     }
 
     func testUpstreamF13Vectors() throws {
-        let url = Self.repoRoot.appendingPathComponent("src/native/fixtures/playback-v5-vectors/signing-v5-f13.json")
+        let url = Self.testsDir.appendingPathComponent("Fixtures/playback-v5-vectors/signing-v5-f13.json")
         let rows = try json(url) as! [[String: Any]]
         XCTAssertEqual(rows.count, 32)
         for (i, row) in rows.enumerated() {
@@ -39,7 +39,7 @@ final class AppSigningTests: XCTestCase {
     }
 
     func testUpstreamCarrierVectors() throws {
-        let url = Self.repoRoot.appendingPathComponent("src/native/fixtures/playback-v5-vectors/signing-v5-carrier.json")
+        let url = Self.testsDir.appendingPathComponent("Fixtures/playback-v5-vectors/signing-v5-carrier.json")
         let rows = try json(url) as! [[String: Any]]
         XCTAssertEqual(rows.count, 4)
         for (i, row) in rows.enumerated() {
