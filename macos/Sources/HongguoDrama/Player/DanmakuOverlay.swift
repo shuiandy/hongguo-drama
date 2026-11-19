@@ -96,6 +96,9 @@ final class DanmakuModel {
 struct DanmakuOverlay: View {
     let controller: PlayerController
     var bottomInset: Double = 120
+    /// The player window and the mini window each hold an overlay over the one shared stage;
+    /// only the window on screen may advance and draw it.
+    var active = true
 
     private var settings: DanmakuSettings { AppModel.shared.settings.danmaku }
     private var currentVid: String? {
@@ -106,8 +109,9 @@ struct DanmakuOverlay: View {
     var body: some View {
         let model = DanmakuModel.shared
         let settings = settings
-        TimelineView(.animation(paused: !settings.enabled || !controller.isPlaying)) { timeline in
+        TimelineView(.animation(paused: !active || !settings.enabled || !controller.isPlaying)) { timeline in
             Canvas { context, size in
+                guard active else { return }
                 model.tick(now: timeline.date, currentTime: controller.currentTime, rate: controller.rate,
                            playing: controller.isPlaying, size: size, settings: settings, bottomInset: bottomInset)
                 guard settings.enabled else { return }

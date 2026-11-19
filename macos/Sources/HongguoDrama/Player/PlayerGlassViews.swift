@@ -224,7 +224,7 @@ struct PlayerScreen: View {
     private var stage: some View {
         ZStack {
             VideoSurface(player: controller.player, gravity: controller.fillMode.gravity)
-            DanmakuOverlay(controller: controller, bottomInset: 130)
+            DanmakuOverlay(controller: controller, bottomInset: 130, active: !windows.isMini)
             // Click toggles play, double click toggles full screen.
             Color.clear
                 .contentShape(Rectangle())
@@ -811,6 +811,8 @@ struct MiniPlayerView: View {
         ZStack {
             Color.black
             VideoSurface(player: controller.player, gravity: controller.fillMode.gravity)
+            // Same danmaku as the player window, same size; it stays clear of the controls on hover.
+            DanmakuOverlay(controller: controller, bottomInset: hovering ? 110 : 8, active: windows.isMini)
             WindowDragArea { windows.exitMini() }
             PlayerOverlays(controller: controller, compact: true)
 
