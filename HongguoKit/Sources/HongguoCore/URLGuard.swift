@@ -13,7 +13,32 @@ import Glibc
 /// * when the system resolver only returns Fake-IP answers (198.18.0.0/15, used by
 ///   local proxy tools such as Surge/Clash), the real answer is checked through fixed
 ///   DNS-over-HTTPS resolvers before the request may continue.
+/// How strictly a proxy's virtual answers are handled is `ProxyPolicy` (Mac `.strict`, iOS
+/// `.mobileProxy`); each block is reported through `onBlock` (host and reason) for the app's log.
+/// Real private, loopback and link-local answers, and a DoH answer that is not public, are
+/// blocked under both policies.
 public enum URLGuard {
+    /// How a host whose system DNS answer is a local proxy's virtual address is checked.
+    public enum ProxyPolicy: Sendable, Equatable {
+        /// The Mac app: only Fake-IP 198.18.0.0/15 counts as a proxy answer, every such host waits
+        /// for the DoH answer (4 s), and a host stays checked for up to 60 seconds.
+        case strict
+        /// A phone that runs a proxy app such as Surge as a VPN with Fake-IP DNS, where names also
+        /// resolve to a ULA fc00::/7 address through the proxy's IPv6 interface and DoH requests
+        /// often fail or time out: ULA answers count as virtual too; the service's own https hosts
+        /// (`serviceDomains`) go on at once and are DoH-verified in the background (a non-public
+        /// answer blocks the host from then on); other hosts wait for DoH (2 s); a host stays
+        /// checked for up to 300 seconds.
+        case mobileProxy
+
+        /// The policy of this process (`PlatformBehavior.current`).
+        public static var current: ProxyPolicy { PlatformBehavior.current.proxyPolicy }
+
+        var cacheLimit: Int { self == .strict ? 60 : 300 }
+        var publicAnswerTTL: Int { self == .strict ? 60 : 120 }
+        var dohTimeout: TimeInterval { self == .strict ? 4 : 2 }
+    }
+
     private static let blockedV4: [(UInt32, Int)] = [
         ("0.0.0.0", 8), ("10.0.0.0", 8), ("100.64.0.0", 10), ("127.0.0.0", 8),
         ("169.254.0.0", 16), ("172.16.0.0", 12), ("192.0.0.0", 24), ("192.0.2.0", 24),
@@ -48,6 +73,60 @@ public enum URLGuard {
     public static func isFakeIP(_ address: String) -> Bool {
         guard let v = ipv4(address) else { return false }
         return inSubnet(v, ipv4("198.18.0.0")!, 15)
+    }
+
+    /// An address a local proxy hands out instead of the real one: Fake-IP 198.18.0.0/15, or an
+    /// IPv6 unique local address (fc00::/7) from the proxy's virtual interface.
+    public static func isProxyVirtual(_ address: String) -> Bool {
+        if isFakeIP(address) { return true }
+        if let v6 = ipv6(address) { return v6[0] & 0xfe == 0xfc }
+        return false
+    }
+
+    /// The registrable domains this app talks to: its APIs, pages, covers and video CDN.
+    public static let serviceDomains = [
+        "fqnovel.com", "fqnovelpic.com", "fqnovelstatic.com", "qznovelvod.com",
+        "snssdk.com", "hongguoduanju.com", "byteimg.com", "douyinpic.com",
+        "toutiaovod.com", "douyinvod.com",
+    ]
+
+    /// `host` is one of `serviceDomains` or a name under one (whole labels: `evilfqnovel.com`
+    /// and `fqnovel.com.example.net` are not).
+    public static func isServiceHost(_ host: String) -> Bool {
+        var name = host.lowercased()
+        if name.hasSuffix(".") { name.removeLast() }
+        return serviceDomains.contains { name == $0 || name.hasSuffix("." + $0) }
+    }
+
+    public enum Answer: Equatable, Sendable {
+        /// Every address is public.
+        case publicOnly
+        /// Every address is a proxy's virtual one: the real answer has to be looked up.
+        case proxyVirtual
+        /// At least one address is private, loopback, link-local, reserved or unreadable.
+        case privateTarget
+    }
+
+    /// Under `.strict` only Fake-IP answers are virtual; a ULA answer is a private target.
+    public static func classify(_ addresses: [String], policy: ProxyPolicy = .current) -> Answer {
+        if !addresses.isEmpty, addresses.allSatisfy(isPublicAddress) { return .publicOnly }
+        let virtual: (String) -> Bool = policy == .strict ? isFakeIP : isProxyVirtual
+        if !addresses.isEmpty, addresses.allSatisfy(virtual) { return .proxyVirtual }
+        return .privateTarget
+    }
+
+    /// When the real address behind a proxy's virtual answer could not be confirmed: only the
+    /// service's own https hosts may go on.
+    public static func allowsUnconfirmed(host: String, scheme: String?) -> Bool {
+        scheme?.lowercased() == "https" && isServiceHost(host)
+    }
+
+    private static let blockHook = BlockHook()
+
+    /// Called with the host and the reason each time a request is blocked (for the app's log).
+    public static var onBlock: (@Sendable (_ host: String, _ reason: String) -> Void)? {
+        get { blockHook.get() }
+        set { blockHook.set(newValue) }
     }
 
     public static func isPublicAddress(_ address: String) -> Bool {
@@ -93,32 +172,101 @@ public enum URLGuard {
     private static let cache = ResolutionCache()
 
     /// Full check including DNS. Throws `HongguoError(.security)` when the URL may reach a
-    /// private network. Results are cached for up to 60 seconds per host.
+    /// private network. Results are cached per host (up to 60 or 300 seconds, see `ProxyPolicy`).
     public static func check(_ url: URL) async throws {
-        guard isPublicURL(url) else { throw blocked() }
-        guard var host = url.host?.lowercased() else { throw blocked() }
+        let policy = ProxyPolicy.current
+        try await check(url, policy: policy, cache: cache, resolveHost: { try await resolve($0) },
+                        resolveDoH: { try await DoHResolver.resolveA($0, timeout: policy.dohTimeout) })
+    }
+
+    static func check(
+        _ url: URL,
+        policy: ProxyPolicy = .current,
+        cache: ResolutionCache,
+        resolveHost: @escaping @Sendable (String) async throws -> [String],
+        resolveDoH: @escaping @Sendable (String) async throws -> ([String], Int)
+    ) async throws {
+        let limit = policy.cacheLimit
+        let shownHost = url.host?.lowercased() ?? ""
+        guard isPublicURL(url) else { throw blocked(host: shownHost, reason: "not a public http(s) URL") }
+        guard var host = url.host?.lowercased() else { throw blocked(host: "", reason: "no host") }
         host = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
         if isIPLiteral(host) { return }
+        if await cache.isDenied(host) {
+            throw blocked(host: host, reason: "DoH answer is not public")
+        }
         if await cache.isFresh(host) { return }
-        let addresses = try await resolve(host)
-        guard !addresses.isEmpty else { throw HongguoError(.network, "片源域名未解析到地址") }
-        if addresses.allSatisfy(isPublicAddress) {
-            await cache.store(host, ttl: 60)
-            return
+        let addresses: [String]
+        do {
+            addresses = try await resolveHost(host)
+        } catch {
+            reportBlock(host: host, reason: "system DNS failed")
+            throw error
         }
-        // A local proxy's Fake-IP answers are not the real destination. Ask fixed DoH
-        // resolvers for the real answer and require it to be public.
-        if addresses.allSatisfy(isFakeIP), url.scheme?.lowercased() == "https" {
-            let (real, ttl) = try await DoHResolver.resolveA(host)
-            guard !real.isEmpty, real.allSatisfy(isPublicAddress) else { throw blocked() }
-            await cache.store(host, ttl: ttl)
-            return
+        guard !addresses.isEmpty else {
+            reportBlock(host: host, reason: "no address")
+            throw HongguoError(.network, "片源域名未解析到地址")
         }
-        throw blocked()
+        switch classify(addresses, policy: policy) {
+        case .publicOnly:
+            await cache.store(host, ttl: policy.publicAnswerTTL, limit: limit)
+            return
+        case .privateTarget:
+            throw blocked(host: host, reason: "resolves to a non-public address")
+        case .proxyVirtual:
+            // A local proxy's virtual answers are not the real destination.
+            guard url.scheme?.lowercased() == "https" else {
+                throw blocked(host: host, reason: "proxy virtual address, not https")
+            }
+            // .mobileProxy: the service's own https hosts do not wait for the DoH roundtrip on a
+            // cold start; they are verified in the background instead (a non-public answer denies
+            // the host from then on).
+            if policy == .mobileProxy, allowsUnconfirmed(host: host, scheme: url.scheme) {
+                await cache.store(host, ttl: 60, limit: limit)
+                if await cache.beginBackgroundVerify(host) {
+                    Task.detached(priority: .utility) {
+                        defer { Task { await cache.endBackgroundVerify(host) } }
+                        do {
+                            let (real, ttl) = try await resolveDoH(host)
+                            if !real.isEmpty, real.allSatisfy(isPublicAddress) {
+                                await cache.store(host, ttl: max(60, ttl), limit: limit)
+                            } else {
+                                await cache.markDenied(host, ttl: 300)
+                                reportBlock(host: host, reason: "DoH answer is not public")
+                            }
+                        } catch {
+                            // Unreachable/timed-out DoH on a proxy VPN keeps the provisional allow.
+                        }
+                    }
+                }
+                return
+            }
+            let real: [String]
+            let ttl: Int
+            do {
+                (real, ttl) = try await resolveDoH(host)
+            } catch {
+                throw blocked(host: host, reason: "proxy virtual address, DoH did not confirm")
+            }
+            guard !real.isEmpty, real.allSatisfy(isPublicAddress) else {
+                await cache.markDenied(host, ttl: 300)
+                throw blocked(host: host, reason: "DoH answer is not public")
+            }
+            await cache.store(host, ttl: ttl, limit: limit)
+        }
     }
 
     static func blocked() -> HongguoError {
         HongguoError(.security, "片源及其跳转、解析结果必须指向公网")
+    }
+
+    static func blocked(host: String, reason: String) -> HongguoError {
+        reportBlock(host: host, reason: reason)
+        return blocked()
+    }
+
+    private static func reportBlock(host: String, reason: String) {
+        onBlock?(host, reason)
     }
 
     static func resolve(_ host: String) async throws -> [String] {
@@ -154,26 +302,61 @@ public enum URLGuard {
 
 actor ResolutionCache {
     private var expiry: [String: Date] = [:]
-    func isFresh(_ host: String) -> Bool { (expiry[host] ?? .distantPast) > Date() }
-    func store(_ host: String, ttl: Int) {
-        expiry[host] = Date().addingTimeInterval(TimeInterval(max(0, min(60, ttl))))
+    private var denied: [String: Date] = [:]
+    private var verifying: Set<String> = []
+
+    func isFresh(_ host: String) -> Bool {
+        guard !isDenied(host) else { return false }
+        return (expiry[host] ?? .distantPast) > Date()
+    }
+
+    func isDenied(_ host: String) -> Bool {
+        (denied[host] ?? .distantPast) > Date()
+    }
+
+    func store(_ host: String, ttl: Int, limit: Int = 300) {
+        denied[host] = nil
+        expiry[host] = Date().addingTimeInterval(TimeInterval(max(0, min(limit, ttl))))
         if expiry.count > 256 { expiry = expiry.filter { $0.value > Date() } }
+    }
+
+    func markDenied(_ host: String, ttl: Int) {
+        expiry[host] = nil
+        denied[host] = Date().addingTimeInterval(TimeInterval(max(10, min(600, ttl))))
+        if denied.count > 128 { denied = denied.filter { $0.value > Date() } }
+    }
+
+    func beginBackgroundVerify(_ host: String) -> Bool {
+        verifying.insert(host).inserted
+    }
+
+    func endBackgroundVerify(_ host: String) {
+        verifying.remove(host)
     }
 }
 
-/// DNS-over-HTTPS A-record lookup against fixed resolvers, raced.
+/// DNS-over-HTTPS A-record lookup against fixed resolvers, raced over a shared URLSession.
 enum DoHResolver {
     static let endpoints = ["https://1.1.1.1/dns-query", "https://223.5.5.5/resolve"]
 
-    static func resolveA(_ host: String) async throws -> ([String], Int) {
-        let session = URLSession(configuration: .ephemeral)
-        defer { session.finishTasksAndInvalidate() }
+    private static let sharedSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpCookieAcceptPolicy = .never
+        config.httpShouldSetCookies = false
+        config.urlCache = nil
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.timeoutIntervalForRequest = 4
+        return URLSession(configuration: config)
+    }()
+
+    static func resolveA(_ host: String, timeout: TimeInterval = 2) async throws -> ([String], Int) {
+        let session = sharedSession
         return try await withThrowingTaskGroup(of: ([String], Int).self) { group in
             for endpoint in endpoints {
                 group.addTask {
                     var components = URLComponents(string: endpoint)!
                     components.queryItems = [URLQueryItem(name: "name", value: host), URLQueryItem(name: "type", value: "A")]
-                    var request = URLRequest(url: components.url!, timeoutInterval: 4)
+                    var request = URLRequest(url: components.url!, timeoutInterval: timeout)
                     request.setValue("application/dns-json", forHTTPHeaderField: "Accept")
                     let (data, response) = try await session.data(for: request)
                     guard (response as? HTTPURLResponse)?.statusCode == 200, data.count <= 65536 else { throw URLGuard.blocked() }
@@ -202,4 +385,11 @@ enum DoHResolver {
             throw lastError
         }
     }
+}
+
+final class BlockHook: @unchecked Sendable {
+    private let lock = NSLock()
+    private var hook: (@Sendable (String, String) -> Void)?
+    func get() -> (@Sendable (String, String) -> Void)? { lock.lock(); defer { lock.unlock() }; return hook }
+    func set(_ value: (@Sendable (String, String) -> Void)?) { lock.lock(); hook = value; lock.unlock() }
 }

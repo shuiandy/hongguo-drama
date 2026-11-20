@@ -1,23 +1,24 @@
 // swift-tools-version:5.9
-// HongguoKit: the code shared by the native apps (macOS today; iOS and tvOS to follow).
-// HongguoCore holds networking, signing, source lookup, parsing, decryption and persistence,
-// with no UI imports. See README.md for the plan.
 import PackageDescription
 
+// Shared by the Mac app (macos/), the iOS app and the coming tvOS app. Each app picks its
+// behavior with `PlatformBehavior.current` at launch (Mac is the default).
 let package = Package(
     name: "HongguoKit",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v14), .iOS("26.0"), .tvOS("26.0")],
     products: [
         .library(name: "HongguoCore", targets: ["HongguoCore"]),
+        .library(name: "HongguoPlayback", targets: ["HongguoPlayback"]),
     ],
     targets: [
-        // Networking, parsing, decryption and persistence. No UI imports, so it stays unit-testable.
+        // Models, signing, App and website sources, identity, CDN candidates, caches.
         .target(name: "HongguoCore", path: "Sources/HongguoCore"),
-        .testTarget(
-            name: "HongguoCoreTests",
-            dependencies: ["HongguoCore"],
-            path: "Tests/HongguoCoreTests",
-            exclude: ["Fixtures"]
-        ),
+        // Hongguo episode resolving and the decrypt-while-streaming loader (from the iOS app).
+        .target(name: "HongguoPlayback", dependencies: ["HongguoCore"], path: "Sources/HongguoPlayback"),
+        .testTarget(name: "HongguoCoreTests", dependencies: ["HongguoCore"],
+                    path: "Tests/HongguoCoreTests", exclude: ["Fixtures"]),
+        .testTarget(name: "HongguoPlaybackTests", dependencies: ["HongguoPlayback"], path: "Tests/HongguoPlaybackTests"),
+        // Live probes of the App catalogue and playback, skipped unless HONGGUO_PROBE is set.
+        .testTarget(name: "HongguoProbeTests", dependencies: ["HongguoCore"], path: "Tests/HongguoProbeTests"),
     ]
 )

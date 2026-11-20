@@ -5,7 +5,8 @@ import Foundation
 /// The core only exposes them wrapped as "new releases"; the iOS feed needs other filters
 /// and its own paging, so this file (compiled into the HongguoCore module) passes the request
 /// through unchanged. It adds no endpoint: any other path is still refused by the signer.
-/// Both calls are read-only lists made with the core's anonymous per-process identity.
+/// Both calls are read-only lists made with the core's anonymous per-process identity, or with the
+/// persistent device when `PlatformBehavior.persistentDataDevice` is on.
 public enum AppCatalogueAccess {
     /// POST /reading/distribution/category/landpage/v/ with a JSON body.
     public static func landpage(body: Data, timeout: TimeInterval = 8) async throws -> JSONValue {
@@ -18,12 +19,15 @@ public enum AppCatalogueAccess {
     }
 
     private static func request(path: String, values: [(String, String)], payload: [UInt8]?, timeout: TimeInterval) async throws -> JSONValue {
+        let transport = AppTransport(http: .shared)
+        let device = await DataDevice.optional(transport: transport)
         let signed = try AppLegacySigner.shared.metadata(path: path, values: values, payload: payload,
+                                                         identity: device.identity, dToken: device.dToken,
                                                          nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
         do {
-            return try await AppTransport(http: .shared).requestJSON(signed.url, method: payload == nil ? "GET" : "POST",
-                                                                    headers: signed.headers, body: payload,
-                                                                    deadline: Date().addingTimeInterval(timeout))
+            return try await transport.requestJSON(signed.url, method: payload == nil ? "GET" : "POST",
+                                                   headers: signed.headers + DataDevice.authHeaders, body: payload,
+                                                   deadline: Date().addingTimeInterval(timeout))
         } catch let error as AppSourceError {
             throw error.hongguoError
         }

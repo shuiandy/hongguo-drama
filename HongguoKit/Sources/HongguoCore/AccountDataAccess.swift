@@ -25,6 +25,7 @@ public enum AccountDataAccess {
         "/reading/user/remind/op/v1/",
         "/reading/user/subscribe/delete/v1/",
         "/reading/bookapi/read_history/update/v1/",
+        "/reading/user/event/report",
     ]
 
     /// Whether a login is saved on this device (the core checks it with the website separately).
@@ -433,6 +434,28 @@ public enum AccountDataAccess {
                              try await post(accountId: accountId, path: "/reading/user/subscribe/delete/v1/", body: body))
     }
 
+    /// Reports negative recommendation feedback ("不感兴趣") or recall ("撤销") to the official
+    /// user event endpoint (`/reading/user/event/report`). Best-effort when signed in.
+    public static func reportNotInterested(accountId: String? = nil, seriesId: String, recall: Bool = false) async throws {
+        guard seriesId.matchesDigits(min: 1, max: 30) else { throw HongguoError(.input, "剧集 ID 无效") }
+        let nowSec = Int64(Date().timeIntervalSince1970)
+        let eventName = recall ? "dislike_recall" : "rt_dislike"
+        let body: [String: Any] = [
+            "event_type": eventName,
+            "events": [
+                [
+                    "event_type": eventName,
+                    "book_id": seriesId,
+                    "book_type": 2,
+                    "scene": "video_feed",
+                    "timestamp": nowSec,
+                ]
+            ],
+        ]
+        _ = try checkedWrite(path: "/reading/user/event/report",
+                             try await post(accountId: accountId, path: "/reading/user/event/report", body: body))
+    }
+
     /// Uploads or soft-deletes a watch history entry (`/reading/bookapi/read_history/update/v1/`).
     public static func uploadReadHistory(
         accountId: String? = nil,
@@ -491,13 +514,15 @@ public enum AccountDataAccess {
     public static func get(path: String, values: [(String, String)] = []) async throws -> JSONValue {
         guard let saved = try KeychainCredentialStore().load() else { throw HongguoError(.input, "未登录") }
         let transport = AppTransport(http: .shared)
-        let identity = try await AppSearchIdentity.shared.get(transport: transport)
+        let (identity, dToken) = try await DataDevice.registered(transport: transport)
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let signed = AppLegacySigner.accountPaths.contains(path)
             ? try AppLegacySigner.shared.account(path: path, values: values, identity: identity, nowMillis: now)
-            : try AppLegacySigner.shared.accountRead(path: path, values: values, identity: identity, nowMillis: now)
+            : try AppLegacySigner.shared.accountRead(path: path, values: values, identity: identity, dToken: dToken, nowMillis: now)
+        // The core's `account` signer leaves the device token out; add it when there is one.
+        let extraDToken: [(String, String)] = (AppLegacySigner.accountPaths.contains(path) && !dToken.isEmpty) ? [("x-tt-dt", dToken)] : []
         do {
-            return try await transport.requestJSON(signed.url, headers: signed.headers + [("Cookie", saved.cookie)],
+            return try await transport.requestJSON(signed.url, headers: signed.headers + extraDToken + [("Cookie", saved.cookie)],
                                                    deadline: Date().addingTimeInterval(12))
         } catch let error as AppSourceError {
             throw error.hongguoError
@@ -512,10 +537,10 @@ public enum AccountDataAccess {
         let encoded = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         let payload = Array(encoded)
         let transport = AppTransport(http: .shared)
-        let identity = try await AppSearchIdentity.shared.get(transport: transport)
+        let (identity, dToken) = try await DataDevice.registered(transport: transport)
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let signed = try AppLegacySigner.shared.accountWrite(path: path, values: values, payload: payload,
-                                                             identity: identity, nowMillis: now)
+                                                             identity: identity, dToken: dToken, nowMillis: now)
         do {
             return try await transport.requestJSON(signed.url, method: "POST",
                                                    headers: signed.headers + [("Cookie", saved.cookie)],
@@ -589,7 +614,7 @@ public enum AccountDataAccess {
 extension AppLegacySigner {
     /// `account(path:values:identity:nowMillis:)` for the read-only paths in
     /// `AccountDataAccess.extraPaths`: the same device fields, version and headers.
-    func accountRead(path: String, values: [(String, String)], identity: PlaybackIdentity, nowMillis: Int64) throws -> Signed {
+    func accountRead(path: String, values: [(String, String)], identity: PlaybackIdentity, dToken: String = "", nowMillis: Int64) throws -> Signed {
         guard AccountDataAccess.extraPaths.contains(path) else { throw HongguoError(.input, "不支持的账号接口") }
         let device = Self.merged(Self.versioned("72232", "7.2.2.32"),
                                  [("iid", identity.iid), ("device_id", identity.deviceId), ("cdid", identity.cdid)])
@@ -607,7 +632,7 @@ extension AppLegacySigner {
                 ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
                 ("x-gorgon", Self.xGorgon(query: query, body: nil, ts: ts, random: random32() >> 16)), ("x-helios", helios(ts: ts)),
                 ("x-medusa", try medusa(url: url, body: nil, ts: ts, deviceId: identity.deviceId, versionName: "7.2.2.32", nowMillis: nowMillis)),
-                ("x-tt-dt", ""),
+                ("x-tt-dt", dToken),
             ]
             return Signed(url: url, query: query, headers: headers, body: nil)
         }
@@ -615,7 +640,7 @@ extension AppLegacySigner {
     }
 
     /// Signed POST with JSON body for the write paths in `AccountDataAccess.writePaths`.
-    func accountWrite(path: String, values: [(String, String)], payload: [UInt8], identity: PlaybackIdentity, nowMillis: Int64) throws -> Signed {
+    func accountWrite(path: String, values: [(String, String)], payload: [UInt8], identity: PlaybackIdentity, dToken: String = "", nowMillis: Int64) throws -> Signed {
         guard AccountDataAccess.writePaths.contains(path) else { throw HongguoError(.input, "不支持的账号写入接口") }
         let device = Self.merged(Self.versioned("72232", "7.2.2.32"),
                                  [("iid", identity.iid), ("device_id", identity.deviceId), ("cdid", identity.cdid)])
@@ -637,7 +662,7 @@ extension AppLegacySigner {
                 ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
                 ("x-gorgon", Self.xGorgon(query: query, body: payload, ts: ts, random: random32() >> 16)), ("x-helios", helios(ts: ts)),
                 ("x-medusa", try medusa(url: url, body: payload, ts: ts, deviceId: identity.deviceId, versionName: "7.2.2.32", nowMillis: nowMillis)),
-                ("x-tt-dt", ""),
+                ("x-tt-dt", dToken),
             ]
             return Signed(url: url, query: query, headers: headers, body: payload)
         }

@@ -1,7 +1,8 @@
 import Foundation
 
 /// Raw access to `/reading/bookapi/bookmall/tab/v/` using `AppLegacySigner`'s anonymous
-/// metadata signing profile (read-only, no account login).
+/// metadata signing profile (read-only), or the persistent device when
+/// `PlatformBehavior.persistentDataDevice` is on.
 public enum AppBookMallAccess {
     /// GET /reading/bookapi/bookmall/tab/v/ with query values.
     public static func tab(
@@ -10,17 +11,21 @@ public enum AppBookMallAccess {
         path: String = "/reading/bookapi/bookmall/tab/v/",
         timeout: TimeInterval = 10
     ) async throws -> JSONValue {
+        let transport = AppTransport(http: .shared)
+        let device = await DataDevice.optional(transport: transport)
         let signed = try AppLegacySigner.shared.bookMallTab(
             host: host ?? AppLegacySigner.metadataHost,
             path: path,
             values: values,
+            identity: device.identity,
+            dToken: device.dToken,
             nowMillis: Int64(Date().timeIntervalSince1970 * 1000)
         )
         do {
-            return try await AppTransport(http: .shared).requestJSON(
+            return try await transport.requestJSON(
                 signed.url,
                 method: "GET",
-                headers: signed.headers,
+                headers: signed.headers + DataDevice.authHeaders,
                 body: nil,
                 deadline: Date().addingTimeInterval(timeout)
             )
@@ -35,12 +40,14 @@ extension AppLegacySigner {
         host: String,
         path: String,
         values: [(String, String)],
+        identity: PlaybackIdentity? = nil,
+        dToken: String = "",
         nowMillis: Int64
     ) throws -> Signed {
-        let device = Self.merged(
-            Self.versioned("74532", "7.4.5.32"),
-            [("iid", metadataInstallId), ("device_id", metadataDeviceId)]
-        )
+        let devId = identity?.deviceId ?? metadataDeviceId
+        var devicePairs: [(String, String)] = [("iid", identity?.iid ?? metadataInstallId), ("device_id", devId)]
+        if let cdid = identity?.cdid, !cdid.isEmpty { devicePairs.append(("cdid", cdid)) }
+        let device = Self.merged(Self.versioned("74532", "7.4.5.32"), devicePairs)
         let ts = UInt32(nowMillis / 1000)
         let bodyMd5 = [UInt8](repeating: 0, count: 16)
         let fields = Self.merged(values, device)
@@ -65,8 +72,8 @@ extension AppLegacySigner {
                 ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))),
                 ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
                 ("x-helios", helios(ts: ts)),
-                ("x-medusa", try medusa(url: url, body: nil, ts: ts, deviceId: metadataDeviceId, versionName: "7.4.5.32", nowMillis: nowMillis)),
-                ("x-tt-dt", ""),
+                ("x-medusa", try medusa(url: url, body: nil, ts: ts, deviceId: devId, versionName: "7.4.5.32", nowMillis: nowMillis)),
+                ("x-tt-dt", dToken),
             ]
             return Signed(url: url, query: query, headers: headers, body: nil)
         }
