@@ -439,6 +439,36 @@ final class DetailShapeLiveTests: XCTestCase {
         print("REVIEWS\n" + lines.joined(separator: "\n"))
     }
 
+    /// `--filter DetailShapeLiveTests/testPackFieldsForCastAndHeat`: book_pack_fields/series_detail_info
+    /// asking for cast, heat, tags and counts. The server names the first field it will not pack
+    /// (code 200001 "有字段不支持pack <field>"); that field is dropped and the read asked again, at
+    /// most five requests. Prints the accepted fields and the key tree.
+    func testPackFieldsForCastAndHeat() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["HONGGUO_LIVE"] == "1", "set HONGGUO_LIVE=1 to run")
+        let seriesId = try await probeSeriesId()
+        let probe = try await OfficialProbe.make()
+        var fields = ["series_title", "celebrities", "hot_score_data", "series_play_cnt", "followed_cnt", "digg_cnt",
+                      "rec_tags", "publish_time", "genre", "secondary_infos", "video_tag_info", "category_schema"]
+        var lines: [String] = []
+        for _ in 0..<5 {
+            let json = try await probe.post("/reading/distribution/book_pack_fields/series_detail_info/v1/", [
+                "book_pack_channel": "series_detail_info", "req_ids": [Int64(seriesId) ?? 0], "req_fields": fields,
+            ])
+            let code = Int(json["code"].number ?? -1)
+            let message = json["message"].string ?? ""
+            lines.append("fields=\(fields.joined(separator: ",")) code=\(code) msg=\(message.prefix(40))")
+            if code == 200001, let range = message.range(of: "pack "), case let bad = message[range.upperBound...].trimmingCharacters(in: .whitespaces),
+               fields.contains(bad) {
+                fields.removeAll { $0 == bad }
+                try await Task.sleep(for: .seconds(1))
+                continue
+            }
+            Self.tree(json["data"], name: "data", mask: [seriesId: "<sid>"], into: &lines)
+            break
+        }
+        print("PACK\n" + lines.joined(separator: "\n"))
+    }
+
     private static func replacing(_ value: JSONValue, key: String, with replacement: JSONValue) -> JSONValue {
         guard var object = value.object else { return value }
         object[key] = replacement
