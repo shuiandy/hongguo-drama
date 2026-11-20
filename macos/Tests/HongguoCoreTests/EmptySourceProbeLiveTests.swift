@@ -133,15 +133,23 @@ final class PlayShapeLiveTests: XCTestCase {
         ios["video_id_type"] = 0
         ios["screen_width_px"] = 1290
         ios["device_level"] = 4
-        let variants: [(String, [String: Any], Bool)] = [
-            ("current", base, false), ("trailing slash", base, true), ("iOS biz fields + slash", ios, true),
-        ]
+        _ = ios
+        let hosts = ["api5-normal-sinfonlineb.fqnovel.com", "api5-normal-sinfonlinea.fqnovel.com", "reading.snssdk.com"]
+        let paths = ["/novel/player/multi_video_model/v1/", "/novel/player/video_model/v1/"]
+        var variants: [(String, [String: Any], (String) -> String)] = []
+        for host in hosts { for path in paths {
+            variants.append(("\(host.prefix(26)) \(path)", base, { url in
+                var u = url.replacingOccurrences(of: "api5-normal-sinfonlineb.fqnovel.com", with: host)
+                u = u.replacingOccurrences(of: "/novel/player/multi_video_model/v1/", with: path)
+                return u
+            }))
+        } }
         var report: [String] = []
-        for (name, biz, slash) in variants {
+        for (name, biz, rewrite) in variants {
             let object: [String: Any] = ["biz_param": biz, "mixed_video_id_map": ["1004": [vid]], "dr_scene": "player"]
             let payload = Array(try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))
-            var signed = try await AppSource.shared.playbackRequest(payload: payload, identity: identity, modern: true)
-            if slash { signed.url = signed.url.replacingOccurrences(of: "/multi_video_model/v1/?", with: "/multi_video_model/v1/?") }
+            let signed = try await AppSource.shared.playbackRequest(payload: payload, identity: identity, modern: true,
+                                                                    base: rewrite(AppSource.playerAPI))
             do {
                 let json = try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers, body: signed.body,
                                                            deadline: Date().addingTimeInterval(10))
@@ -149,7 +157,7 @@ final class PlayShapeLiveTests: XCTestCase {
             } catch let error as AppSourceError {
                 report.append("\(name): \(error.code.rawValue)")
             }
-            try await Task.sleep(for: .seconds(2))
+            try await Task.sleep(for: .seconds(1))
         }
         print("SHAPES\n" + report.joined(separator: "\n"))
     }

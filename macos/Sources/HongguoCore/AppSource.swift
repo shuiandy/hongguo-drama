@@ -205,12 +205,12 @@ actor AppSource {
         }
     }
 
-    func playbackRequest(payload: [UInt8], identity: PlaybackIdentity, modern: Bool, alternate: Bool = false)
+    func playbackRequest(payload: [UInt8], identity: PlaybackIdentity, modern: Bool, alternate: Bool = false, base override: String? = nil)
         throws -> (url: String, headers: [(String, String)], body: [UInt8]) {
         let body = try AppCrypto.gzip(payload)
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         if modern {
-            let base = alternate ? Self.playerAPI.replacingOccurrences(of: "sinfonlineb.", with: "sinfonlinea.") : Self.playerAPI
+            let base = override ?? (alternate ? Self.playerAPI.replacingOccurrences(of: "sinfonlineb.", with: "sinfonlinea.") : Self.playerAPI)
             let signed = try PlaybackSignerV5.shared.sign(base: base, values: [
                 ("aid", "8662"), ("app_name", "novelread"), ("version_code", "74332"), ("version_name", "7.4.3.32"),
                 ("channel", "vivo_8662_64"), ("device_platform", "android"), ("device_type", "PGT-AN10"), ("os_version", "12"),
