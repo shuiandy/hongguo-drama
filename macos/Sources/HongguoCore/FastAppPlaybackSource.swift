@@ -142,6 +142,9 @@ public actor FastAppPlaybackSource {
 
     // MARK: Internals
 
+    private var consecutiveEmpty = 0
+    private var lastRotation = Date.distantPast
+
     private func getIdentity(forceFresh: Bool) async throws -> (identity: PlaybackIdentity, reused: Bool) {
         if !forceFresh, let identity { return (identity, true) }
         if !forceFresh, let saved = PersistedPlaybackDevice.load() {
@@ -279,6 +282,7 @@ public actor FastAppPlaybackSource {
                 if (response["Code"].number ?? response["code"].number ?? 0) != 0 {
                     throw AppSourceError(.businessRejected, "App 接口暂未提供本集播放信息")
                 }
+                consecutiveEmpty = 0
                 break
             } catch let error as AppSourceError {
                 if error.code == .cancelled { throw error }
@@ -287,7 +291,11 @@ public actor FastAppPlaybackSource {
                 // inside the same call before PlayerEngine's immediate retry.
                 // An empty reply is not the device's fault often enough to throw an established device
                 // away (new devices fare worse); register again only after an explicit refusal.
-                let shouldRotate = attempt == 0 && obtained.reused && error.isHardRejection
+                if error.code == .emptyResponse { consecutiveEmpty += 1 }
+                // A device that has answered nothing but empty for a while is replaced, at most every 30 minutes.
+                let stale = consecutiveEmpty >= 6 && Date().timeIntervalSince(lastRotation) > 1800
+                let shouldRotate = attempt == 0 && obtained.reused && (error.isHardRejection || stale)
+                if stale { consecutiveEmpty = 0; lastRotation = Date() }
                 if shouldRotate, deadline.timeIntervalSinceNow >= 2 {
                     obtained = try await getIdentity(forceFresh: true)
                     continue
