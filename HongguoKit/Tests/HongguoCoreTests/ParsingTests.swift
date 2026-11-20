@@ -68,20 +68,29 @@ final class ParsingTests: XCTestCase {
         XCTAssertThrowsError(try OfficialSeriesDetail.parse(empty, seriesId: "7400000000000000001"))
     }
 
-    func testPublicDetailsTakeFactsFromTheAppAndTheScoreFromTheWebsite() throws {
+    func testPublicDetailsTakeEverythingFromTheApp() throws {
         let detail = try OfficialSeriesDetail.parse(try JSONValue.parse(Data(Self.officialDetail.utf8)), seriesId: "7400000000000000001")
-        let page = try JSONValue.parse(Data(#"{"seriesDetail":{"series_id":"7400000000000000001","series_intro":"官网简介"},"seriesSocialInfo":{"rating":"9.1","rating_count":"120","series_favorite_count":"1","reviews":{"total_count":"7","reviews":[{"content":"好看","user_name":"甲","rating":10}]}}}"#.utf8))
-        let details = SeriesService.publicDetails(detail: detail, page: page)
+        let stats = try OfficialSeriesStats.parse(try JSONValue.parse(#"{"code":0,"data":{"7400000000000000001":{"action_info":{"digg_cnt":5100,"followed_cnt":1},"base_info":{"publish_time":1786809814},"stat_info":{"hot_score_data":{"Score":1,"Text":"1万热度"}}}}}"#), seriesId: "7400000000000000001")
+        let reviews = try OfficialSeriesReviews.parse(try JSONValue.parse(#"{"code":0,"data":{"extra":{"credibility_score":9.1,"credibility_score_count":"120"},"common_list_info":{"total":7},"data_list":[{"comment":{"comment_id":"1","expand":{"score":"8"},"common":{"content":{"text":"好看"},"user_info":{"base_info":{"user_name":"甲"}}}}}]}}"#))
+        let details = SeriesService.publicDetails(detail: detail, stats: stats, reviews: reviews)
         XCTAssertEqual(details.description, "简介", "the synopsis is the App's")
-        XCTAssertEqual(details.favoriteCount, 24_009, "the collect count is the App's")
+        XCTAssertEqual(details.favoriteCount, 24_009, "the collect count is the detail's")
         XCTAssertEqual(details.completionStatus, .completed)
         XCTAssertEqual(details.rating, 9.1)
         XCTAssertEqual(details.ratingCount, 120)
         XCTAssertEqual(details.reviewTotal, 7)
         XCTAssertEqual(details.reviews.map(\.content), ["好看"])
-        let offline = SeriesService.publicDetails(detail: detail, page: nil)
+        XCTAssertEqual(details.reviews.first?.rating, 8)
+        XCTAssertEqual(details.likeCount, 5_100)
+        XCTAssertEqual(details.publishedAt, Date(timeIntervalSince1970: 1_786_809_814))
+        let offline = SeriesService.publicDetails(detail: detail, stats: nil, reviews: nil)
         XCTAssertNil(offline.rating)
+        XCTAssertNil(offline.likeCount)
+        XCTAssertNil(offline.publishedAt)
         XCTAssertEqual(offline.description, "简介")
+        var future = stats
+        future.publishedAt = Date().addingTimeInterval(86_400)
+        XCTAssertNil(SeriesService.publicDetails(detail: detail, stats: future, reviews: nil).publishedAt, "a scheduled release is not a publish date")
     }
 
     func testSeriesIdFromShareURLs() {

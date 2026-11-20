@@ -1,9 +1,9 @@
 import Foundation
 
 /// One episode and its series: the episode's comments (author, date, likes, paged) from the App
-/// comment API, its like count and the series' facts and collect count from the App series detail
-/// (`OfficialSeriesDetail`), and tags, cast and first-shown date from the website's series page.
-/// Read-only.
+/// comment API; its like count, the series' facts, collect count, cast and tags from the App series
+/// detail (`OfficialSeriesDetail`); the first-shown date from the App's book_pack_fields read
+/// (`OfficialSeriesStats`). Read-only.
 public struct EpisodeSocial: Sendable, Equatable {
     public struct Comment: Sendable, Equatable, Identifiable {
         public var id: String
@@ -56,9 +56,10 @@ public struct EpisodeSocial: Sendable, Equatable {
     }
 }
 
-/// The score, how many rated it, the heat text, the first few reviews with their scores and the
-/// cast from the public series page (`/detail?series_id=`), plus the collect count and filing
-/// number from the App series detail. Read-only, signed out.
+/// The score, how many rated it, the review count and the first page of reviews with their scores
+/// from the App comment list (`OfficialSeriesReviews`); the heat from the App's book_pack_fields read
+/// (`OfficialSeriesStats`); the collect count, filing number and cast from the App series detail.
+/// Read-only, signed out.
 public struct SeriesReviews: Sendable, Equatable {
     public var rating: Double?
     public var ratingCount: Int?
@@ -66,10 +67,13 @@ public struct SeriesReviews: Sendable, Equatable {
     public var favoriteCount: Int?
     public var reviews: [EpisodeSocial.Comment]
     public var reviewTotal: Int?
-    /// The series' filing number as the page prints it (`record_number`), "" when it has none.
+    /// The series' filing number (`record_info.record_number`), "" when it has none.
     public var recordNumber = ""
-    /// The cast as the page lists it (`seriesDetail.celebrities`), empty when it has none.
+    /// The cast (`celebrities`), empty when it has none.
     public var cast: [EpisodeSocial.CastMember] = []
+    /// Cursor for `EpisodeSocialService.moreReviews`.
+    public var nextCursor = ""
+    public var hasMoreReviews = false
 
     public init(rating: Double?, ratingCount: Int?, heatText: String, favoriteCount: Int?, reviews: [EpisodeSocial.Comment], reviewTotal: Int?) {
         self.rating = rating; self.ratingCount = ratingCount; self.heatText = heatText
@@ -78,50 +82,36 @@ public struct SeriesReviews: Sendable, Equatable {
 }
 
 public enum EpisodeSocialService {
-    /// Score, rating count, heat, the first reviews and the cast from the website's series page
-    /// (shared one-minute cache with `load` and `SeriesService`); the collect count and filing number
-    /// from the App series detail (nil and "" when it did not answer).
+    /// Score, rating count, review count and the first reviews from the App comment list (required);
+    /// heat from the App's book_pack_fields read, the collect count, filing number and cast from the
+    /// App series detail (left empty when either did not answer).
     public static func reviews(seriesId: String, http: HTTPClient = .shared) async throws -> SeriesReviews {
         guard seriesId.matchesDigits(min: 6, max: 30) else { throw HongguoError(.input, "剧集编号无效") }
         async let detail = try? OfficialSeriesDetail.load(seriesId, http: http)
-        let page = try await SitePages.seriesPage(seriesId, http: http)
-        return reviews(from: page, detail: await detail)
+        async let stats = try? OfficialSeriesStats.load(seriesId, http: http)
+        let list = try await OfficialSeriesReviews.load(seriesId, http: http)
+        return reviews(from: list, detail: await detail, stats: await stats)
     }
 
-    public static func parseReviews(_ html: String, seriesId: String) throws -> SeriesReviews {
-        reviews(from: try SitePages.loaderData(html, seriesId: seriesId), detail: nil)
+    /// The next page of written reviews after `cursor` (`SeriesReviews.nextCursor`).
+    public static func moreReviews(seriesId: String, cursor: String, count: Int = 10, http: HTTPClient = .shared) async throws -> CommentPage {
+        guard seriesId.matchesDigits(min: 6, max: 30), !cursor.isEmpty else { throw HongguoError(.input, "剧评翻页参数无效") }
+        return try await OfficialSeriesReviews.load(seriesId, cursor: cursor, count: count, http: http).page
     }
 
-    static func reviews(from data: JSONValue, detail: OfficialSeriesDetail?) -> SeriesReviews {
-        let social = data["seriesSocialInfo"]
-        let score = social["rating"].number ?? social["rating"].string.flatMap(Double.init)
+    static func reviews(from list: OfficialSeriesReviews, detail: OfficialSeriesDetail?, stats: OfficialSeriesStats?) -> SeriesReviews {
         var result = SeriesReviews(
-            rating: score.flatMap { $0 > 0 && $0 <= 10 ? $0 : nil },
-            ratingCount: integer(social["rating_count"]),
-            heatText: social["hot_score_data"]["text"].string ?? "",
-            favoriteCount: detail?.favoriteCount,
-            reviews: comments(social["reviews"]["reviews"]),
-            reviewTotal: integer(social["reviews"]["total_count"]))
+            rating: list.rating,
+            ratingCount: list.ratingCount,
+            heatText: stats?.heatText ?? "",
+            favoriteCount: detail?.favoriteCount ?? stats?.favoriteCount,
+            reviews: list.page.comments,
+            reviewTotal: list.page.total)
         result.recordNumber = detail?.recordNumber ?? ""
-        result.cast = cast(data["seriesDetail"]["celebrities"])
+        result.cast = detail?.cast ?? []
+        result.nextCursor = list.page.cursor
+        result.hasMoreReviews = list.page.hasMore
         return result
-    }
-
-    static func comments(_ list: JSONValue) -> [EpisodeSocial.Comment] {
-        var seen = Set<String>()
-        var comments: [EpisodeSocial.Comment] = []
-        for review in list.array ?? [] {
-            guard let raw = review["content"].string, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-            let author = String((review["user_name"].string ?? "").prefix(200))
-            let created = date(review["create_time"])
-            let content = String(raw.prefix(20000))
-            let id = DownloadNaming.sha256Prefix("\(author)\u{0}\(created?.timeIntervalSince1970 ?? 0)\u{0}\(content)", 32)
-            guard seen.insert(id).inserted else { continue }
-            comments.append(.init(id: id, author: author, avatar: secure(review["user_avatar"].string ?? ""), content: content,
-                                  createdAt: created, likes: integer(review["digg_count"]) ?? 0,
-                                  rating: integer(review["rating"]).flatMap { (1...10).contains($0) ? $0 : nil }))
-        }
-        return comments
     }
 
     public struct CommentPage: Sendable, Equatable {
@@ -136,10 +126,10 @@ public enum EpisodeSocialService {
 
     private static let cache = TTLCache<EpisodeSocial>(limit: 64)
 
-    /// One episode's social panel: series facts, collect count and the episode's like count from the
-    /// App series detail, tags, cast and first-shown date from the website's series page, and the
-    /// first page of comments from the App comment API. Throws only when neither the App detail nor
-    /// the comments answered.
+    /// One episode's social panel: series facts, collect count, cast, tags and the episode's like
+    /// count from the App series detail, the first-shown date from the App's book_pack_fields read,
+    /// and the first page of comments from the App comment API. Throws only when neither the App
+    /// detail nor the comments answered.
     public static func load(seriesId: String, vid: String, http: HTTPClient = .shared) async throws -> EpisodeSocial {
         guard seriesId.matchesDigits(min: 6, max: 30), vid.matchesDigits(min: 6, max: 30) else {
             throw HongguoError(.input, "剧集编号无效")
@@ -148,31 +138,31 @@ public enum EpisodeSocialService {
         if let cached = await cache.get(key) { return cached }
 
         async let detailTask = try? OfficialSeriesDetail.load(seriesId, http: http)
-        async let seriesTask = try? SitePages.seriesPage(seriesId, http: http)
+        async let statsTask = try? OfficialSeriesStats.load(seriesId, http: http)
         async let commentsTask = try? commentsPage(seriesId: seriesId, vid: vid, cursor: "", count: 20, http: http)
         let detail = await detailTask
-        let series = await seriesTask
+        let stats = await statsTask
         let appComments = await commentsTask
         guard detail != nil || appComments != nil else {
             throw HongguoError(.unavailable, "剧集信息和评论暂时取不到，请稍后重试")
         }
-        let result = social(seriesId: seriesId, vid: vid, detail: detail, series: series ?? .null, comments: appComments)
+        let result = social(seriesId: seriesId, vid: vid, detail: detail, stats: stats, comments: appComments)
         await cache.set(key, result, ttl: 60)
         return result
     }
 
-    static func social(seriesId: String, vid: String, detail: OfficialSeriesDetail?, series: JSONValue, comments page: CommentPage?) -> EpisodeSocial {
-        let web = series["seriesDetail"]
-        return EpisodeSocial(
+    static func social(seriesId: String, vid: String, detail: OfficialSeriesDetail?, stats: OfficialSeriesStats?,
+                       comments page: CommentPage?) -> EpisodeSocial {
+        EpisodeSocial(
             seriesId: seriesId,
             vid: vid,
             title: detail?.title ?? "",
             cover: secure(detail?.cover ?? ""),
             intro: detail?.intro ?? "",
             episodeCount: detail?.episodeCount ?? 0,
-            tags: (web["tags"].array ?? []).compactMap { $0.string ?? $0["name"].string },
-            cast: cast(web["celebrities"]),
-            firstShown: date(web["first_visible_time"]),
+            tags: detail?.tags ?? [],
+            cast: detail?.cast ?? [],
+            firstShown: stats?.publishedAt,
             favoriteCount: detail?.favoriteCount,
             comments: page?.comments ?? [],
             commentTotal: page?.total,
@@ -194,35 +184,19 @@ public enum EpisodeSocialService {
         guard seriesId.matchesDigits(min: 6, max: 30), vid.matchesDigits(min: 6, max: 30) else {
             throw HongguoError(.input, "剧集编号无效")
         }
-        let stampMs = Int64(Date().timeIntervalSince1970 * 1000)
-        let stamp = stampMs / 1000
-        let device = try await PersistentAppDevice.dataIdentity(transport: AppTransport(http: http)).identity
-        let rawQuery = DanmakuSigner.buildQuery(stampMs: stampMs, deviceId: device.deviceId, installId: device.iid)
-        guard let url = URL(string: "https://api5-normal-sinfonlineb.fqnovel.com/novel/commentapi/comment/list/\(vid)/v1/?\(rawQuery)") else {
-            throw HongguoError(.input, "评论请求地址无效")
-        }
-        let signHeaders = try DanmakuSigner.headers(rawQuery: rawQuery, stamp: stamp, nonce: AppCrypto.randomBytes(DanmakuSigner.nonceBytes))
-        var options = HTTPClient.Options()
-        options.timeout = 8
-        let headers: [(String, String)] = [
-            ("User-Agent", DanmakuService.userAgent), ("Accept", "application/json"),
-            ("X-XS-From-Web", "0"), ("Sdk-Version", "2"),
-            ("Content-Type", "application/json; charset=utf-8"),
-            ("Comment-Source", "4"), ("Server-Channel", "18"),
-        ] + signHeaders + PersistentAppDevice.authHeaders()
-        for (k, v) in headers { options.headers[k] = v }
-        let bodyObj: [String: Any] = [
+        let payload = try await AppCommentClient.post("/novel/commentapi/comment/list/\(vid)/v1/", body: [
             "comment_source": 4, "server_channel": 18, "group_id": vid, "group_type": 30,
             "comment_type": 4, "sort": 1, "count": count, "cursor": cursor,
             "aid": 8662, "compliance_status": 0,
             "business_param": ["book_id": seriesId],
-        ]
-        let rawBody = try JSONSerialization.data(withJSONObject: bodyObj, options: [.sortedKeys])
-        let resp = try await http.post(url, json: rawBody, options: options)
-        guard let payload = try? JSONValue.parse(resp.data), Int(payload["code"].number ?? -1) == 0 else {
-            throw HongguoError(.upstream, "评论接口暂时不可用")
-        }
-        let data = payload["data"]
+        ], headers: [("Comment-Source", "4"), ("Server-Channel", "18")] + PersistentAppDevice.authHeaders(), http: http)
+        guard Int(payload["code"].number ?? -1) == 0 else { throw HongguoError(.upstream, "评论接口暂时不可用") }
+        return commentPage(from: payload["data"])
+    }
+
+    /// One page of the App comment list (`data`): episode comments, or series reviews with their
+    /// score out of 10 (`comment.expand.score`).
+    static func commentPage(from data: JSONValue) -> CommentPage {
         var seen = Set<String>()
         var parsed: [EpisodeSocial.Comment] = []
         for row in data["data_list"].array ?? [] {
@@ -239,24 +213,21 @@ public enum EpisodeSocialService {
             let content = String(rawText.prefix(20000))
             let cid = c["comment_id"].idString ?? DownloadNaming.sha256Prefix("\(author)\u{0}\(created?.timeIntervalSince1970 ?? 0)\u{0}\(content)", 32)
             guard seen.insert(cid).inserted else { continue }
+            let score = integer(c["expand"]["score"]) ?? integer(common["expand"]["score"])
             parsed.append(.init(
                 id: cid,
                 author: author,
                 avatar: secure(rawAvatar),
                 content: content,
                 createdAt: created,
-                likes: integer(c["stat"]["digg_count"]) ?? 0
+                likes: integer(c["stat"]["digg_count"]) ?? 0,
+                rating: score.flatMap { (1...10).contains($0) ? $0 : nil }
             ))
         }
         let listInfo = data["common_list_info"]
-        let nextCursor = listInfo["cursor"].string ?? ""
+        let nextCursor = listInfo["cursor"].string ?? listInfo["cursor"].idString ?? ""
         let hasMore = listInfo["has_more"].bool == true && !nextCursor.isEmpty && !parsed.isEmpty
-        return CommentPage(
-            comments: parsed,
-            total: integer(listInfo["total"]),
-            cursor: nextCursor,
-            hasMore: hasMore
-        )
+        return CommentPage(comments: parsed, total: integer(listInfo["total"]), cursor: nextCursor, hasMore: hasMore)
     }
 
     /// Counts and times arrive as numbers or as digit strings.
@@ -271,16 +242,20 @@ public enum EpisodeSocialService {
         return Date(timeIntervalSince1970: TimeInterval(raw > 1_000_000_000_000 ? raw / 1000 : raw))
     }
 
-    /// The page gives some images as http; the app only loads https.
+    /// Some images arrive as http; the app only loads https.
     static func secure(_ url: String) -> String {
         url.hasPrefix("http://") ? "https://" + url.dropFirst(7) : url
     }
 
-    /// The page's `celebrities` list.
+    /// A `celebrities` list: the role is `sub_title` (饰 林小满), else `role_name`.
     static func cast(_ list: JSONValue) -> [EpisodeSocial.CastMember] {
-        (list.array ?? []).compactMap { person -> EpisodeSocial.CastMember? in
-            guard let name = person["nickname"].string, !name.isEmpty else { return nil }
-            return .init(id: person["celebrity_id"].idString ?? name, name: name, role: person["sub_title"].string ?? "",
+        var seen = Set<String>()
+        return (list.array ?? []).compactMap { person -> EpisodeSocial.CastMember? in
+            guard let name = person["nickname"].string?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { return nil }
+            let id = person["celebrity_id"].idString ?? name
+            guard seen.insert(id).inserted else { return nil }
+            let subtitle = (person["sub_title"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return .init(id: id, name: name, role: subtitle.isEmpty ? (person["role_name"].string ?? "") : subtitle,
                          avatar: secure(person["avatar"].string ?? ""))
         }
     }

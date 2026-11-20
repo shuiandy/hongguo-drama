@@ -3,8 +3,9 @@ import Foundation
 /// A series as the official app reads it with GET `/reading/bookapi/video_tab/multi_video_detail/v1/`
 /// (request class `SSVideoDetailRequest` in the 7.4.3 binary: `video_series_id`, `vs_id_type`,
 /// `source`): the whole episode list with each episode's like count, plus the series title, cover,
-/// synopsis, episode label, completion, collect and play counts and filing number. Signed out, with
-/// the persistent device and its token. The only source of the episode list and these facts.
+/// synopsis, episode label, completion, collect and play counts, filing number, cast and tags.
+/// Signed out, with the persistent device and its token. The only source of the episode list and
+/// these facts.
 struct OfficialSeriesDetail: Sendable, Equatable {
     struct Entry: Sendable, Equatable {
         var vid: String
@@ -30,6 +31,10 @@ struct OfficialSeriesDetail: Sendable, Equatable {
     var playCount: Int?
     /// `record_info.record_number`, "" when there is none.
     var recordNumber: String
+    /// `celebrities`, empty for series without a cast list (most comic dramas).
+    var cast: [EpisodeSocial.CastMember] = []
+    /// `category_schema` names, e.g. 都市, 逆袭.
+    var tags: [String] = []
     var episodes: [Entry]
 
     static let path = "/reading/bookapi/video_tab/multi_video_detail/v1/"
@@ -38,20 +43,22 @@ struct OfficialSeriesDetail: Sendable, Equatable {
     static func load(_ seriesId: String, force: Bool = false, http: HTTPClient = .shared) async throws -> OfficialSeriesDetail {
         guard seriesId.matchesDigits(min: 6, max: 30) else { throw HongguoError(.input, "无效的剧集编号") }
         if !force, let cached = await cache.get(seriesId) { return cached }
+        let detail = try parse(try await request(seriesId, http: http), seriesId: seriesId)
+        await cache.set(seriesId, detail, ttl: 60)
+        return detail
+    }
+
+    static func request(_ seriesId: String, http: HTTPClient = .shared) async throws -> JSONValue {
         let transport = AppTransport(http: http)
         let (identity, dToken) = try await PersistentAppDevice.dataIdentity(transport: transport)
         let signed = try AppLegacySigner.shared.videoTab(
             path: path, values: [("video_series_id", seriesId), ("vs_id_type", "0"), ("source", "0")],
             identity: identity, dToken: dToken, nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
-        let json: JSONValue
         do {
-            json = try await transport.requestJSON(signed.url, headers: signed.headers, deadline: Date().addingTimeInterval(8))
+            return try await transport.requestJSON(signed.url, headers: signed.headers, deadline: Date().addingTimeInterval(8))
         } catch let error as AppSourceError {
             throw error.hongguoError
         }
-        let detail = try parse(json, seriesId: seriesId)
-        await cache.set(seriesId, detail, ttl: 60)
-        return detail
     }
 
     static func parse(_ json: JSONValue, seriesId: String) throws -> OfficialSeriesDetail {
@@ -90,7 +97,23 @@ struct OfficialSeriesDetail: Sendable, Equatable {
             favoriteCount: count(data["followed_cnt"]),
             playCount: count(data["series_play_cnt"]),
             recordNumber: record.count <= 80 ? record : "",
+            cast: EpisodeSocialService.cast(data["celebrities"]),
+            tags: tags(data["category_schema"]),
             episodes: entries)
+    }
+
+    /// `category_schema` arrives as a JSON array, or as a string holding one, of category entries
+    /// (or bare names).
+    static func tags(_ value: JSONValue) -> [String] {
+        var list = value
+        if let text = value.string, let parsed = try? JSONValue.parse(Data(text.utf8)) { list = parsed }
+        var seen = Set<String>()
+        return (list.array ?? []).compactMap { item -> String? in
+            let raw = item.string ?? item["name"].string ?? item["category_name"].string ?? ""
+            let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, name.count <= 20, seen.insert(name).inserted else { return nil }
+            return name
+        }
     }
 
     func likes(vid: String) -> Int? { episodes.first { $0.vid == vid }?.likes }

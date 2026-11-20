@@ -4,7 +4,9 @@ import Foundation
 /// One source for each, no fallbacks: play URLs come only from the official iOS client's play
 /// request (`AuthenticatedPlaybackSource`); the episode list and the series facts only from the
 /// official app's series detail read (`OfficialSeriesDetail`, GET video_tab/multi_video_detail);
-/// the score and written reviews only from the public website's series page.
+/// the score and written reviews only from the App comment list (`OfficialSeriesReviews`); the like
+/// count and first-shown date only from the App's book_pack_fields read (`OfficialSeriesStats`).
+/// No website pages: the website is only the target of share links and "open the source page".
 public final class SeriesService: Sendable {
     private let http: HTTPClient
     private let episodeCache = TTLCache<SeriesEpisodes>(limit: 64)
@@ -83,33 +85,29 @@ public final class SeriesService: Sendable {
     public func publicDetails(seriesId: String) async throws -> PublicDetails {
         guard seriesId.matchesDigits(min: 6, max: 30) else { throw HongguoError(.input, "仅支持有效的红果剧集编号") }
         if let cached = await detailsCache.get(seriesId) { return cached }
-        // Synopsis, cover, episode label, completion and collect count from the App detail; score,
-        // reviews, like count and first-shown date from the website's series page, when it answers.
-        async let page = try? SitePages.seriesPage(seriesId, http: http)
+        // Synopsis, cover, episode label, completion and collect count from the App detail (required);
+        // score and reviews from the App comment list, like count and first-shown date from the App's
+        // book_pack_fields read, each left empty when it did not answer.
+        async let stats = try? OfficialSeriesStats.load(seriesId, http: http)
+        async let reviews = try? OfficialSeriesReviews.load(seriesId, http: http)
         let detail = try await OfficialSeriesDetail.load(seriesId, http: http)
-        let details = Self.publicDetails(detail: detail, page: await page)
+        let details = Self.publicDetails(detail: detail, stats: await stats, reviews: await reviews)
         await detailsCache.set(seriesId, details, ttl: 30)
         return details
     }
 
-    static func publicDetails(detail: OfficialSeriesDetail, page: JSONValue?, reviewLimit: Int = 50) -> PublicDetails {
-        let social = page?["seriesSocialInfo"] ?? .null
-        func count(_ value: JSONValue) -> Int? { (value.number ?? value.string.flatMap(Double.init)).flatMap { $0 >= 0 ? Int($0) : nil } }
-        let reviews = (social["reviews"]["reviews"].array ?? []).compactMap { item -> Review? in
-            guard let content = item["content"].string?.trimmingCharacters(in: .whitespacesAndNewlines), !content.isEmpty else { return nil }
-            let created = item["create_time"].number.map { Date(timeIntervalSince1970: $0 < 1e12 ? $0 : $0 / 1000) }
-            return Review(author: String((item["user_name"].string ?? "").prefix(200)),
-                          avatar: HTMLData.safeCover(item["user_avatar"].string),
-                          content: String(content.prefix(20000)), createdAt: created,
-                          likes: count(item["digg_count"]), rating: item["rating"].number)
+    static func publicDetails(detail: OfficialSeriesDetail, stats: OfficialSeriesStats?, reviews: OfficialSeriesReviews?) -> PublicDetails {
+        let list = (reviews?.page.comments ?? []).map {
+            Review(author: $0.author, avatar: $0.avatar, content: $0.content, createdAt: $0.createdAt,
+                   likes: $0.likes, rating: $0.rating.map(Double.init))
         }
-        let published = page.flatMap { CatalogService.metadata($0["seriesDetail"]).published }
+        // A first-shown time in the future is a scheduled release, not a publish date.
+        let published = stats?.publishedAt.flatMap { $0 <= Date() ? $0 : nil }
         return PublicDetails(seriesId: detail.seriesId, description: detail.intro, cover: detail.cover,
                              episodeLabel: detail.episodeLabel, completionStatus: detail.completion,
-                             rating: social["rating"].number ?? social["rating"].string.flatMap(Double.init), ratingCount: count(social["rating_count"]),
-                             likeCount: count(social["series_like_count"]), favoriteCount: detail.favoriteCount,
-                             reviewTotal: count(social["reviews"]["total_count"]), reviews: Array(reviews.prefix(reviewLimit)),
-                             publishedAt: published)
+                             rating: reviews?.rating, ratingCount: reviews?.ratingCount,
+                             likeCount: stats?.likeCount, favoriteCount: detail.favoriteCount ?? stats?.favoriteCount,
+                             reviewTotal: reviews?.page.total, reviews: list, publishedAt: published)
     }
 
     // MARK: Share links
