@@ -423,6 +423,7 @@ final class AppModel {
         cloudSyncing = true
         defer { cloudSyncing = false }
         await AccountSync.shared.pull()
+        if AccountState.shared.avatar.isEmpty { await AccountState.shared.loadAvatar() }
         guard manual || settings.cloudHistorySync else { lastCloudSync = Date(); return }
         do {
             let items = try await AccountService.shared.history(refresh: true)

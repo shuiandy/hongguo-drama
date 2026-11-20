@@ -67,7 +67,7 @@ struct HistoryView: View {
                     .padding(.top, 8)
                 }
                 .background(alignment: .top) {
-                    if let cover = model.history.first?.cover, !cover.isEmpty {
+                    if !embedded, let cover = model.history.first?.cover, !cover.isEmpty {
                         AmbientBackdrop(url: cover, opacity: 0.4)
                             .frame(height: 420)
                             .mask(LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom))

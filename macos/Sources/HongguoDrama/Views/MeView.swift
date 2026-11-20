@@ -63,6 +63,16 @@ struct MeView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
+        // One light for the whole page, header and tabs alike.
+        .background(alignment: .top) {
+            if let cover = model.history.first?.cover, !cover.isEmpty {
+                AmbientBackdrop(url: cover, opacity: 0.4)
+                    .frame(height: 520)
+                    .mask(LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom))
+                    .extendsUnderChrome()
+                    .ignoresSafeArea()
+            }
+        }
         .navigationTitle("我的")
         .transparentToolbar()
         .task { await account.restore() }

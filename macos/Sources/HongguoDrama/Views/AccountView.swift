@@ -9,10 +9,23 @@ final class AccountState {
     static let shared = AccountState()
 
     var profile: AccountProfile? {
-        didSet { if profile?.id != oldValue?.id { avatar = ""; if profile != nil { Task { await loadAvatar() } } } }
+        didSet {
+            guard profile?.id != oldValue?.id else { return }
+            avatar = ""
+            guard let id = profile?.id else { return }
+            // Last known nickname and picture at once; the App profile refreshes them.
+            if let cached = UserDefaults.standard.stringArray(forKey: Self.cacheKey(id)), cached.count == 2 {
+                avatar = cached[1]
+                if !cached[0].isEmpty, profile?.nickname != cached[0] { profile?.nickname = cached[0] }
+            }
+            Task { await loadAvatar() }
+        }
     }
-    /// The account's avatar address from the App profile, empty until loaded. Memory only.
+    /// The account's avatar address from the App profile ("" until known), cached per account.
     var avatar = ""
+    @ObservationIgnored private var loadingAvatar = false
+
+    private static func cacheKey(_ id: String) -> String { "account.display.\(id)" }
     var restoring = true
     var message = ""
     private var restoreStarted = false
@@ -29,9 +42,18 @@ final class AccountState {
 
     /// Reads the App profile for the avatar (read only); a failure keeps the initial-letter circle.
     func loadAvatar() async {
-        let id = profile?.id
-        guard let id, let details = try? await AccountDataAccess.profile(), profile?.id == id else { return }
-        avatar = details.avatar
+        guard let id = profile?.id, !loadingAvatar else { return }
+        loadingAvatar = true
+        defer { loadingAvatar = false }
+        // Right after launch the first signed request can fail while the device registers: retry a little.
+        var found: AccountDataAccess.Profile?
+        for attempt in 0..<3 {
+            if attempt > 0 { try? await Task.sleep(for: .seconds(Double(attempt) * 3)) }
+            if let details = try? await AccountDataAccess.profile() { found = details; break }
+        }
+        guard let details = found, profile?.id == id else { return }
+        if !details.avatar.isEmpty { avatar = details.avatar }
+        UserDefaults.standard.set([details.name, details.avatar], forKey: Self.cacheKey(id))
         // The saved nickname is often the placeholder "用户 <number>"; the App profile has the real one.
         let name = details.name.trimmingCharacters(in: .whitespacesAndNewlines)
         if !name.isEmpty, name != profile?.nickname { profile = AccountProfile(id: id, nickname: name) }
