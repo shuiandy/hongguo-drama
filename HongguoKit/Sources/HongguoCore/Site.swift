@@ -1,7 +1,7 @@
 import Foundation
 
-/// The official website: the series page (episode list, series facts, score, reviews, cast), an
-/// episode's player page (its like count), share links and "open the source page" links.
+/// The official website: the series page (score, reviews, cast, tags), share links and "open the
+/// source page" links.
 public enum Site {
     public static let origin = "https://hongguoduanju.com"
     public static let referer = origin + "/"
@@ -11,18 +11,13 @@ public enum Site {
     }
 }
 
-/// The website pages' router data, cached for a minute so the detail view, the player overlay and
-/// the reviews share one request: the series page (`/detail?series_id=`) and an episode's player
-/// page (`/player/<series>/<vid>`, which redirects for episodes the website does not show).
+/// The series page's router data (`/detail?series_id=`), cached for a minute so the detail view,
+/// the player overlay and the reviews share one request.
 enum SitePages {
     private static let cache = TTLCache<JSONValue>(limit: 64)
 
     static func seriesPage(_ seriesId: String, http: HTTPClient = .shared) async throws -> JSONValue {
         try await load(key: "s:\(seriesId)", url: Site.detailURL(seriesId), seriesId: seriesId, http: http)
-    }
-
-    static func playerPage(_ seriesId: String, vid: String, http: HTTPClient = .shared) async throws -> JSONValue {
-        try await load(key: "p:\(seriesId):\(vid)", url: Site.playerURL(seriesId, vid), seriesId: seriesId, http: http)
     }
 
     private static func load(key: String, url: URL, seriesId: String, http: HTTPClient) async throws -> JSONValue {
@@ -33,8 +28,8 @@ enum SitePages {
         options.timeout = 8
         options.maxRedirects = 0
         let response = try await http.get(url, options: options)
-        // With redirects off a 3xx comes back as a response: the website hides this episode.
-        if (300...399).contains(response.status) { throw HongguoError(.unavailable, "官网未公开这一集") }
+        // With redirects off a 3xx comes back as a response: the website does not show this series.
+        if (300...399).contains(response.status) { throw HongguoError(.unavailable, "官网未公开这部剧") }
         let data = try loaderData(response.text, seriesId: seriesId)
         await cache.set(key, data, ttl: 60)
         return data

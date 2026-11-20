@@ -567,6 +567,18 @@ extension AppLegacySigner {
     /// `AccountDataAccess.extraPaths`: the same device fields, version and headers.
     func accountRead(path: String, values: [(String, String)], identity: PlaybackIdentity, dToken: String = "", nowMillis: Int64) throws -> Signed {
         guard AccountDataAccess.extraPaths.contains(path) else { throw HongguoError(.input, "不支持的账号接口") }
+        return try signedRead(host: Self.accountHost, path: path, values: values, identity: identity, dToken: dToken, nowMillis: nowMillis)
+    }
+
+    /// The signed-out series detail read (`OfficialSeriesDetail`), on the host the probe verified.
+    func videoTab(path: String, values: [(String, String)], identity: PlaybackIdentity, dToken: String, nowMillis: Int64) throws -> Signed {
+        guard path == OfficialSeriesDetail.path else { throw HongguoError(.input, "不支持的剧集接口") }
+        return try signedRead(host: "https://api5-normal-sinfonlineb.fqnovel.com", path: path, values: values,
+                              identity: identity, dToken: dToken, nowMillis: nowMillis)
+    }
+
+    /// A GET with the legacy query signature, the registered device and its token.
+    private func signedRead(host: String, path: String, values: [(String, String)], identity: PlaybackIdentity, dToken: String, nowMillis: Int64) throws -> Signed {
         let device = Self.merged(Self.versioned("72232", "7.2.2.32"),
                                  [("iid", identity.iid), ("device_id", identity.deviceId), ("cdid", identity.cdid)])
         let ts = UInt32(nowMillis / 1000)
@@ -574,7 +586,7 @@ extension AppLegacySigner {
         for n in 0..<128 {
             let ticket = String(nowMillis + Int64(n))
             let query = AppCrypto.encodeQuery(fields + [("ts", String(ts)), ("_rticket", ticket)])
-            let url = "\(Self.accountHost)\(path)?\(query)"
+            let url = "\(host)\(path)?\(query)"
             guard Self.branch(querySm3: AppCrypto.sm3(Array(query.utf8)), bodyMd5: [UInt8](repeating: 0, count: 16), ts: ts) == 0 else { continue }
             let headers: [(String, String)] = [
                 ("User-Agent", Self.searchUA), ("Accept", "application/json; charset=utf-8,application/x-protobuf"),

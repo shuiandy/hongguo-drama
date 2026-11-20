@@ -1,9 +1,10 @@
 import XCTest
 @testable import HongguoCore
 
-/// The fixture has the shape of the public series page's router data (read for the episode
-/// list, the series facts, the score, written reviews and cast), cut down to the fields the parser reads. Every id,
-/// name and text in it is made up.
+/// The fixtures have the shape of the public series page's router data (read for the score,
+/// written reviews, cast and tags) and of the official app's series detail read (series facts,
+/// collect count, episode likes), cut down to the fields the parsers read. Every id, name and
+/// text in them is made up.
 final class EpisodeSocialTests: XCTestCase {
     static let detailPage = """
     <html><script>window._ROUTER_DATA = {"loaderData":{"detail_page":{"isSuccess":true,
@@ -24,9 +25,9 @@ final class EpisodeSocialTests: XCTestCase {
         XCTAssertEqual(reviews.rating, 9.2)
         XCTAssertEqual(reviews.ratingCount, 19248)
         XCTAssertEqual(reviews.heatText, "3734万热度")
-        XCTAssertEqual(reviews.favoriteCount, 3_286_000)
+        XCTAssertNil(reviews.favoriteCount, "the collect count comes only from the App detail")
         XCTAssertEqual(reviews.reviewTotal, 2137)
-        XCTAssertEqual(reviews.recordNumber, "示例备案号")
+        XCTAssertEqual(reviews.recordNumber, "", "the filing number comes only from the App detail")
         XCTAssertEqual(reviews.reviews.map(\.content), ["很好看", "一般"], "duplicates and blank reviews are dropped")
         XCTAssertEqual(reviews.reviews.map(\.rating), [10, nil], "a score outside 1...10 is treated as no score")
         XCTAssertEqual(reviews.reviews[0].likes, 246)
@@ -42,29 +43,38 @@ final class EpisodeSocialTests: XCTestCase {
         XCTAssertEqual(reviews.cast.first?.avatar, "https://example.com/p.jpg")
     }
 
-    static let playerPage = """
-    <html><script>window._ROUTER_DATA = {"loaderData":{"player_(series_id)/(vid)/page":{"isSuccess":true,
-      "seriesDetail":{"series_id":"7000000000000000001","series_name":"示例剧"},
-      "episodeSocialInfo":{"episode_like_count":"52100","reviews":{"total_count":"9","reviews":[]}}}}};</script></html>
-    """
+    static let officialDetail = #"""
+    {"code":0,"data":{"video_detail_data":{"7000000000000000001":{"video_data":{
+      "series_id_str":"7000000000000000001","series_title":"示例剧","series_intro":"示例简介","episode_cnt":2,
+      "followed_cnt":24009,"record_info":{"record_number":"App备案号"},
+      "video_list":[{"vid":"7000000000000000011","vid_index":1,"digged_count":4705},
+                    {"vid":"7000000000000000012","vid_index":2}]}}}}}
+    """#
 
-    func testEpisodePanelTakesLikesFromThePlayerPageAndCollectsFromTheSeriesPage() throws {
+    func testEpisodePanelTakesFactsAndLikesFromTheAppDetail() throws {
         let series = try SitePages.loaderData(Self.detailPage, seriesId: "7000000000000000001")
-        let player = try SitePages.loaderData(Self.playerPage, seriesId: "7000000000000000001")
+        let detail = try OfficialSeriesDetail.parse(try JSONValue.parse(Self.officialDetail), seriesId: "7000000000000000001")
         let page = EpisodeSocialService.CommentPage(comments: [], total: 31, cursor: "20", hasMore: true)
         let social = EpisodeSocialService.social(seriesId: "7000000000000000001", vid: "7000000000000000011",
-                                                 series: series, player: player, comments: page)
+                                                 detail: detail, series: series, comments: page)
         XCTAssertEqual(social.title, "示例剧")
-        XCTAssertEqual(social.episodeLikes, 52_100)
-        XCTAssertEqual(social.favoriteCount, 3_286_000)
+        XCTAssertEqual(social.intro, "示例简介")
+        XCTAssertEqual(social.episodeCount, 2)
+        XCTAssertEqual(social.episodeLikes, 4_705)
+        XCTAssertEqual(social.favoriteCount, 24_009)
         XCTAssertEqual(social.commentTotal, 31, "the comment count is the App comment API's")
-        XCTAssertEqual(social.cast.map(\.name), ["示例演员"])
+        XCTAssertEqual(social.cast.map(\.name), ["示例演员"], "the cast is still the series page's")
         XCTAssertTrue(social.hasMoreComments)
 
-        let hidden = EpisodeSocialService.social(seriesId: "7000000000000000001", vid: "7000000000000000011",
-                                                 series: series, player: nil, comments: nil)
-        XCTAssertNil(hidden.episodeLikes, "an episode the website hides has no like count")
-        XCTAssertEqual(hidden.favoriteCount, 3_286_000)
+        let second = EpisodeSocialService.social(seriesId: "7000000000000000001", vid: "7000000000000000012",
+                                                 detail: detail, series: .null, comments: nil)
+        XCTAssertNil(second.episodeLikes, "an episode the detail gives no count for has none")
+        XCTAssertEqual(second.favoriteCount, 24_009)
+
+        let reviews = EpisodeSocialService.reviews(from: series, detail: detail)
+        XCTAssertEqual(reviews.favoriteCount, 24_009)
+        XCTAssertEqual(reviews.recordNumber, "App备案号")
+        XCTAssertEqual(reviews.rating, 9.2)
     }
 
     func testRejectsAnotherSeries() {

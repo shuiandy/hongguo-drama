@@ -1,8 +1,9 @@
 import Foundation
 
-/// One episode and its series as the App reports them: the episode's comments (author, date,
-/// likes, paged), its like count, and the series' facts from the App detail request. Read-only.
-/// `cast` is always empty here; the cast comes with `SeriesReviews` (the series page).
+/// One episode and its series: the episode's comments (author, date, likes, paged) from the App
+/// comment API, its like count and the series' facts and collect count from the App series detail
+/// (`OfficialSeriesDetail`), and tags, cast and first-shown date from the website's series page.
+/// Read-only.
 public struct EpisodeSocial: Sendable, Equatable {
     public struct Comment: Sendable, Equatable, Identifiable {
         public var id: String
@@ -55,9 +56,9 @@ public struct EpisodeSocial: Sendable, Equatable {
     }
 }
 
-/// What the public series page (`/detail?series_id=`) says: the score, how many rated it, the
-/// heat text, the first few reviews with their scores and the cast. Read-only, anonymous. The
-/// only data still read from the website (score and written reviews have no App equivalent).
+/// The score, how many rated it, the heat text, the first few reviews with their scores and the
+/// cast from the public series page (`/detail?series_id=`), plus the collect count and filing
+/// number from the App series detail. Read-only, signed out.
 public struct SeriesReviews: Sendable, Equatable {
     public var rating: Double?
     public var ratingCount: Int?
@@ -77,29 +78,31 @@ public struct SeriesReviews: Sendable, Equatable {
 }
 
 public enum EpisodeSocialService {
-    /// Score, rating count, heat, collect count, filing number, the first reviews and the cast,
-    /// all from the website's series page (shared one-minute cache with `load` and `SeriesService`).
+    /// Score, rating count, heat, the first reviews and the cast from the website's series page
+    /// (shared one-minute cache with `load` and `SeriesService`); the collect count and filing number
+    /// from the App series detail (nil and "" when it did not answer).
     public static func reviews(seriesId: String, http: HTTPClient = .shared) async throws -> SeriesReviews {
         guard seriesId.matchesDigits(min: 6, max: 30) else { throw HongguoError(.input, "剧集编号无效") }
-        return reviews(from: try await SitePages.seriesPage(seriesId, http: http))
+        async let detail = try? OfficialSeriesDetail.load(seriesId, http: http)
+        let page = try await SitePages.seriesPage(seriesId, http: http)
+        return reviews(from: page, detail: await detail)
     }
 
     public static func parseReviews(_ html: String, seriesId: String) throws -> SeriesReviews {
-        reviews(from: try SitePages.loaderData(html, seriesId: seriesId))
+        reviews(from: try SitePages.loaderData(html, seriesId: seriesId), detail: nil)
     }
 
-    static func reviews(from data: JSONValue) -> SeriesReviews {
+    static func reviews(from data: JSONValue, detail: OfficialSeriesDetail?) -> SeriesReviews {
         let social = data["seriesSocialInfo"]
         let score = social["rating"].number ?? social["rating"].string.flatMap(Double.init)
         var result = SeriesReviews(
             rating: score.flatMap { $0 > 0 && $0 <= 10 ? $0 : nil },
             ratingCount: integer(social["rating_count"]),
             heatText: social["hot_score_data"]["text"].string ?? "",
-            favoriteCount: integer(social["series_favorite_count"]),
+            favoriteCount: detail?.favoriteCount,
             reviews: comments(social["reviews"]["reviews"]),
             reviewTotal: integer(social["reviews"]["total_count"]))
-        let record = (data["seriesDetail"]["record_number"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if record.count <= 80 { result.recordNumber = record }
+        result.recordNumber = detail?.recordNumber ?? ""
         result.cast = cast(data["seriesDetail"]["celebrities"])
         return result
     }
@@ -133,10 +136,10 @@ public enum EpisodeSocialService {
 
     private static let cache = TTLCache<EpisodeSocial>(limit: 64)
 
-    /// One episode's social panel: series facts and collect count from the website's series page,
-    /// the episode's like count from its player page (nil for episodes the website hides), and the
-    /// first page of comments from the App comment API. Throws only when neither the series page
-    /// nor the comments answered.
+    /// One episode's social panel: series facts, collect count and the episode's like count from the
+    /// App series detail, tags, cast and first-shown date from the website's series page, and the
+    /// first page of comments from the App comment API. Throws only when neither the App detail nor
+    /// the comments answered.
     public static func load(seriesId: String, vid: String, http: HTTPClient = .shared) async throws -> EpisodeSocial {
         guard seriesId.matchesDigits(min: 6, max: 30), vid.matchesDigits(min: 6, max: 30) else {
             throw HongguoError(.input, "剧集编号无效")
@@ -144,36 +147,36 @@ public enum EpisodeSocialService {
         let key = "\(seriesId):\(vid)"
         if let cached = await cache.get(key) { return cached }
 
+        async let detailTask = try? OfficialSeriesDetail.load(seriesId, http: http)
         async let seriesTask = try? SitePages.seriesPage(seriesId, http: http)
-        async let playerTask = try? SitePages.playerPage(seriesId, vid: vid, http: http)
         async let commentsTask = try? commentsPage(seriesId: seriesId, vid: vid, cursor: "", count: 20, http: http)
+        let detail = await detailTask
         let series = await seriesTask
-        let player = await playerTask
         let appComments = await commentsTask
-        guard series != nil || appComments != nil else {
+        guard detail != nil || appComments != nil else {
             throw HongguoError(.unavailable, "剧集信息和评论暂时取不到，请稍后重试")
         }
-        let result = social(seriesId: seriesId, vid: vid, series: series ?? .null, player: player, comments: appComments)
+        let result = social(seriesId: seriesId, vid: vid, detail: detail, series: series ?? .null, comments: appComments)
         await cache.set(key, result, ttl: 60)
         return result
     }
 
-    static func social(seriesId: String, vid: String, series: JSONValue, player: JSONValue?, comments page: CommentPage?) -> EpisodeSocial {
-        let detail = series["seriesDetail"]
+    static func social(seriesId: String, vid: String, detail: OfficialSeriesDetail?, series: JSONValue, comments page: CommentPage?) -> EpisodeSocial {
+        let web = series["seriesDetail"]
         return EpisodeSocial(
             seriesId: seriesId,
             vid: vid,
-            title: detail["series_name"].string ?? "",
-            cover: secure(HTMLData.safeCover(detail["series_cover"].string)),
-            intro: detail["series_intro"].string ?? "",
-            episodeCount: integer(detail["episode_cnt"]) ?? detail["vid_list"].array?.count ?? 0,
-            tags: (detail["tags"].array ?? []).compactMap { $0.string ?? $0["name"].string },
-            cast: cast(detail["celebrities"]),
-            firstShown: date(detail["first_visible_time"]),
-            favoriteCount: integer(series["seriesSocialInfo"]["series_favorite_count"]),
+            title: detail?.title ?? "",
+            cover: secure(detail?.cover ?? ""),
+            intro: detail?.intro ?? "",
+            episodeCount: detail?.episodeCount ?? 0,
+            tags: (web["tags"].array ?? []).compactMap { $0.string ?? $0["name"].string },
+            cast: cast(web["celebrities"]),
+            firstShown: date(web["first_visible_time"]),
+            favoriteCount: detail?.favoriteCount,
             comments: page?.comments ?? [],
             commentTotal: page?.total,
-            episodeLikes: player.flatMap { integer($0["episodeSocialInfo"]["episode_like_count"]) },
+            episodeLikes: detail?.likes(vid: vid),
             nextCursor: page?.cursor ?? "",
             hasMoreComments: page?.hasMore ?? false
         )

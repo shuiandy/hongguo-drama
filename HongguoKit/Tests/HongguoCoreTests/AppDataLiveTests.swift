@@ -36,7 +36,7 @@ final class AppDataLiveTests: XCTestCase {
         let series = try XCTUnwrap(ranking.items.first(where: { $0.episodeCount >= 10 }) ?? ranking.items.first)
         t = Date()
         let app = try await SeriesService().episodes(seriesId: series.seriesId, force: true)
-        report.append("SeriesService episodes (website): \(app.episodes.count) of \(series.episodeCount), \(ms(t)) ms")
+        report.append("SeriesService episodes (App detail): \(app.episodes.count) of \(series.episodeCount), \(ms(t)) ms")
         XCTAssertFalse(app.episodes.isEmpty)
 
         t = Date()
@@ -45,6 +45,11 @@ final class AppDataLiveTests: XCTestCase {
         XCTAssertFalse(details.description.isEmpty)
 
         let vid = try XCTUnwrap(app.episodes.first?.vid)
+        t = Date()
+        let social = try await EpisodeSocialService.load(seriesId: series.seriesId, vid: vid)
+        report.append("episode panel: likes \(social.episodeLikes.map(String.init) ?? "-"), favorites \(social.favoriteCount.map(String.init) ?? "-"), tags \(social.tags.count), cast \(social.cast.count), comments \(social.comments.count), \(ms(t)) ms")
+        XCTAssertNotNil(social.episodeLikes)
+        XCTAssertNotNil(social.favoriteCount)
         t = Date()
         let page = try await EpisodeSocialService.commentsPage(seriesId: series.seriesId, vid: vid, count: 20)
         report.append("App comments: \(page.comments.count) of \(page.total.map(String.init) ?? "?"), more \(page.hasMore), \(ms(t)) ms")

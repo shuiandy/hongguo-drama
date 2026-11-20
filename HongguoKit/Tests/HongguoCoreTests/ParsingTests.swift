@@ -18,43 +18,70 @@ final class ParsingTests: XCTestCase {
         XCTAssertThrowsError(try HTMLData.routerData("<html></html>"))
     }
 
-    func testEpisodeListFromPlayerPage() throws {
-        let html = page(["loaderData": ["player_(series_id)/page": [
-            "series_id": "7400000000000000001",
-            "seriesDetail": ["series_id": "7400000000000000001", "series_name": "测试剧", "series_cover": "https://p.example/c.jpg",
-                             "vid_list": ["7400000000000000011", "7400000000000000012", 7400000000000000013], "accessible_episode_cnt": 2],
-        ]]])
-        let result = try SeriesService.parseEpisodeList(html, seriesId: "7400000000000000001")
-        XCTAssertEqual(result.title, "测试剧")
-        XCTAssertEqual(result.source, .web)
-        XCTAssertEqual(result.episodes.map(\.index), [1, 2, 3])
-        XCTAssertEqual(result.episodes.last?.vid, "7400000000000000013")
-        // Every episode plays through the App source, whatever the website lets anonymous viewers see.
-        XCTAssertEqual(result.episodes.map(\.webAvailable), [nil, nil, nil])
-        XCTAssertNil(result.webAccessibleEpisodes)
+    /// The shape of GET video_tab/multi_video_detail as the official app gets it, cut down to the
+    /// fields the parser reads. Ids, names and numbers are made up.
+    static let officialDetail = #"""
+    {"code":0,"message":"SUCCESS","data":{"video_detail_data":{"7400000000000000001":{"video_data":{
+      "series_id":7400000000000000001,"series_id_str":"7400000000000000001","series_title":"测试剧",
+      "series_cover":"http://p3-novel.byteimg.com/novel-pic/c.jpg","series_intro":" 简介 ","episode_right_text":"全3集",
+      "episode_cnt":3,"series_status":1,"followed_cnt":24009,"series_play_cnt":964567,
+      "record_info":{"record_number":"示例备案号","show":true},
+      "video_list":[{"vid":7400000000000000012,"vid_index":2,"digged_count":4705,"disable_play":false},
+                    {"vid":"7400000000000000011","vid_index":1,"digged_count":52100},
+                    {"vid":7400000000000000013,"vid_index":3,"disable_play":true},
+                    {"vid":"7400000000000000011","vid_index":1}]}}}}}
+    """#
+
+    func testOfficialDetailGivesTheEpisodeListLikesAndSeriesFacts() throws {
+        let detail = try OfficialSeriesDetail.parse(try JSONValue.parse(Data(Self.officialDetail.utf8)), seriesId: "7400000000000000001")
+        XCTAssertEqual(detail.episodes.map(\.vid), ["7400000000000000011", "7400000000000000012", "7400000000000000013"],
+                       "in episode order, duplicates dropped, 19-digit ids kept exact")
+        XCTAssertEqual(detail.likes(vid: "7400000000000000011"), 52_100)
+        XCTAssertEqual(detail.likes(vid: "7400000000000000012"), 4_705)
+        XCTAssertNil(detail.likes(vid: "7400000000000000013"))
+        XCTAssertEqual(detail.episodes.map(\.disabled), [false, false, true])
+        XCTAssertEqual(detail.title, "测试剧")
+        XCTAssertEqual(detail.intro, "简介")
+        XCTAssertEqual(detail.cover, "https://p3-novel.byteimg.com/novel-pic/c.jpg", "covers are requested over https")
+        XCTAssertEqual(detail.episodeLabel, "全3集")
+        XCTAssertEqual(detail.completion, .completed)
+        XCTAssertEqual(detail.favoriteCount, 24_009)
+        XCTAssertEqual(detail.playCount, 964_567)
+        XCTAssertEqual(detail.recordNumber, "示例备案号")
+
+        let list = SeriesService.episodes(from: detail)
+        XCTAssertEqual(list.source, .api)
+        XCTAssertEqual(list.title, "测试剧")
+        XCTAssertEqual(list.episodes.map(\.index), [1, 2, 3])
+        XCTAssertEqual(list.episodes.map(\.webAvailable), [nil, nil, nil])
+        XCTAssertNil(list.webAccessibleEpisodes)
     }
 
-    func testEpisodeListFromDetailPage() throws {
-        let html = page(["loaderData": ["detail_page": [
-            "isSuccess": true,
-            "seriesDetail": ["series_id": "123456", "series_name": "详情页", "vid_list": ["11", "12"]],
-        ]]])
-        let result = try SeriesService.parseEpisodeList(html, seriesId: "123456")
-        XCTAssertEqual(result.episodes.map(\.vid), ["11", "12"])
+    func testOfficialDetailRejectsErrorsEmptyListsAndOtherSeries() throws {
+        let reply = try JSONValue.parse(Data(Self.officialDetail.utf8))
+        XCTAssertThrowsError(try OfficialSeriesDetail.parse(reply, seriesId: "7400000000000000002"), "no entry for the asked series")
+        let mismatched = Self.officialDetail.replacingOccurrences(of: #""series_id_str":"7400000000000000001""#, with: #""series_id_str":"7400000000000000009""#)
+        XCTAssertThrowsError(try OfficialSeriesDetail.parse(try JSONValue.parse(Data(mismatched.utf8)), seriesId: "7400000000000000001"))
+        let rejected = try JSONValue.parse(Data(#"{"code":100103,"message":"PARAM_INVALID","data":null}"#.utf8))
+        XCTAssertThrowsError(try OfficialSeriesDetail.parse(rejected, seriesId: "7400000000000000001"))
+        let empty = try JSONValue.parse(Data(#"{"code":0,"data":{"video_detail_data":{"7400000000000000001":{"video_data":{"video_list":[]}}}}}"#.utf8))
+        XCTAssertThrowsError(try OfficialSeriesDetail.parse(empty, seriesId: "7400000000000000001"))
     }
 
-    func testEpisodeListRejectsOtherSeries() {
-        let html = page(["loaderData": ["detail_page": [
-            "seriesDetail": ["series_id": "999999", "vid_list": ["1"]],
-        ]]])
-        XCTAssertThrowsError(try SeriesService.parseEpisodeList(html, seriesId: "123456"))
-    }
-
-    func testEpisodeListRejectsDuplicateVids() {
-        let html = page(["loaderData": ["detail_page": [
-            "seriesDetail": ["series_id": "123456", "vid_list": ["1", "1"]],
-        ]]])
-        XCTAssertThrowsError(try SeriesService.parseEpisodeList(html, seriesId: "123456"))
+    func testPublicDetailsTakeFactsFromTheAppAndTheScoreFromTheWebsite() throws {
+        let detail = try OfficialSeriesDetail.parse(try JSONValue.parse(Data(Self.officialDetail.utf8)), seriesId: "7400000000000000001")
+        let page = try JSONValue.parse(Data(#"{"seriesDetail":{"series_id":"7400000000000000001","series_intro":"官网简介"},"seriesSocialInfo":{"rating":"9.1","rating_count":"120","series_favorite_count":"1","reviews":{"total_count":"7","reviews":[{"content":"好看","user_name":"甲","rating":10}]}}}"#.utf8))
+        let details = SeriesService.publicDetails(detail: detail, page: page)
+        XCTAssertEqual(details.description, "简介", "the synopsis is the App's")
+        XCTAssertEqual(details.favoriteCount, 24_009, "the collect count is the App's")
+        XCTAssertEqual(details.completionStatus, .completed)
+        XCTAssertEqual(details.rating, 9.1)
+        XCTAssertEqual(details.ratingCount, 120)
+        XCTAssertEqual(details.reviewTotal, 7)
+        XCTAssertEqual(details.reviews.map(\.content), ["好看"])
+        let offline = SeriesService.publicDetails(detail: detail, page: nil)
+        XCTAssertNil(offline.rating)
+        XCTAssertEqual(offline.description, "简介")
     }
 
     func testSeriesIdFromShareURLs() {
