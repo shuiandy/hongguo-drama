@@ -141,7 +141,7 @@ final class PlayShapeLiveTests: XCTestCase {
             let object: [String: Any] = ["biz_param": biz, "mixed_video_id_map": ["1004": [vid]], "dr_scene": "player"]
             let payload = Array(try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))
             var signed = try await AppSource.shared.playbackRequest(payload: payload, identity: identity, modern: true)
-            if slash { signed.url = signed.url.replacingOccurrences(of: "/player/v1?", with: "/player/v1/?") }
+            if slash { signed.url = signed.url.replacingOccurrences(of: "/multi_video_model/v1/?", with: "/multi_video_model/v1/?") }
             do {
                 let json = try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers, body: signed.body,
                                                            deadline: Date().addingTimeInterval(10))

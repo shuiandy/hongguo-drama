@@ -149,7 +149,9 @@ actor AppSource {
     static let shared = AppSource()
 
     static let videoAPI = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/"
-    static let playerAPI = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/player/v1"
+    /// The scene path (`multi_video_model/player/v1`) answers empty since 2026-11; the plain path with
+    /// the V5 signature still answers (the official iOS 7.4.3 RPC table lists both).
+    static let playerAPI = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/"
     static let videoUA = "com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
     static let playbackUA = videoUA.replacingOccurrences(of: "71332", with: "74332")
     static let playerUA = "com.phoenix.read/73932 (Linux; U; Android 12; zh_CN_#Hans; PGT-AN10; Build/V417IR;tt-ok/3.12.13.20)"
