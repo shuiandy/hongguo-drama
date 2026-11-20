@@ -29,7 +29,7 @@ struct HongguoDramaApp: App {
                 Button("下一集") { PlayerController.shared.next() }
                     .keyboardShortcut(.downArrow, modifiers: [.command])
                 Divider()
-                Button("悬浮小窗") { PlayerWindows.shared.toggleMini() }
+                Button("置顶播放器") { PlayerWindows.shared.togglePin() }
                     .keyboardShortcut("m", modifiers: [.command, .option])
                 Button("显示播放器") { PlayerWindows.shared.showPlayer() }
                     .keyboardShortcut("0", modifiers: [.command])

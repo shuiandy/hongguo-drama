@@ -320,6 +320,37 @@ final class AppModel {
 
     func isFavorite(_ seriesId: String) -> Bool { favorites.contains { $0.seriesId == seriesId } }
 
+    // MARK: Player like / favourite (this Mac and the account)
+
+    /// Liked here or on the account (the account row may carry only the episode number).
+    func isEpisodeLikedAnywhere(seriesId: String, vid: String, index: Int) -> Bool {
+        isEpisodeLiked(seriesId: seriesId, vid: vid) || AccountSync.shared.accountLikes(seriesId: seriesId, vid: vid, index: index)
+    }
+
+    /// Flips what the player shows, so a like made on the phone can be taken back here too.
+    func setEpisodeLike(_ liked: Bool, seriesId: String, title: String, vid: String, index: Int = 0) {
+        do {
+            _ = try library.setEpisodeLike(liked, seriesId: seriesId, title: title, vid: vid)
+            refreshLibrary()
+        } catch {
+            PlayerController.shared.show(toast: describe(error))
+            return
+        }
+        AccountSync.shared.likeChanged(seriesId: seriesId, vid: vid, liked: liked, index: index)
+    }
+
+    /// Favourited here or on the account's shelf.
+    func isFavoriteAnywhere(_ seriesId: String) -> Bool {
+        isFavorite(seriesId) || AccountSync.shared.shelf.contains { $0.seriesId == seriesId }
+    }
+
+    func setFavorite(_ collected: Bool, seriesId: String, title: String, cover: String) {
+        let before = library.isFavorite(seriesId)
+        if before != collected { _ = try? library.setFavorite(collected, seriesId: seriesId, title: title, cover: cover) }
+        refreshLibrary()
+        AccountSync.shared.favoriteChanged(seriesId: seriesId, title: title, collected: collected)
+    }
+
     @discardableResult
     func toggleFavorite(seriesId: String, title: String, cover: String) -> Bool {
         let before = library.isFavorite(seriesId)

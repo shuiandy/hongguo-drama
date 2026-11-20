@@ -170,8 +170,21 @@ final class AccountSync {
         } failure: { "收藏同步失败：\($0)" }
     }
 
-    func likeChanged(seriesId: String, vid: String, liked: Bool) {
-        if !liked { likes.removeAll { $0.vid == vid } }
+    /// Whether the account's like list has this episode (by id, or by number when the row has no id).
+    func accountLikes(seriesId: String, vid: String, index: Int) -> Bool {
+        likes.contains { row in
+            guard row.seriesId == seriesId else { return false }
+            if !row.vid.isEmpty, !vid.isEmpty { return row.vid == vid }
+            return index > 0 && row.episodeIndex == index
+        }
+    }
+
+    func likeChanged(seriesId: String, vid: String, liked: Bool, index: Int = 0) {
+        if !liked {
+            likes.removeAll { row in
+                row.seriesId == seriesId && (row.vid == vid || (row.vid.isEmpty && index > 0 && row.episodeIndex == index))
+            }
+        }
         guard enabled, SourceRouter.isHongguo(seriesId), vid.allSatisfy(\.isNumber), !vid.isEmpty else { return }
         remember(liked, id: vid, in: "likes")
         enqueue("like:\(vid)") { account in

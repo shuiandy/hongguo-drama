@@ -74,7 +74,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .general: return ["外观", "主题", "深色", "浅色", "启动", "打开时", "缓存", "清理", "导入", "旧版", "Electron"]
         case .playback: return ["连播", "下一集", "预先", "画质", "1080", "720", "画面", "适应", "速度", "倍速", "空格", "音量"]
         case .danmaku: return ["弹幕", "透明", "字号", "速度", "区域", "密度", "屏蔽", "敏感词"]
-        case .shortcuts: return ["快捷键", "键盘", "空格", "全屏", "小窗"]
+        case .shortcuts: return ["快捷键", "键盘", "空格", "全屏", "置顶", "小窗"]
         case .downloads: return ["下载", "位置", "文件夹", "命名", "同时", "删除", "导出", "评论", "存储", "空间", "NAS", "NFO", "封面", "合并", "ByteVC2", "转码"]
         case .sources: return ["片源", "西饭", "河马", "ReelShort", "DramaBox", "接口", "CMS", "搜索", "App 搜索"]
         case .network: return ["网络", "代理", "HTTP", "SOCKS", "直连", "系统代理", "测试"]

@@ -249,6 +249,13 @@ struct PlayerScreen: View {
             case .ended: hideChrome(after: 0.6)
             }
         }
+        // Playback starting (or the next episode) shows the controls, then hides them after 5 s
+        // even if the pointer never moves.
+        .onChange(of: controller.isPlaying) { _, playing in
+            if playing { chromeVisible = true; hideChrome(after: 5) }
+        }
+        .onChange(of: controller.index) { _, _ in chromeVisible = true; hideChrome(after: 5) }
+        .onAppear { hideChrome(after: 5) }
     }
 
     private var topBar: some View {
@@ -314,6 +321,7 @@ struct PlayerControlBar: View {
                 controlsRow(showLabel: true, showVolumeSlider: true)
                 controlsRow(showLabel: false, showVolumeSlider: true)
                 controlsRow(showLabel: false, showVolumeSlider: false)
+                compactRow
             }
         }
         .padding(.horizontal, 16)
@@ -353,14 +361,7 @@ struct PlayerControlBar: View {
             }
 
             if let episode = controller.currentEpisode {
-                let liked = AppModel.shared.isEpisodeLiked(seriesId: episode.seriesId, vid: episode.vid)
-                Button {
-                    AppModel.shared.toggleEpisodeLike(seriesId: episode.seriesId, title: controller.episodes?.title ?? "", vid: episode.vid)
-                } label: {
-                    Image(systemName: liked ? "heart.fill" : "heart").foregroundStyle(liked ? Color.hongguoRed : Color.white)
-                }
-                .buttonStyle(BarIconButtonStyle(size: 32, active: liked))
-                .help(liked ? "取消本集小红心" : "给本集加小红心（只存在本机）")
+                PlayerSocialButtons(controller: controller, episode: episode)
             }
 
             Spacer(minLength: 8)
@@ -454,11 +455,56 @@ struct PlayerControlBar: View {
             Button { controller.toggleAutoNext() } label: { Image(systemName: "repeat") }
                 .buttonStyle(BarIconButtonStyle(size: 32, active: controller.autoNext))
                 .help(controller.autoNext ? "自动连播：开（A）" : "自动连播：关（A）")
-            Button { windows.enterMini() } label: { Image(systemName: "rectangle.portrait.bottomright.inset.filled") }
-                .buttonStyle(BarIconButtonStyle(size: 32))
-                .help("悬浮小窗（M）")
+            Button { windows.togglePin() } label: { Image(systemName: windows.isPinned ? "pin.fill" : "pin") }
+                .buttonStyle(BarIconButtonStyle(size: 32, active: windows.isPinned))
+                .help(windows.isPinned ? "取消置顶（M）" : "置顶播放器，所有控制都在（M）
             Button { windows.toggleFullScreen() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
                 .buttonStyle(BarIconButtonStyle(size: 32))
+                .help("全屏（F）")
+        }
+    }
+
+    /// For a small pinned window: transport, like / favourite, speed, danmaku, pin and full screen.
+    private var compactRow: some View {
+        HStack(spacing: 2) {
+            Button { controller.previous() } label: { Image(systemName: "backward.end.fill") }
+                .buttonStyle(BarIconButtonStyle(size: 30))
+                .disabled(!controller.hasPrevious)
+                .help("上一集（↑）")
+            Button { controller.togglePlay() } label: { Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill") }
+                .buttonStyle(GlassIconButtonStyle(diameter: 40, variant: .clear))
+                .help("播放 / 暂停（空格）")
+            Button { controller.next() } label: { Image(systemName: "forward.end.fill") }
+                .buttonStyle(BarIconButtonStyle(size: 30))
+                .disabled(!controller.hasNext)
+                .help("下一集（↓）")
+            if let episode = controller.currentEpisode {
+                PlayerSocialButtons(controller: controller, episode: episode, size: 30)
+            }
+            Spacer(minLength: 4)
+            Menu {
+                ForEach(PlayerController.rateOptions, id: \.self) { value in
+                    Button { controller.rate = value } label: {
+                        if value == controller.rate { Label(formatRate(value), systemImage: "checkmark") } else { Text(formatRate(value)) }
+                    }
+                }
+            } label: { pill(formatRate(controller.rate)) }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("倍速（S / D）")
+            let danmakuOn = AppModel.shared.settings.danmaku.enabled
+            Button { AppModel.shared.settings.danmaku.enabled.toggle() } label: {
+                Image(systemName: danmakuOn ? "text.bubble.fill" : "text.bubble")
+            }
+            .buttonStyle(BarIconButtonStyle(size: 30, active: danmakuOn))
+            .help(danmakuOn ? "关闭弹幕" : "打开弹幕")
+            Button { windows.togglePin() } label: { Image(systemName: windows.isPinned ? "pin.fill" : "pin") }
+                .buttonStyle(BarIconButtonStyle(size: 30, active: windows.isPinned))
+                .help(windows.isPinned ? "取消置顶（M）" : "置顶播放器（M）")
+            Button { windows.toggleFullScreen() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                .buttonStyle(BarIconButtonStyle(size: 30))
                 .help("全屏（F）")
         }
     }
@@ -791,6 +837,37 @@ struct PlayerSidePanel: View {
         case .progressiveDecrypt: return "边下边解"
         case .decryptedFile: return "解密缓存"
         case .localFile: return "本地文件"
+        }
+    }
+}
+
+/// 点赞 (this episode) and 收藏 (the series), showing this Mac's state and the account's.
+struct PlayerSocialButtons: View {
+    let controller: PlayerController
+    let episode: Episode
+    var size: CGFloat = 32
+
+    var body: some View {
+        let model = AppModel.shared
+        let title = controller.episodes?.title ?? controller.title
+        let liked = model.isEpisodeLikedAnywhere(seriesId: episode.seriesId, vid: episode.vid, index: episode.index)
+        let favorite = model.isFavoriteAnywhere(episode.seriesId)
+        let account = AccountState.shared.profile != nil && model.settings.accountWriteSync && SourceRouter.isHongguo(episode.seriesId)
+        HStack(spacing: 2) {
+            Button {
+                model.setEpisodeLike(!liked, seriesId: episode.seriesId, title: title, vid: episode.vid, index: episode.index)
+            } label: {
+                Image(systemName: liked ? "heart.fill" : "heart").foregroundStyle(liked ? Color.hongguoRed : Color.white)
+            }
+            .buttonStyle(BarIconButtonStyle(size: size, active: liked))
+            .help(liked ? "取消点赞本集" : (account ? "点赞本集（同步到账号）" : "点赞本集"))
+            Button {
+                model.setFavorite(!favorite, seriesId: episode.seriesId, title: title, cover: controller.cover)
+            } label: {
+                Image(systemName: favorite ? "star.fill" : "star").foregroundStyle(favorite ? Color.hongguoGold : Color.white)
+            }
+            .buttonStyle(BarIconButtonStyle(size: size, active: favorite))
+            .help(favorite ? "取消收藏" : (account ? "收藏这部剧（同步到账号）" : "收藏这部剧"))
         }
     }
 }

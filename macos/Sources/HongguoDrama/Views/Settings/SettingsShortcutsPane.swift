@@ -11,16 +11,16 @@ struct SettingsShortcutsPane: View {
         ("切换自动连播", "A"),
         ("开关弹幕", "B"),
         ("全屏", "F"),
-        ("悬浮小窗", "M"),
+        ("置顶播放器", "M"),
         ("显示 / 隐藏选集", "E"),
-        ("退出全屏或小窗", "esc"),
+        ("退出全屏", "esc"),
     ]
     private let global: [(String, String)] = [
         ("搜索", "⌘K"),
         ("打开设置", "⌘,"),
         ("播放 / 暂停", "⌘空格"),
         ("上一集 / 下一集", "⌘↑ ⌘↓"),
-        ("悬浮小窗", "⌥⌘M"),
+        ("置顶播放器", "⌥⌘M"),
         ("显示播放器", "⌘0"),
     ]
 
@@ -31,7 +31,7 @@ struct SettingsShortcutsPane: View {
             } header: {
                 Text("播放器")
             } footer: {
-                Text("播放器窗口或小窗在前面时生效。").font(.caption).foregroundStyle(.secondary)
+                Text("播放器窗口在前面时生效。").font(.caption).foregroundStyle(.secondary)
             }
             Section("全局") {
                 ForEach(Array(global.enumerated()), id: \.offset) { _, item in LabeledContent(item.0) { KeyCap(text: item.1) } }

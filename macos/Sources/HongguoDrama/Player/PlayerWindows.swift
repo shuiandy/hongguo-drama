@@ -14,6 +14,10 @@ final class PlayerWindows: NSObject, NSWindowDelegate {
 
     private(set) var isMini = false
     private(set) var showEpisodes = true
+    /// 置顶: the player window floats above other apps and follows across Spaces, with every
+    /// control still there. Replaces the old reduced mini window. Remembered between launches.
+    private(set) var isPinned = UserDefaults.standard.bool(forKey: "playerPinned")
+    @ObservationIgnored private var episodesBeforePin: Bool?
 
     @ObservationIgnored private var playerWindow: NSWindow?
     @ObservationIgnored private var miniPanel: MiniPanel?
@@ -50,6 +54,7 @@ final class PlayerWindows: NSObject, NSWindowDelegate {
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: Self.minimumStageWidth, height: 520)
+        if isPinned { showEpisodes = false }
         let hosting = NSHostingView(rootView: PlayerScreen(controller: controller, windows: self))
         // The window decides its size; SwiftUI content must not grow it (that pushed the drawer header off-screen).
         hosting.sizingOptions = []
@@ -58,7 +63,45 @@ final class PlayerWindows: NSObject, NSWindowDelegate {
         window.setFrameAutosaveName("HongguoPlayerWindow")
         if !window.setFrameUsingName("HongguoPlayerWindow") { window.center() }
         playerWindow = window
+        applyPin(to: window)
         return window
+    }
+
+    // MARK: Pin on top
+
+    func togglePin() {
+        let window = playerWindow ?? makePlayerWindow()
+        if window.styleMask.contains(.fullScreen) { window.toggleFullScreen(nil) }
+        isPinned.toggle()
+        UserDefaults.standard.set(isPinned, forKey: "playerPinned")
+        // A pinned player is usually made small: the episode list steps aside, and comes back on unpin.
+        if isPinned {
+            episodesBeforePin = showEpisodes
+            if showEpisodes { toggleEpisodes() }
+        } else if episodesBeforePin == true, !showEpisodes {
+            toggleEpisodes()
+        }
+        applyPin(to: window)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    private func applyPin(to window: NSWindow) {
+        window.level = isPinned ? .floating : .normal
+        if isPinned {
+            window.collectionBehavior.remove(.fullScreenPrimary)
+            window.collectionBehavior.insert([.canJoinAllSpaces, .fullScreenAuxiliary])
+            window.minSize = NSSize(width: 380, height: 300)
+        } else {
+            window.collectionBehavior.remove([.canJoinAllSpaces, .fullScreenAuxiliary])
+            window.collectionBehavior.insert(.fullScreenPrimary)
+            window.minSize = NSSize(width: Self.minimumStageWidth, height: 520)
+            var frame = window.frame
+            if frame.width < window.minSize.width || frame.height < window.minSize.height {
+                frame.size.width = max(frame.width, window.minSize.width)
+                frame.size.height = max(frame.height, window.minSize.height)
+                window.setFrame(frame, display: true, animate: true)
+            }
+        }
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -78,6 +121,8 @@ final class PlayerWindows: NSObject, NSWindowDelegate {
 
     func toggleFullScreen() {
         if isMini { exitMini() }
+        // A floating window cannot go full screen: unpin first.
+        if isPinned { togglePin() }
         playerWindow?.toggleFullScreen(nil)
     }
 
@@ -90,7 +135,7 @@ final class PlayerWindows: NSObject, NSWindowDelegate {
         if let window = playerWindow, !window.styleMask.contains(.fullScreen) {
             var frame = window.frame
             let contentHeight = window.contentLayoutRect.height
-            let width = max(Self.minimumStageWidth, contentHeight * aspect) + (showEpisodes ? Self.episodePanelWidth : 0)
+            let width = max(isPinned ? 0 : Self.minimumStageWidth, contentHeight * aspect) + (showEpisodes ? Self.episodePanelWidth : 0)
             frame.origin.x += (frame.width - width) / 2
             frame.size.width = width
             window.setFrame(frame, display: true, animate: true)
@@ -205,7 +250,7 @@ final class PlayerWindows: NSObject, NSWindowDelegate {
             case "s": controller.changeRate(by: -step)
             case "d": controller.changeRate(by: step)
             case "f": if !event.isARepeat { toggleFullScreen() }
-            case "m": if !event.isARepeat { toggleMini() }
+            case "m": if !event.isARepeat { togglePin() }
             case "e": if !event.isARepeat, !isMini { toggleEpisodes() }
             case "b": if !event.isARepeat { controller.toggleDanmaku() }
             default: return event
