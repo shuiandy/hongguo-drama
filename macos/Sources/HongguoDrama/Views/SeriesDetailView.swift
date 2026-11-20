@@ -60,6 +60,10 @@ struct SeriesDetailView: View {
             await load()
         }
         .task(id: summary.seriesId) {
+            // So "继续第 N 集" shows where any device left off, not only this Mac.
+            await model.syncCloudPosition(seriesId: summary.seriesId)
+        }
+        .task(id: summary.seriesId) {
             guard SourceRouter.isHongguo(summary.seriesId) else { return }
             seasons = try? await DiscoveryAccess.sameIPSeries(seriesId: summary.seriesId)
         }
@@ -166,7 +170,7 @@ struct SeriesDetailView: View {
         let keyword = WatchHistory.sequelKeyword(title)
         guard !keyword.isEmpty else { sequelError = "这部剧的名称无法用来查找续作"; return }
         do {
-            let result = try await HongguoSearch.shared.search(keyword, appFirst: true)
+            let result = try await model.search.search(keyword)
             let candidates = result.results.map { SeriesRef(seriesId: $0.seriesId, title: $0.title) }
             let sequels = WatchHistory.findSequels(of: current, in: candidates)
             foundSequels = sequels
@@ -217,7 +221,7 @@ struct SeriesDetailView: View {
                 }
                 HStack(spacing: 10) {
                     if let record, record.episodeIndex > 0 {
-                        Button { play(index: record.episodeIndex, resume: true) } label: {
+                        Button { continueWatching() } label: {
                             Label("继续第 \(record.episodeIndex) 集 \(formatTime(record.position))", systemImage: "play.fill")
                         }
                         .buttonStyle(GlassButtonStyle(prominent: true, size: .large))
@@ -411,6 +415,11 @@ struct SeriesDetailView: View {
         if summary.publishedAt == nil, let date = details?.publishedAt, let kept = model.library.series(seriesId), kept.publishedAt == nil {
             _ = try? model.library.recordPublishDate(seriesId: seriesId, title: kept.title, publishedAt: date, openedAt: kept.lastOpenedAt)
         }
+    }
+
+    private func continueWatching() {
+        guard let episodes else { return }
+        Task { await PlayerController.shared.resume(episodes: episodes, cover: cover) }
     }
 
     private func play(index: Int, resume: Bool) {

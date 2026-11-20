@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Official-aligned persistent-device playback source for iOS.
+// The play source of every app (Mac, iOS, tvOS): the official iOS 7.4.3 client's logic.
 // Mirrors official iOS 7.4.3 `BDInstall` + `FQVPlayerApiService` + `FQVShortVideoVideoModelCacheManager`:
 // - uses the Keychain-persisted, 6-hour-renewed & activated `PersistentAppDevice` with `x-tt-dt`,
+//   and never the website login Cookie: since 2026-11-20 a play request carrying it comes back
+//   empty on every path (the account's own requests still use it),
 // - caches resolved `PlayInfo` on disk respecting server `expire_time`,
 // - targets official iOS 7.4.3 `mGetVideoModelV2` (`/novel/player/multi_video_model/player/v1/`)
-//   primary/alternate plus plain iOS `/multi_video_model/v1/`,
+//   on both hosts, with the plain iOS `/multi_video_model/v1/` (`mGetVideoModel`) asked first,
 // - proactively upgrades ByteVC2-only episodes to H.264/HEVC via `CodecFallback` when available,
-// - self-heals on empty replies via BDInstall renewal -> anonymous isolation -> fresh rotation.
+// - self-heals on empty replies with one BDInstall renewal of the persistent device, nothing else.
+// There is no other source: no Android profile, website channel or web page.
 import Foundation
 
 /// Disk-backed cache for resolved `PlayInfo` records, mirroring `FQVShortVideoVideoModelCacheManager`.
@@ -39,8 +42,16 @@ public final class VideoModelDiskCache: @unchecked Sendable {
 
     public static func defaultFileURL() -> URL? {
         guard !isMacTestRunner else { return nil }
-        return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("video-model-cache.json")
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
+        #if os(macOS)
+        // Not sandboxed on the Mac: keep it with the app's other caches.
+        let folder = caches.appendingPathComponent("HongguoDrama", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        return folder.appendingPathComponent("video-model-cache.json")
+        #else
+        return caches.appendingPathComponent("video-model-cache.json")
+        #endif
     }
 
     public func load(vid: String, now: Date = Date()) -> PlayInfo? {
@@ -125,7 +136,6 @@ public actor AuthenticatedPlaybackSource {
     private static let maxCachedEntries = 256
     private static let maxBatchSize = 6
     private static let batchCooldownSeconds: TimeInterval = 45
-    private static let cookieCooldownSeconds: TimeInterval = 300
 
     private struct CachedPlayInfo {
         let info: PlayInfo
@@ -157,8 +167,6 @@ public actor AuthenticatedPlaybackSource {
     private var inflightSingle: [String: InflightEntry] = [:]
     private var inflightBatchTask: Task<Void, Never>?
     private var batchCooldownUntil = Date.distantPast
-    /// Set for 5 minutes if playback with Cookie returned empty while anonymous succeeded.
-    private var cookieCooldownUntil = Date.distantPast
 
     public init(http: HTTPClient = .shared, diskCache: VideoModelDiskCache = VideoModelDiskCache()) {
         self.transport = AppTransport(http: http)
@@ -261,13 +269,11 @@ public actor AuthenticatedPlaybackSource {
             do {
                 let identity = try await PersistentAppDevice.shared.get(transport: self.transport)
                 let dToken = await PersistentAppDevice.shared.dTokenHeaders()
-                let useCookie = Date() >= self.cookieCooldownUntil
-                let auth = useCookie ? PersistentAppDevice.authHeaders() : []
                 let entries = try await self.requestModels(
                     vids: chunk,
-                    channels: [.multiScenePrimary],
+                    channels: [.multiPlainIOS],
                     identity: identity,
-                    extraHeaders: dToken + auth,
+                    extraHeaders: dToken,
                     deadline: Date().addingTimeInterval(8)
                 )
                 guard !Task.isCancelled else { return }
@@ -358,21 +364,20 @@ public actor AuthenticatedPlaybackSource {
 
         var identity = try await PersistentAppDevice.shared.get(transport: transport)
         var dToken = await PersistentAppDevice.shared.dTokenHeaders()
-        let savedCookie = PersistentAppDevice.authHeaders()
-        let useCookieInitially = !savedCookie.isEmpty && Date() >= cookieCooldownUntil
 
         var entries: JSONValue?
-        var routeTag = useCookieInitially ? "auth-app" : "auth-anon"
+        var routeTag = "auth-app"
         var lastError: Error?
 
-        // Pass 1: fast official iOS 7.4.3 path (mGetVideoModelV2 scene path primary -> alternate,
-        // then plain iOS v1 path so flipping either server-side route stays transparent; ~400 ms on happy path).
+        // Pass 1: the official iOS 7.4.3 RPC table, plain `mGetVideoModel` first (it answered in every
+        // probe on 2026-11-20 while the scene path went empty twice), then `mGetVideoModelV2`'s scene
+        // path on both hosts so a server-side flip of either route stays transparent.
         do {
             entries = try await requestModels(
                 vids: [vid],
-                channels: [.multiScenePrimary, .multiSceneAlternate, .multiPlainIOS],
+                channels: [.multiPlainIOS, .multiScenePrimary, .multiSceneAlternate],
                 identity: identity,
-                extraHeaders: dToken + (useCookieInitially ? savedCookie : []),
+                extraHeaders: dToken,
                 deadline: deadline
             )
         } catch let error as AppSourceError {
@@ -388,7 +393,7 @@ public actor AuthenticatedPlaybackSource {
             lastError = error
         }
 
-        // Prefetches never trigger device renewal/rotation so they cannot consume the viewer's
+        // Prefetches never trigger device renewal so they cannot consume the viewer's
         // recovery rate limits or race with an active viewer lookup.
         if entries == nil, allowRecovery {
             // A) Renew persisted device_id + refresh device_token + activate (app_alert_check).
@@ -400,9 +405,9 @@ public actor AuthenticatedPlaybackSource {
                 do {
                     entries = try await requestModels(
                         vids: [vid],
-                        channels: [.multiScenePrimary],
+                        channels: [.multiPlainIOS],
                         identity: identity,
-                        extraHeaders: dToken + (useCookieInitially ? savedCookie : []),
+                        extraHeaders: dToken,
                         deadline: deadline
                     )
                     routeTag = "auth-renew"
@@ -411,68 +416,6 @@ public actor AuthenticatedPlaybackSource {
                     lastError = error
                 } catch {
                     lastError = error
-                }
-            }
-
-            // B) Isolate Cookie & x-tt-dt: retry anonymous without Cookie or x-tt-dt on the
-            // renewed device. If that succeeds while signed in, pause Cookie on playback for 5 min.
-            if entries == nil, (useCookieInitially || !dToken.isEmpty), deadline.timeIntervalSinceNow >= 2 {
-                do {
-                    entries = try await requestModels(
-                        vids: [vid],
-                        channels: [.multiScenePrimary, .multiPlainIOS],
-                        identity: identity,
-                        extraHeaders: [],
-                        deadline: deadline
-                    )
-                    if useCookieInitially {
-                        cookieCooldownUntil = Date().addingTimeInterval(Self.cookieCooldownSeconds)
-                    }
-                    routeTag = "auth-anon"
-                } catch let error as AppSourceError {
-                    if error.code == .cancelled { throw error }
-                    lastError = error
-                } catch {
-                    lastError = error
-                }
-            }
-
-            // C) Genuine fresh device rotation (never coalesced onto an old renewal) + Android scene fallback.
-            if entries == nil, deadline.timeIntervalSinceNow >= 2 {
-                if let rotated = try? await PersistentAppDevice.shared.rotateIfAllowed(transport: transport),
-                   rotated.rotated {
-                    identity = rotated.identity
-                    do {
-                        entries = try await requestModels(
-                            vids: [vid],
-                            channels: [.multiScenePrimary, .multiSceneAndroid],
-                            identity: identity,
-                            extraHeaders: [],
-                            deadline: deadline
-                        )
-                        routeTag = "auth-rotate"
-                    } catch let error as AppSourceError {
-                        if error.code == .cancelled { throw error }
-                        lastError = error
-                    } catch {
-                        lastError = error
-                    }
-                } else {
-                    do {
-                        entries = try await requestModels(
-                            vids: [vid],
-                            channels: [.multiSceneAndroid],
-                            identity: identity,
-                            extraHeaders: [],
-                            deadline: deadline
-                        )
-                        routeTag = "auth-android"
-                    } catch let error as AppSourceError {
-                        if error.code == .cancelled { throw error }
-                        lastError = error
-                    } catch {
-                        lastError = error
-                    }
                 }
             }
         }
@@ -508,7 +451,7 @@ public actor AuthenticatedPlaybackSource {
             if resolved.isByteVC2,
                let fallback = AppSource.parseFallback(model["fallback_api"]), !fallback.isEmpty,
                deadline.timeIntervalSinceNow >= 2 {
-                let extra = dToken + (Date() >= cookieCooldownUntil ? savedCookie : [])
+                let extra = dToken
                 if let hw = await CodecFallback.tryHardwareCodecFallback(
                     fallbackURL: fallback,
                     expectedVideoId: model["video_id"].string,
@@ -544,8 +487,7 @@ public actor AuthenticatedPlaybackSource {
 
     private func resolveFallback(_ pending: PendingFallback, vid: String, deadline: Date) async throws -> (info: PlayInfo, upgraded: Bool) {
         let dToken = await PersistentAppDevice.shared.dTokenHeaders()
-        let auth = Date() >= cookieCooldownUntil ? PersistentAppDevice.authHeaders() : []
-        let extra = dToken + auth
+        let extra = dToken
         let outer = try await transport.requestJSON(
             pending.fallbackURL,
             headers: [("User-Agent", AppSource.iosPlayerUA)] + extra,
@@ -591,8 +533,6 @@ public actor AuthenticatedPlaybackSource {
         case multiSceneAlternate
         /// Official iOS 7.4.3 `FQVPlayerApiService.mGetVideoModel` (`/multi_video_model/v1/`).
         case multiPlainIOS
-        /// Android profile fallback on the `:dr_scene` endpoint.
-        case multiSceneAndroid
     }
 
     private static let multiScenePath = "/novel/player/multi_video_model/player/v1/"
@@ -600,16 +540,7 @@ public actor AuthenticatedPlaybackSource {
 
     private func requestModels(vids: [String], channels: [Channel], identity: PlaybackIdentity,
                                extraHeaders: [(String, String)], deadline: Date) async throws -> JSONValue {
-        let multiPayloadObject: [String: Any] = [
-            "biz_param": [
-                "detail_page_version": 0, "device_level": 3, "disable_digg_stat": false,
-                "disable_video_relate_book": false, "need_all_video_definition": true, "need_mp4_align": false,
-                "use_os_player": false, "use_server_dns": false, "video_platform": 1024,
-            ],
-            "mixed_video_id_map": ["1004": vids],
-            "dr_scene": "player",
-        ]
-        let multiPayload = Array(try JSONSerialization.data(withJSONObject: multiPayloadObject, options: [.sortedKeys]))
+        let multiPayload = try AppSource.modelPayload(vids: vids)
         try Task.checkCancellationAsApp()
 
         var lastError: Error?
@@ -659,45 +590,13 @@ public actor AuthenticatedPlaybackSource {
 
     private func buildRequest(channel: Channel, multiPayload: [UInt8], identity: PlaybackIdentity)
         throws -> (url: String, headers: [(String, String)], body: [UInt8]) {
-        func v5Post(base: String, iosProfile: Bool) throws -> (url: String, headers: [(String, String)], body: [UInt8]) {
-            let body = try AppCrypto.gzip(multiPayload)
-            let now = Int64(Date().timeIntervalSince1970 * 1000)
-            let values: [(String, String)] = iosProfile
-                ? [
-                    ("aid", "8662"), ("app_name", "novelread"), ("version_code", "74300"), ("version_name", "7.4.3"),
-                    ("channel", "App Store"), ("device_platform", "iphone"), ("device_type", "iPhone17,1"), ("os_version", "18.3"),
-                    ("update_version_code", "74300"), ("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId),
-                ]
-                : [
-                    ("aid", "8662"), ("app_name", "novelread"), ("version_code", "74332"), ("version_name", "7.4.3.32"),
-                    ("channel", "vivo_8662_64"), ("device_platform", "android"), ("device_type", "PGT-AN10"), ("os_version", "12"),
-                    ("update_version_code", "74332"), ("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId),
-                ]
-            let signed = try PlaybackSignerV5.shared.sign(base: base, values: values, body: body, nowMillis: now)
-            return (
-                signed.url,
-                signed.headers + [
-                    ("User-Agent", iosProfile ? AppSource.iosPlayerUA : AppSource.playerUA),
-                    ("Accept", "application/json"),
-                    ("Content-Type", "application/json; charset=utf-8"),
-                    ("Content-Encoding", "gzip"),
-                    ("x-ss-dp", "8662"),
-                    ("sdk-version", "2"),
-                ],
-                body
-            )
-        }
-
+        let base: String
         switch channel {
-        case .multiScenePrimary:
-            return try v5Post(base: "https://api5-normal-sinfonlineb.fqnovel.com\(Self.multiScenePath)", iosProfile: true)
-        case .multiSceneAlternate:
-            return try v5Post(base: "https://api5-normal-sinfonlinea.fqnovel.com\(Self.multiScenePath)", iosProfile: true)
-        case .multiPlainIOS:
-            return try v5Post(base: "https://api5-normal-sinfonlineb.fqnovel.com\(Self.multiPlainPath)", iosProfile: true)
-        case .multiSceneAndroid:
-            return try v5Post(base: "https://api5-normal-sinfonlineb.fqnovel.com\(Self.multiScenePath)", iosProfile: false)
+        case .multiScenePrimary: base = "https://api5-normal-sinfonlineb.fqnovel.com\(Self.multiScenePath)"
+        case .multiSceneAlternate: base = "https://api5-normal-sinfonlinea.fqnovel.com\(Self.multiScenePath)"
+        case .multiPlainIOS: base = "https://api5-normal-sinfonlineb.fqnovel.com\(Self.multiPlainPath)"
         }
+        return try AppSource.modelRequest(base: base, payload: multiPayload, identity: identity)
     }
 
     private func extractModel(from entry: JSONValue) -> JSONValue {

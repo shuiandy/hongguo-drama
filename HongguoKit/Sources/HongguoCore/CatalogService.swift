@@ -28,16 +28,15 @@ public enum CatalogKind: String, CaseIterable, Identifiable, Sendable {
     public static var rankings: [CatalogKind] { [.hotDrama, .hotRealDrama, .hotComicDrama, .hotAIDrama] }
 }
 
-/// Category and ranking pages from the official site. Port of `catalog.js`.
+/// Category and ranking lists from the App (`DiscoveryAccess`). No website pages.
 public final class CatalogService: Sendable {
-    private let http: HTTPClient
-    private let cache = TTLCache<CatalogPage>(limit: 32)
     private let rankPages = TTLCache<CatalogPage>(limit: 64)
     private let rankCursors = TTLCache<DiscoveryAccess.RankCursor>(limit: 64)
     private let rankOffsets = TTLCache<Int>(limit: 64)
 
-    public init(http: HTTPClient = .shared) { self.http = http }
+    public init(http: HTTPClient = .shared) {}
 
+    /// The website page of a list, for "open the source page" links only.
     public static func url(kind: CatalogKind, genre: String?, page: Int) -> URL {
         let pg = max(1, page)
         var path = "\(Site.origin)/\(kind.isRanking ? "rank" : "category")/\(kind.rawValue)"
@@ -46,41 +45,19 @@ public final class CatalogService: Sendable {
         return URL(string: path)!
     }
 
+    /// One page of a category (with the App's theme ids, `cate_5000`) or a ranking board.
     public func browse(kind: CatalogKind, genre: String? = nil, page: Int = 1, forceRefresh: Bool = false) async throws -> CatalogPage {
-        // The App catalogue and ranking boards first; their theme ids (`cate_5000`) are only
-        // valid there. The website is the fallback for an empty or failed App reply.
         let theme = (genre ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if kind.isRanking {
-            if let app = try? await appRanking(kind: kind, page: page, forceRefresh: forceRefresh) { return app }
-        } else if let app = try? await DiscoveryAccess.catalog(kind: kind, genre: theme.isEmpty ? nil : theme, page: page, forceRefresh: forceRefresh),
-           !app.items.isEmpty || !theme.isEmpty {
-            return CatalogPage(results: app.items, page: max(1, page), total: app.items.count, totalPages: app.totalPages,
-                               genres: app.genres, pageTitle: kind.label, sourceURL: Self.url(kind: kind, genre: nil, page: page))
+            if let board = try await appRanking(kind: kind, page: page, forceRefresh: forceRefresh) { return board }
+            // Page 1 empty is a failure; a later page without a cursor is the end of the board.
+            guard page > 1 else { throw HongguoError(.upstream, "App 榜单暂无内容，请稍后重试") }
+            return CatalogPage(results: [], page: page, total: 0, totalPages: page - 1, genres: [], pageTitle: kind.label,
+                               sourceURL: Self.url(kind: kind, genre: nil, page: page))
         }
-        let genre: String? = theme.contains("_") ? nil : genre
-        if let genre, !genre.isEmpty {
-            guard !kind.isRanking, genre.range(of: "^[a-z0-9-]+$", options: .regularExpression) != nil else {
-                throw HongguoError(.input, "无效的目录分类或题材")
-            }
-        }
-        let url = Self.url(kind: kind, genre: genre, page: page)
-        if !forceRefresh, let cached = await cache.get(url.absoluteString) { return cached }
-        var options = HTTPClient.Options()
-        options.timeout = 10
-        options.headers = ["User-Agent": UserAgents.web, "Accept-Language": "zh-CN,zh;q=0.9", "Cache-Control": "no-cache"]
-        let response: HTTPResponse
-        do {
-            response = try await http.get(url, options: options)
-        } catch let error as HTTPStatusError {
-            throw HongguoError(.upstream, "目录请求失败（HTTP \(error.status)）")
-        } catch let error as HongguoError where error.kind == .timeout {
-            throw HongguoError(.timeout, "目录加载超时，请重试")
-        }
-        let parsed = kind.isRanking
-            ? try Self.parseRanking(response.text, kind: kind, page: page, sourceURL: url)
-            : try Self.parseCatalog(response.text, kind: kind, page: page, sourceURL: url)
-        await cache.set(url.absoluteString, parsed, ttl: 120)
-        return parsed
+        let app = try await DiscoveryAccess.catalog(kind: kind, genre: theme.isEmpty ? nil : theme, page: page, forceRefresh: forceRefresh)
+        return CatalogPage(results: app.items, page: max(1, page), total: app.items.count, totalPages: app.totalPages,
+                           genres: app.genres, pageTitle: kind.label, sourceURL: Self.url(kind: kind, genre: nil, page: page))
     }
 
     /// App ranking board pages. Page 1 opens the board; later pages continue from the cursor the
@@ -138,102 +115,5 @@ public final class CatalogService: Sendable {
             if date <= Date() { published = date }
         }
         return (label, status, published)
-    }
-
-    public static func parseCatalog(_ html: String, kind: CatalogKind, page: Int, sourceURL: URL) throws -> CatalogPage {
-        let router = try HTMLData.routerData(html)
-        let loader = router["loaderData"].object ?? [:]
-        guard let data = loader.values.first(where: { $0["categoryRoute"]["contentType"].string == kind.rawValue }),
-              data["isSuccess"].bool != false, let list = data["recommendList"].array else {
-            throw HongguoError(.upstream, "来源目录暂不可用，请重试或打开来源页面")
-        }
-        var seen = Set<String>()
-        var results: [SeriesSummary] = []
-        for item in list {
-            guard let id = item["series_id"].idString, id.isDigitsOnly, id.count >= 6,
-                  let name = item["series_name"].string?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty,
-                  !seen.contains(id) else { continue }
-            seen.insert(id)
-            let meta = metadata(item)
-            results.append(SeriesSummary(
-                seriesId: id, title: name, cover: HTMLData.safeCover(item["series_cover"].string),
-                episodeCount: Int(item["episode_cnt"].number ?? 0),
-                tags: Array((item["tags"].array ?? []).compactMap(\.string).prefix(4)),
-                description: item["series_intro"].string ?? "",
-                episodeLabel: meta.label, completionStatus: meta.status, publishedAt: meta.published))
-        }
-        let genres = (data["selectorList"].array ?? []).flatMap { $0["items"].array ?? [] }.compactMap { item -> Genre? in
-            guard let slug = item["selector_item_id"].string, slug.range(of: "^[a-z0-9-]+$", options: .regularExpression) != nil,
-                  let label = item["show_name"].string else { return nil }
-            return Genre(slug: slug, label: label)
-        }
-        return CatalogPage(results: results,
-                           page: Int(data["pagination"]["pageNum"].number ?? Double(page)),
-                           total: Int(data["pagination"]["total"].number ?? 0),
-                           totalPages: Int(data["pagination"]["totalPages"].number ?? 0),
-                           genres: genres, pageTitle: data["seo"]["title"].string ?? "", sourceURL: sourceURL)
-    }
-
-    public static func parseRanking(_ html: String, kind: CatalogKind, page: Int, sourceURL: URL) throws -> CatalogPage {
-        var data: JSONValue = .null
-        // Streaming SSR puts the payload inside an HTML-encoded JSON attribute.
-        for tag in HTMLData.allMatches("<script\\b([^>]*)>", in: html) {
-            let attributes = tag[1]
-            guard attributes.range(of: "data-fn-name=[\"']mergeLoaderData[\"']", options: .regularExpression) != nil,
-                  let encoded = HTMLData.firstMatch("data-fn-args=(?:\"([^\"]*)\"|'([^']*)')", in: attributes) else { continue }
-            let raw = encoded[1].isEmpty ? encoded[2] : encoded[1]
-            guard let args = try? JSONValue.parse(HTMLData.decodeEntities(raw)),
-                  args[0].string == "rank_\(kind.rawValue)/page", let parts = args[1].array,
-                  let content = parts.first(where: { $0["key"].string == "content" && $0["routerDataFnName"].string == "p" }),
-                  let payload = content["routerDataFnArgs"][0].string,
-                  let parsed = try? JSONValue.parse(payload) else { continue }
-            data = parsed
-        }
-        var seen = Set<String>()
-        func normalize(id: String, title: String, rank: Int?, cover: String, episodes: Int, tags: [String], heat: String, item: JSONValue) -> SeriesSummary? {
-            let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard id.isDigitsOnly, id.count >= 6, !title.isEmpty, let rank, rank >= 1, !seen.contains(id) else { return nil }
-            seen.insert(id)
-            let meta = metadata(item)
-            return SeriesSummary(seriesId: id, title: title, cover: HTMLData.safeCover(cover), episodeCount: episodes,
-                                 tags: Array(tags.prefix(4)), rank: rank, heat: heat.trimmingCharacters(in: .whitespaces),
-                                 episodeLabel: meta.label, completionStatus: meta.status, publishedAt: meta.published)
-        }
-        var results: [SeriesSummary] = []
-        if data["isSuccess"].bool != false, let list = data["rankList"].array {
-            for item in list {
-                if let summary = normalize(id: item["seriesId"].idString ?? "", title: item["title"].string ?? "",
-                                           rank: item["rank"].number.map { Int($0) }, cover: item["cover"].string ?? "",
-                                           episodes: item["episodeVids"].array?.count ?? 0,
-                                           tags: (item["tags"].array ?? []).compactMap(\.string),
-                                           heat: item["heatText"].string ?? "", item: item) {
-                    results.append(summary)
-                }
-            }
-        }
-        if results.isEmpty {
-            // Fallback: semantic headings and detail links in the rendered cards.
-            for article in HTMLData.allMatches("<article\\b[^>]*>([\\s\\S]*?)</article>", in: html) {
-                let body = article[1]
-                guard let heading = HTMLData.firstMatch("<h2\\b[^>]*\\bid=[\"']rank-title-(\\d+)[\"'][^>]*>([\\s\\S]*?)</h2>", in: body),
-                      body.contains("/detail?series_id=\(heading[1])") else { continue }
-                let cover = HTMLData.firstMatch("<img\\b[^>]*\\bsrc=(?:\"([^\"]*)\"|'([^']*)')", in: body)
-                let coverURL = cover.map { HTMLData.decodeEntities($0[1].isEmpty ? $0[2] : $0[1]) } ?? ""
-                let tagBlock = HTMLData.firstMatch("<p\\b[^>]*class=[\"'][^\"']*pc-categories-[^\"']*[\"'][^>]*>([\\s\\S]*?)</p>", in: body)?[1] ?? ""
-                let tags = HTMLData.allMatches("<span\\b[^>]*>([\\s\\S]*?)</span>", in: tagBlock).map { HTMLData.stripTags($0[1]) }
-                let rank = HTMLData.firstMatch("<span\\b[^>]*>\\s*(\\d+)\\s*</span>", in: body).flatMap { Int($0[1]) }
-                let heat = HTMLData.firstMatch("[\\d.,]+\\s*[万亿]?\\s*热度", in: HTMLData.stripTags(body))?[0] ?? ""
-                if let summary = normalize(id: heading[1], title: HTMLData.stripTags(heading[2]), rank: rank, cover: coverURL,
-                                           episodes: 0, tags: tags, heat: heat, item: .null) {
-                    results.append(summary)
-                }
-            }
-        }
-        guard !results.isEmpty else { throw HongguoError(.upstream, "来源榜单暂不可用，请重试或打开来源页面") }
-        let title = HTMLData.firstMatch("<title\\b[^>]*>([\\s\\S]*?)</title>", in: html).map { HTMLData.stripTags($0[1]) } ?? ""
-        let current = Int(data["pagination"]["pageNum"].number ?? Double(page))
-        let totalPages = Int(data["pagination"]["totalPages"].number ?? Double(current))
-        return CatalogPage(results: results, page: current, total: 0, totalPages: max(totalPages, current),
-                           genres: [], pageTitle: title, sourceURL: sourceURL)
     }
 }

@@ -98,15 +98,11 @@ final class AccountSync {
         reservations.removeAll { $0.seriesId == item.seriesId || $0.subscribeItemId == itemId }
         let online = item.isOnline
         enqueue("reservation:\(itemId)") { account in
+            // One request each, no second try with the other one.
             if online {
                 try await AccountDataAccess.deleteReservation(accountId: account, itemId: itemId, isOnline: true)
             } else {
-                do {
-                    try await AccountDataAccess.setReservation(accountId: account, itemId: itemId, reserved: false)
-                } catch {
-                    if error is CancellationError || (error as? HongguoError)?.kind == .cancelled { throw error }
-                    try await AccountDataAccess.deleteReservation(accountId: account, itemId: itemId, isOnline: false)
-                }
+                try await AccountDataAccess.setReservation(accountId: account, itemId: itemId, reserved: false)
             }
         } failure: { [weak self] text in
             self?.reservations = previous

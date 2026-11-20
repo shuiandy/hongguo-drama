@@ -817,7 +817,9 @@ struct PlayerSidePanel: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .glassSurface(.clear, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
-            Text(comments.notice).font(.system(size: 11)).foregroundStyle(.tertiary).padding(.top, 4)
+            if !comments.notice.isEmpty {
+                Text(comments.notice).font(.system(size: 11)).foregroundStyle(.tertiary).padding(.top, 4)
+            }
         } else if !episodeCommentsError.isEmpty {
             Text(episodeCommentsError).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 40)
         } else if vid == nil {

@@ -1,11 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Persistent single-device identity + BDInstall-aligned 6-hour renewal, activation
 // (`app_alert_check`), `x-tt-dt` (`device_token`), and logged-in Cookie helper shared across all
-// iOS Hongguo API channels. Mirrors official iOS 7.4.3 `BDInstall` (`_needRegsiter` = 21600 s,
-// `registerDeviceBaseURL`, `activateDeviceBaseURL`, `addDTokenForRequest:`).
+// Hongguo API channels of every app (Mac, iOS, tvOS). Mirrors official iOS 7.4.3 `BDInstall`
+// (`_needRegsiter` = 21600 s, `registerDeviceBaseURL`, `activateDeviceBaseURL`, `addDTokenForRequest:`).
+// Registration envelope and ttEncrypt adapted from src/native/playback-device.js, itself from
+// tsukiyo-zero/hongguoTV commit 388931852ddc614db8b00775a3dc54c5ede6307f,
+// kotlin-tv/core/src/main/kotlin/com/hongguotv/core/DeviceRegister.kt
+// (adapted from charlie901208/HGTV feat/phone-login, GPL-3.0-only).
 // Never logs device IDs, device tokens, or cookies.
 import Foundation
 import Security
+
+/// The App identity a request is signed with: the persistent device's ids.
+struct PlaybackIdentity: Sendable, Equatable, Codable {
+    var deviceId: String
+    var iid: String
+    var cdid: String
+}
 
 public actor PersistentAppDevice {
     public static let shared = PersistentAppDevice()
@@ -14,8 +25,6 @@ public actor PersistentAppDevice {
     public static let renewalInterval: TimeInterval = 21_600
     /// Minimum spacing between on-demand recovery renewals triggered by empty replies.
     private static let minRefreshInterval: TimeInterval = 30
-    /// Minimum spacing between full device rotations when a device appears burned.
-    private static let minRotateInterval: TimeInterval = 15
 
     private static let keychainService = "io.github.shuiandy.hongguo-drama.device"
     private static let keychainAccount = "primary"
@@ -25,6 +34,21 @@ public actor PersistentAppDevice {
     private static let fallbackRegisterBase = "https://log.snssdk.com/service/2/device_register/"
     private static let activateBase = "https://ichannel.snssdk.com/service/2/app_alert_check/"
     private static let registerUA = "com.phoenix.read/74332 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3)"
+    /// ttEncrypt key derivation salt of `device_register`.
+    static let kdfSalt = AppCrypto.fromHex("4dd4c2e6b83162090e52b3c7a6733ba41cb2462b829ab58a196b39db57177524f49baf7f08e8d68d26a72e37c1a95a2f1f05a51892aef2949732b62a38aadd58")!
+
+    /// A numeric id from a `device_register` reply (`<name>_str` first), "" when absent or invalid.
+    static func responseId(_ response: JSONValue, _ name: String) -> String {
+        let preferred = response["\(name)_str"]
+        let value: JSONValue = (preferred.isNull || preferred == .string("")) ? response[name] : preferred
+        switch value {
+        case .int(let i): return i > 0 && i <= 9_007_199_254_740_991 ? String(i) : ""
+        case .double(let d): return d > 0 && d.rounded() == d && d <= 9_007_199_254_740_991 ? String(Int64(d)) : ""
+        case .string(let s):
+            return s.range(of: "^[0-9]{1,30}$", options: .regularExpression) != nil && s.contains(where: { $0 != "0" }) ? s : ""
+        default: return ""
+        }
+    }
 
     /// Optional diagnostic hook for lifecycle events (status/booleans only, never secrets).
     public nonisolated(unsafe) static var onLog: (@Sendable (String) -> Void)?
@@ -76,7 +100,6 @@ public actor PersistentAppDevice {
     private var inflightIsFresh = false
     private var backgroundRenewTask: Task<Void, Never>?
     private var lastRefreshAt = Date.distantPast
-    private var lastRotateAt = Date.distantPast
     private var loadedFromStore = false
 
     /// Returns the persistent device identity immediately if stored (kicking off a non-blocking
@@ -106,7 +129,7 @@ public actor PersistentAppDevice {
 
     /// Synchronously refreshes the persisted device via `device_register` (passing existing
     /// `device_id`) + `app_alert_check` when a playback request encounters an empty reply.
-    /// Rate-limited to `minRefreshInterval` (60 s). Returns `true` if a renewal actually ran.
+    /// Rate-limited to `minRefreshInterval` (30 s). Returns `true` if a renewal actually ran.
     @discardableResult
     func refreshForRecovery(transport: AppTransport) async throws -> (identity: PlaybackIdentity, refreshed: Bool) {
         let existing = currentRecord()
@@ -119,26 +142,6 @@ public actor PersistentAppDevice {
         lastRefreshAt = now
         let updated = try await registerOrRenew(existing: existing, transport: transport)
         return (updated.playbackIdentity, true)
-    }
-
-    /// Re-registers a brand-new device identity only if at least `minRotateInterval` has elapsed
-    /// since the last rotation, preventing retry storms from spamming `device_register`.
-    /// Never coalesces onto an in-flight renewal of the old device.
-    func rotateIfAllowed(transport: AppTransport) async throws -> (identity: PlaybackIdentity, rotated: Bool) {
-        let now = Date()
-        guard now.timeIntervalSince(lastRotateAt) >= Self.minRotateInterval else {
-            return (try await get(transport: transport), false)
-        }
-        lastRotateAt = now
-        backgroundRenewTask?.cancel()
-        backgroundRenewTask = nil
-        if !inflightIsFresh {
-            inflight?.cancel()
-            inflight = nil
-        }
-        record = nil
-        let fresh = try await registerOrRenew(existing: nil, transport: transport, actionLabel: "rotate")
-        return (fresh.playbackIdentity, true)
     }
 
     /// Returns `[("x-tt-dt", deviceToken)]` when a `device_token` is available, matching
@@ -180,12 +183,12 @@ public actor PersistentAppDevice {
         backgroundRenewTask = nil
     }
 
-    private func registerOrRenew(existing: StoredRecord?, transport: AppTransport, actionLabel: String? = nil) async throws -> StoredRecord {
+    private func registerOrRenew(existing: StoredRecord?, transport: AppTransport) async throws -> StoredRecord {
         let wantsFresh = existing == nil
         if let inflight, (!wantsFresh || inflightIsFresh) {
             return try await inflight.value
         }
-        let label = actionLabel ?? (wantsFresh ? "register" : "renew")
+        let label = wantsFresh ? "register" : "renew"
         let task = Task<StoredRecord, Error> {
             var updated = try await Self.performRegister(existing: existing, transport: transport)
             let activated = await Self.performActivate(record: updated, transport: transport)
@@ -251,7 +254,7 @@ public actor PersistentAppDevice {
         let json = try JSONSerialization.data(withJSONObject: envelope, options: [.withoutEscapingSlashes])
         let compressed = try AppCrypto.gzip(Array(json))
         let random = AppCrypto.randomBytes(32)
-        let derived = AppCrypto.sha512(AppCrypto.sha512(random) + PlaybackDevice.kdfSalt)
+        let derived = AppCrypto.sha512(AppCrypto.sha512(random) + kdfSalt)
         let plaintext = AppCrypto.sha512(compressed) + compressed
         let cipher = try AppCrypto.aes128CBC(encrypt: true, key: Array(derived[0..<16]), iv: Array(derived[16..<32]),
                                              plaintext, pkcs7: true)
@@ -302,8 +305,8 @@ public actor PersistentAppDevice {
                 if (response["code"].number ?? response["Code"].number ?? 0) != 0 {
                     throw AppSourceError(.businessRejected, "Registration rejected")
                 }
-                let deviceId = PlaybackDevice.responseId(response, "device_id")
-                let iid = PlaybackDevice.responseId(response, "install_id")
+                let deviceId = responseId(response, "device_id")
+                let iid = responseId(response, "install_id")
                 guard !deviceId.isEmpty, !iid.isEmpty else {
                     throw AppSourceError(.invalidResponse, "Invalid registration")
                 }
@@ -378,6 +381,14 @@ public actor PersistentAppDevice {
 
     static var isSignedIn: Bool {
         !authHeaders().isEmpty
+    }
+
+    /// The identity and `device_token` for every data request (search, account, catalogue, book
+    /// mall, comments, danmaku). There is no other device.
+    static func dataIdentity(transport: AppTransport) async throws -> (identity: PlaybackIdentity, dToken: String) {
+        let identity = try await shared.get(transport: transport)
+        let token = await shared.dTokenValue()
+        return (identity, token)
     }
 
     // MARK: - Keychain Persistence

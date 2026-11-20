@@ -55,15 +55,6 @@ public enum DanmakuSigner {
         for i in 0..<8 { target[offset + i] = UInt8(truncatingIfNeeded: value >> (8 * UInt64(i))) }
     }
 
-    /// 1e18 + random % 8e18: a 19-digit decimal id (Go `newHongguoDeviceID`).
-    public static func newDeviceId(random given: [UInt8]? = nil) -> String {
-        let random = given ?? AppCrypto.randomBytes(8)
-        precondition(random.count == 8)
-        var raw: UInt64 = 0
-        for byte in random { raw = (raw << 8) | UInt64(byte) }
-        return String(1_000_000_000_000_000_000 + raw % 8_000_000_000_000_000_000)
-    }
-
     // MARK: Query
 
     static func baseParams(deviceId: String, installId: String) -> [(String, String)] {

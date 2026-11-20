@@ -1,31 +1,10 @@
 import Foundation
 import HongguoCore
 
-/// A feed built from the App's category list (`/reading/distribution/category/landpage/v/`),
-/// asked without a sort order. Each row already names episode 1 (`vid`), so a clip can start
-/// without first fetching the series' episode list. Paging uses the service's own cursor.
-///
-/// What this is not: the personalised 推荐 stream of the official app's home tab. That comes
-/// from another endpoint the core's signer does not allow. Two fresh requests here return the
-/// same series in a slightly different order.
-public enum AppFeedChannel: String, Sendable, CaseIterable {
-    /// Every genre mixed.
-    case all
-    /// 真人剧
-    case liveAction
-    /// 漫剧
-    case comic
-
-    var scene: String { self == .comic ? "comic_series" : "default" }
-    var genre: [String] {
-        switch self {
-        case .all: return []
-        case .liveAction: return ["short_play"]
-        case .comic: return ["comic_series"]
-        }
-    }
-}
-
+/// Row parsing shared by the home feed (`BookMallFeed`, the official 推荐 stream) and the App
+/// category list (`landpage/v/` rows): each row already names episode 1 (`vid`), so a clip can
+/// start without first fetching the series' episode list. The category list is no longer asked
+/// for a feed of its own; the book mall feed is the only one.
 public struct AppFeedCursor: Equatable, Sendable {
     public var offset: Int
     public var sessionId: String
@@ -57,24 +36,6 @@ public struct AppFeedPage: Equatable, Sendable {
 }
 
 public enum AppFeed {
-    public static let pageSize = 15
-
-    public static func requestBody(channel: AppFeedChannel, cursor: AppFeedCursor) -> Data {
-        let body: [String: Any] = [
-            "filter_ids": "", "req_scene": channel.scene, "offset": cursor.offset, "need_selector_panel": false, "limit": pageSize,
-            "select_items": ["genre": channel.genre, "sort": [String](), "category_dim_theme": [String](),
-                             "category_dim_role": [String](), "category_dim_epoch": [String](), "gender": [String](),
-                             "online_time": [String](), "creation_status": [String]()],
-            "session_id": cursor.sessionId, "req_type": cursor.offset > 0 ? "only_content" : "default", "client_req_type": 3,
-        ]
-        return (try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])) ?? Data()
-    }
-
-    public static func page(channel: AppFeedChannel, cursor: AppFeedCursor = .first) async throws -> AppFeedPage {
-        let payload = try await AppCatalogueAccess.landpage(body: requestBody(channel: channel, cursor: cursor))
-        return try parse(payload, after: cursor)
-    }
-
     /// Short dramas only (content types 1 and 1004), playable, with a series id, a title and an
     /// episode 1 id; duplicates inside the page are dropped.
     public static func parse(_ payload: JSONValue, after cursor: AppFeedCursor = .first) throws -> AppFeedPage {

@@ -144,6 +144,10 @@ final class PlayerController {
     /// Resume position asked for when the current item was started (0 once it has been judged).
     @ObservationIgnored private var pendingStartAt: Double = 0
     @ObservationIgnored private var lastSaved = Date.distantPast
+    /// Whether the current episode was really watched since it was opened. Opening and closing
+    /// without watching must not stamp a new "last watched" time: that would beat a newer position
+    /// from another device and push this Mac's stale one to the account.
+    @ObservationIgnored private var watch = WatchProgress()
     @ObservationIgnored private var retriedWithoutWeb = false
     @ObservationIgnored private var retriedWithFile = false
     @ObservationIgnored private var retriedFresh = false
@@ -208,6 +212,43 @@ final class PlayerController {
 
     // MARK: Opening
 
+    /// Continue watching a series from whichever is newer: this Mac's record or the account's row,
+    /// read fresh because another device may have watched further since the last background sync.
+    func resume(seriesId: String, title: String, cover: String) async {
+        PlayerWindows.shared.showPlayer()
+        isLoading = true
+        loadingText = "正在加载《\(title)》分集…"
+        errorMessage = nil
+        let model = AppModel.shared
+        async let synced: Void = model.syncCloudPosition(seriesId: seriesId)
+        do {
+            let list = try await SourceRouter.episodes(seriesId: seriesId)
+            await synced
+            continueWatching(list, cover: cover)
+        } catch {
+            isLoading = false
+            errorMessage = describe(error)
+        }
+    }
+
+    /// Continue watching a series whose episode list is already loaded (detail page).
+    func resume(episodes list: SeriesEpisodes, cover: String) async {
+        PlayerWindows.shared.showPlayer()
+        isLoading = true
+        loadingText = "正在同步观看进度…"
+        errorMessage = nil
+        await AppModel.shared.syncCloudPosition(seriesId: list.seriesId)
+        continueWatching(list, cover: cover)
+    }
+
+    private func continueWatching(_ list: SeriesEpisodes, cover: String) {
+        // Save what is playing now first (it may be this series), so the resume point sees it.
+        persistPosition()
+        resetWatchProgress()
+        let point = AppModel.shared.store.resumePoint(for: list.seriesId, episodeCount: list.episodes.count)
+        open(episodes: list, cover: cover, index: point.episodeIndex, startAt: point.position)
+    }
+
     /// Opens a series by id (history, context menus). Loads the episode list first.
     func open(seriesId: String, title: String, cover: String, index: Int = 1, startAt: Double = 0) async {
         PlayerWindows.shared.showPlayer()
@@ -225,6 +266,7 @@ final class PlayerController {
 
     func open(episodes list: SeriesEpisodes, cover: String, index: Int, startAt: Double = 0) {
         persistPosition()
+        resetWatchProgress()
         if episodes?.seriesId != list.seriesId {
             preparedMaps.removeAll()
             prefetched = nil
@@ -241,7 +283,10 @@ final class PlayerController {
 
     func play(index target: Int, startAt: Double = 0, force: Bool = false) {
         guard let list = episodes, target >= 1, target <= list.episodes.count else { return }
-        if target != index { persistPosition() }
+        if target != index {
+            persistPosition()
+            resetWatchProgress()
+        }
         index = target
         retriedWithoutWeb = false
         retriedWithFile = false
@@ -404,7 +449,7 @@ final class PlayerController {
         }
     }
 
-    /// Recovery: a failed web URL is penalised and re-resolved once; a failed progressive
+    /// Recovery: another catalogue's address is looked up once more; a failed progressive
     /// stream falls back once to the full download-and-decrypt path.
     private func mediaFailed(_ message: String) {
         let resumeAt = player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0
@@ -422,11 +467,7 @@ final class PlayerController {
         }
         if let info = currentInfo, info.source == .web, !retriedWithoutWeb {
             retriedWithoutWeb = true
-            let service = AppModel.shared.series
-            Task {
-                await service.markWebMediaFailure(info)
-                self.load(startAt: resumeAt, force: true)
-            }
+            load(startAt: resumeAt, force: true)
             return
         }
         if usedPrefetched, !retriedFresh {
@@ -551,6 +592,7 @@ final class PlayerController {
     /// Absolute seek, clamped to the item.
     func seek(to seconds: Double, precise: Bool = false) {
         guard player.currentItem != nil else { return }
+        watch.userMoved()
         var target = max(0, seconds)
         if duration > 0 { target = min(target, max(0, duration - 0.25)) }
         currentTime = target
@@ -645,6 +687,10 @@ final class PlayerController {
         }
     }
 
+    private func resetWatchProgress() {
+        watch = WatchProgress()
+    }
+
     func stop() {
         persistPosition()
         loadTask?.cancel()
@@ -659,7 +705,10 @@ final class PlayerController {
     private func tick() {
         if let item = player.currentItem {
             let now = player.currentTime().seconds
-            if now.isFinite { currentTime = now }
+            if now.isFinite {
+                currentTime = now
+                watch.sample(now, playing: isPlaying && !isBuffering)
+            }
             let total = item.duration.seconds
             if total.isFinite, total > 0 { duration = total }
             let ranges = item.loadedTimeRanges.map(\.timeRangeValue)
@@ -674,6 +723,7 @@ final class PlayerController {
     /// `periodic` for the 5-second save while playing; the account gets those at most every 15 s.
     func persistPosition(finished: Bool = false, periodic: Bool = false) {
         guard let list = episodes, let episode = currentEpisode, player.currentItem != nil else { return }
+        guard finished || watch.shouldSave else { return }
         lastSaved = Date()
         let position = finished ? 0 : player.currentTime().seconds
         let duration = player.currentItem?.duration.seconds ?? 0

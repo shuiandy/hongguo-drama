@@ -53,7 +53,7 @@ final class AppSourceParsingTests: XCTestCase {
         XCTAssertEqual(play.codec, "h264")
         XCTAssertEqual(play.contentKey.map { AppCrypto.hex($0) }, "00112233445566778899aabbccddeeff")
         XCTAssertTrue(play.isEncrypted)
-        XCTAssertEqual(play.userAgent, AppSource.playbackUA)
+        XCTAssertEqual(play.userAgent, AppSource.iosPlayerUA)
     }
 
     func testOffersOtherTiersAsVariants() throws {
@@ -130,7 +130,29 @@ final class AppSourceParsingTests: XCTestCase {
 
     func testRegistrationIdParsing() {
         let r = JSONValue(any: ["device_id": 123, "device_id_str": "7000000000000000001", "install_id_str": "", "install_id": "0"])
-        XCTAssertEqual(PlaybackDevice.responseId(r, "device_id"), "7000000000000000001")
-        XCTAssertEqual(PlaybackDevice.responseId(r, "install_id"), "")
+        XCTAssertEqual(PersistentAppDevice.responseId(r, "device_id"), "7000000000000000001")
+        XCTAssertEqual(PersistentAppDevice.responseId(r, "install_id"), "")
+    }
+
+    /// The one play request: the official iOS 7.4.3 profile on every app.
+    func testModelRequestUsesTheOfficialIOSProfile() throws {
+        let identity = PlaybackIdentity(deviceId: "7000000000000000001", iid: "7000000000000000002", cdid: "c")
+        let request = try AppSource.modelRequest(base: AppSource.playerSceneAPI,
+                                                 payload: try AppSource.modelPayload(vids: ["7000000000000000003"]),
+                                                 identity: identity)
+        let query = Dictionary(URLComponents(string: request.url)!.queryItems!.map { ($0.name, $0.value ?? "") },
+                               uniquingKeysWith: { a, _ in a })
+        XCTAssertTrue(request.url.hasPrefix(AppSource.playerSceneAPI))
+        XCTAssertEqual(query["device_platform"], "iphone")
+        XCTAssertEqual(query["version_code"], "74300")
+        XCTAssertEqual(query["channel"], "App Store")
+        XCTAssertEqual(query["device_id"], "7000000000000000001")
+        let headers = Dictionary(request.headers, uniquingKeysWith: { a, _ in a })
+        XCTAssertEqual(headers["User-Agent"], AppSource.iosPlayerUA)
+        XCTAssertEqual(headers["x-ss-dp"], "8662")
+        XCTAssertEqual(headers["Content-Encoding"], "gzip")
+        let payload = try JSONValue.parse(Data(try AppSource.modelPayload(vids: ["1"])))
+        XCTAssertEqual(payload["dr_scene"].string, "player")
+        XCTAssertEqual(payload["mixed_video_id_map"]["1004"].array?.count, 1)
     }
 }

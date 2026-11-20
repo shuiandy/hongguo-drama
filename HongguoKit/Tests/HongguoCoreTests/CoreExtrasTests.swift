@@ -1,37 +1,6 @@
 import XCTest
 @testable import HongguoCore
 
-final class EpisodeCommentsTests: XCTestCase {
-    func html(vid: String = "7300000000000000001") -> String {
-        let router: [String: Any] = ["loaderData": ["player": [
-            "seriesDetail": ["series_id": "7200000000000000002"], "vid": vid,
-            "episodeSocialInfo": ["episode_like_count": 12, "reviews": ["total_count": 40, "reviews": [
-                ["user_name": "甲", "content": "好看", "create_time": 1_700_000_000],
-                ["user_name": "甲", "content": "好看", "create_time": 1_700_000_000],
-                ["user_name": "乙", "content": "  "],
-                ["user_name": "丙", "content": "期待下一集"],
-            ]]],
-        ]]]
-        let json = String(data: try! JSONSerialization.data(withJSONObject: router), encoding: .utf8)!
-        return "<script>window._ROUTER_DATA = \(json);</script>"
-    }
-
-    func testParsesDedupesAndLimits() throws {
-        let result = try EpisodeCommentService.parse(html(), seriesId: "7200000000000000002", vid: "7300000000000000001")
-        XCTAssertEqual(result.items.map(\.content), ["好看", "期待下一集"])
-        XCTAssertEqual(result.total, 40)
-        XCTAssertEqual(result.likeCount, 12)
-        XCTAssertEqual(result.notice, EpisodeComments.limitedNotice)
-        XCTAssertEqual(result.items[0].id.count, 64)
-        let one = try EpisodeCommentService.parse(html(), seriesId: "7200000000000000002", vid: "7300000000000000001", limit: 1)
-        XCTAssertEqual(one.items.count, 1)
-    }
-
-    func testRejectsMismatchedEpisode() {
-        XCTAssertThrowsError(try EpisodeCommentService.parse(html(vid: "1"), seriesId: "7200000000000000002", vid: "7300000000000000001"))
-    }
-}
-
 final class ReleaseCheckTests: XCTestCase {
     func release(_ tag: String, draft: Bool = false, prerelease: Bool = false) -> JSONValue {
         .object(["tag_name": .string(tag), "draft": .bool(draft), "prerelease": .bool(prerelease),

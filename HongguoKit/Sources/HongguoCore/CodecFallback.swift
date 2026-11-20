@@ -61,17 +61,10 @@ public enum CodecFallback {
 
     /// The play model as the core asks for it, and the fallback address inside it.
     private static func model(vid: String, transport: AppTransport) async throws -> JSONValue {
-        let payloadObject: [String: Any] = [
-            "biz_param": ["detail_page_version": 0, "device_level": 3, "disable_digg_stat": false,
-                          "disable_video_relate_book": false, "need_all_video_definition": true, "need_mp4_align": false,
-                          "use_os_player": false, "use_server_dns": false, "video_platform": 1024],
-            "mixed_video_id_map": ["1004": [vid]],
-            "dr_scene": "player",
-        ]
-        let payload = Array(try JSONSerialization.data(withJSONObject: payloadObject, options: [.sortedKeys]))
+        let payload = try AppSource.modelPayload(vids: [vid])
         let identity = try await PersistentAppDevice.shared.get(transport: transport)
         let dToken = await PersistentAppDevice.shared.dTokenHeaders()
-        let signed = try await AppSource.shared.playbackRequest(payload: payload, identity: identity, modern: true)
+        let signed = try AppSource.modelRequest(base: AppSource.playerAPI, payload: payload, identity: identity)
         let response = try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers + dToken, body: signed.body,
                                                        deadline: Date().addingTimeInterval(12))
         guard (response["Code"].number ?? response["code"].number ?? 0) == 0 else {
@@ -174,11 +167,7 @@ public enum CodecFallback {
     /// The source of an episode at one size, as the core resolves it. With ByteVC2 allowed
     /// (a Mac probe run only) this is how a sample for decoding measurements is fetched.
     public static func sampleSource(vid: String, shortSide: Int?) async throws -> PlayInfo {
-        do {
-            return try await AppSource.shared.playInfo(vid: vid).selecting(shortSide: shortSide)
-        } catch let error as AppSourceError {
-            throw error.hongguoError
-        }
+        try await AuthenticatedPlaybackSource.shared.playInfo(vid: vid).selecting(shortSide: shortSide)
     }
 
     /// What the inline model and each form of the fallback address offer, for comparing.

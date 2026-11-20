@@ -2,7 +2,6 @@ import Foundation
 
 public enum UserAgents {
     public static let web = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    public static let api = "com.phoenix.read/71532 (Linux; U; Android 9; SM-N9860; Build/PQ3A.190705.10241111;tt-ok/3.12.13.20)"
 }
 
 public struct HTTPResponse: Sendable {

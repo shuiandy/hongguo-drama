@@ -10,34 +10,20 @@ import Glibc
 /// * only http/https without embedded credentials,
 /// * hostnames must look public (no localhost/.local/.lan/...),
 /// * IP literals and DNS answers must be public unicast addresses,
-/// * when the system resolver only returns Fake-IP answers (198.18.0.0/15, used by
-///   local proxy tools such as Surge/Clash), the real answer is checked through fixed
-///   DNS-over-HTTPS resolvers before the request may continue.
-/// How strictly a proxy's virtual answers are handled is `ProxyPolicy` (Mac `.strict`, iOS
-/// `.mobileProxy`); each block is reported through `onBlock` (host and reason) for the app's log.
-/// Real private, loopback and link-local answers, and a DoH answer that is not public, are
-/// blocked under both policies.
+/// * when the system resolver only returns a local proxy's virtual answers (Fake-IP
+///   198.18.0.0/15, or a ULA fc00::/7 address from the proxy's IPv6 interface, as Surge/Clash
+///   hand out on a Mac or as a VPN on a phone), the real answer is checked through fixed
+///   DNS-over-HTTPS resolvers before the request may continue. The service's own https hosts
+///   (`serviceDomains`) go on at once and are DoH-verified in the background (a non-public answer
+///   blocks the host from then on); other hosts wait for DoH (2 s).
+/// One behavior for every app; each block is reported through `onBlock` (host and reason) for
+/// the app's log. Real private, loopback and link-local answers, and a DoH answer that is not
+/// public, are always blocked.
 public enum URLGuard {
-    /// How a host whose system DNS answer is a local proxy's virtual address is checked.
-    public enum ProxyPolicy: Sendable, Equatable {
-        /// The Mac app: only Fake-IP 198.18.0.0/15 counts as a proxy answer, every such host waits
-        /// for the DoH answer (4 s), and a host stays checked for up to 60 seconds.
-        case strict
-        /// A phone that runs a proxy app such as Surge as a VPN with Fake-IP DNS, where names also
-        /// resolve to a ULA fc00::/7 address through the proxy's IPv6 interface and DoH requests
-        /// often fail or time out: ULA answers count as virtual too; the service's own https hosts
-        /// (`serviceDomains`) go on at once and are DoH-verified in the background (a non-public
-        /// answer blocks the host from then on); other hosts wait for DoH (2 s); a host stays
-        /// checked for up to 300 seconds.
-        case mobileProxy
-
-        /// The policy of this process (`PlatformBehavior.current`).
-        public static var current: ProxyPolicy { PlatformBehavior.current.proxyPolicy }
-
-        var cacheLimit: Int { self == .strict ? 60 : 300 }
-        var publicAnswerTTL: Int { self == .strict ? 60 : 120 }
-        var dohTimeout: TimeInterval { self == .strict ? 4 : 2 }
-    }
+    /// Hosts kept checked at most (each for up to 300 seconds).
+    static let cacheLimit = 300
+    static let publicAnswerTTL = 120
+    static let dohTimeout: TimeInterval = 2
 
     private static let blockedV4: [(UInt32, Int)] = [
         ("0.0.0.0", 8), ("10.0.0.0", 8), ("100.64.0.0", 10), ("127.0.0.0", 8),
@@ -107,11 +93,10 @@ public enum URLGuard {
         case privateTarget
     }
 
-    /// Under `.strict` only Fake-IP answers are virtual; a ULA answer is a private target.
-    public static func classify(_ addresses: [String], policy: ProxyPolicy = .current) -> Answer {
+    /// Fake-IP and ULA answers are a proxy's virtual ones; anything else not public is a private target.
+    public static func classify(_ addresses: [String]) -> Answer {
         if !addresses.isEmpty, addresses.allSatisfy(isPublicAddress) { return .publicOnly }
-        let virtual: (String) -> Bool = policy == .strict ? isFakeIP : isProxyVirtual
-        if !addresses.isEmpty, addresses.allSatisfy(virtual) { return .proxyVirtual }
+        if !addresses.isEmpty, addresses.allSatisfy(isProxyVirtual) { return .proxyVirtual }
         return .privateTarget
     }
 
@@ -172,21 +157,19 @@ public enum URLGuard {
     private static let cache = ResolutionCache()
 
     /// Full check including DNS. Throws `HongguoError(.security)` when the URL may reach a
-    /// private network. Results are cached per host (up to 60 or 300 seconds, see `ProxyPolicy`).
+    /// private network. Results are cached per host (up to 300 seconds).
     public static func check(_ url: URL) async throws {
-        let policy = ProxyPolicy.current
-        try await check(url, policy: policy, cache: cache, resolveHost: { try await resolve($0) },
-                        resolveDoH: { try await DoHResolver.resolveA($0, timeout: policy.dohTimeout) })
+        try await check(url, cache: cache, resolveHost: { try await resolve($0) },
+                        resolveDoH: { try await DoHResolver.resolveA($0, timeout: dohTimeout) })
     }
 
     static func check(
         _ url: URL,
-        policy: ProxyPolicy = .current,
         cache: ResolutionCache,
         resolveHost: @escaping @Sendable (String) async throws -> [String],
         resolveDoH: @escaping @Sendable (String) async throws -> ([String], Int)
     ) async throws {
-        let limit = policy.cacheLimit
+        let limit = cacheLimit
         let shownHost = url.host?.lowercased() ?? ""
         guard isPublicURL(url) else { throw blocked(host: shownHost, reason: "not a public http(s) URL") }
         guard var host = url.host?.lowercased() else { throw blocked(host: "", reason: "no host") }
@@ -207,9 +190,9 @@ public enum URLGuard {
             reportBlock(host: host, reason: "no address")
             throw HongguoError(.network, "片源域名未解析到地址")
         }
-        switch classify(addresses, policy: policy) {
+        switch classify(addresses) {
         case .publicOnly:
-            await cache.store(host, ttl: policy.publicAnswerTTL, limit: limit)
+            await cache.store(host, ttl: publicAnswerTTL, limit: limit)
             return
         case .privateTarget:
             throw blocked(host: host, reason: "resolves to a non-public address")
@@ -218,10 +201,9 @@ public enum URLGuard {
             guard url.scheme?.lowercased() == "https" else {
                 throw blocked(host: host, reason: "proxy virtual address, not https")
             }
-            // .mobileProxy: the service's own https hosts do not wait for the DoH roundtrip on a
-            // cold start; they are verified in the background instead (a non-public answer denies
-            // the host from then on).
-            if policy == .mobileProxy, allowsUnconfirmed(host: host, scheme: url.scheme) {
+            // The service's own https hosts do not wait for the DoH roundtrip on a cold start; they
+            // are verified in the background instead (a non-public answer denies the host from then on).
+            if allowsUnconfirmed(host: host, scheme: url.scheme) {
                 await cache.store(host, ttl: 60, limit: limit)
                 if await cache.beginBackgroundVerify(host) {
                     Task.detached(priority: .utility) {

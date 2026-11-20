@@ -196,8 +196,7 @@ struct ContinueWatchingCard: View {
     var body: some View {
         Button {
             Task {
-                await PlayerController.shared.open(seriesId: record.seriesId, title: record.title, cover: record.cover,
-                                                   index: record.episodeIndex, startAt: record.position)
+                await PlayerController.shared.resume(seriesId: record.seriesId, title: record.title, cover: record.cover)
             }
         } label: {
             HStack(spacing: 12) {

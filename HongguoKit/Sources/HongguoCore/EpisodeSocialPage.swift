@@ -1,10 +1,8 @@
 import Foundation
 
-/// What the public player page (`hongguoduanju.com/player/<series>/<episode>`) says about one
-/// episode and its series, beyond what `EpisodeCommentService` keeps: who wrote each comment,
-/// when, and how many likes it has, plus the series' collect count, first-shown date and cast.
-/// Same anonymous page, same request headers as `EpisodeCommentService`; read-only. The page
-/// carries at most 15 comments and no replies, and has no paging.
+/// One episode and its series as the App reports them: the episode's comments (author, date,
+/// likes, paged), its like count, and the series' facts from the App detail request. Read-only.
+/// `cast` is always empty here; the cast comes with `SeriesReviews` (the series page).
 public struct EpisodeSocial: Sendable, Equatable {
     public struct Comment: Sendable, Equatable, Identifiable {
         public var id: String
@@ -58,7 +56,8 @@ public struct EpisodeSocial: Sendable, Equatable {
 }
 
 /// What the public series page (`/detail?series_id=`) says: the score, how many rated it, the
-/// heat text and the first few reviews with their scores. Read-only, anonymous.
+/// heat text, the first few reviews with their scores and the cast. Read-only, anonymous. The
+/// only data still read from the website (score and written reviews have no App equivalent).
 public struct SeriesReviews: Sendable, Equatable {
     public var rating: Double?
     public var ratingCount: Int?
@@ -68,6 +67,8 @@ public struct SeriesReviews: Sendable, Equatable {
     public var reviewTotal: Int?
     /// The series' filing number as the page prints it (`record_number`), "" when it has none.
     public var recordNumber = ""
+    /// The cast as the page lists it (`seriesDetail.celebrities`), empty when it has none.
+    public var cast: [EpisodeSocial.CastMember] = []
 
     public init(rating: Double?, ratingCount: Int?, heatText: String, favoriteCount: Int?, reviews: [EpisodeSocial.Comment], reviewTotal: Int?) {
         self.rating = rating; self.ratingCount = ratingCount; self.heatText = heatText
@@ -77,64 +78,6 @@ public struct SeriesReviews: Sendable, Equatable {
 
 public enum EpisodeSocialService {
     private static let reviewCache = TTLCache<SeriesReviews>(limit: 64)
-
-    public struct IncompleteEpisodeList: LocalizedError {
-        public let expectedCount: Int
-        public var errorDescription: String? { "剧集详情分集列表不完整" }
-    }
-
-    /// Returns the series' episode list via the signed App `multi_video_detail/v1/` endpoint
-    /// (shared 5-minute cache with `load` and `synopsis`).
-    public static func episodes(seriesId: String, http: HTTPClient = .shared) async throws -> SeriesEpisodes {
-        guard seriesId.matchesDigits(min: 1, max: 30) else { throw HongguoError(.input, "无效的剧集编号") }
-        let detail = try await fetchAppSeriesDetail(seriesId: seriesId, http: http)
-        guard isCompleteEpisodeList(detail.episodeList.map(\.index), declaredCount: detail.episodeCount) else {
-            throw IncompleteEpisodeList(expectedCount: detail.episodeCount)
-        }
-        return SeriesEpisodes(
-            seriesId: seriesId,
-            title: detail.title.isEmpty ? "未命名短剧" : detail.title,
-            cover: detail.cover,
-            episodes: detail.episodeList,
-            webAccessibleEpisodes: nil,
-            source: .api
-        )
-    }
-
-    /// Series facts from the signed App detail request, for callers that used to read them from
-    /// the public series page: title, cover, synopsis, episode count, tags, first-shown date,
-    /// collect count and heat. Shares the 5-minute cache with `episodes` and `synopsis`.
-    public struct AppSeriesFacts: Sendable, Equatable {
-        public var title: String
-        public var cover: String
-        public var intro: String
-        public var episodeCount: Int
-        public var tags: [String]
-        public var firstShown: Date?
-        public var favoriteCount: Int?
-        public var heatText: String
-        public var recordNumber: String
-    }
-
-    public static func facts(seriesId: String, http: HTTPClient = .shared) async throws -> AppSeriesFacts {
-        guard seriesId.matchesDigits(min: 1, max: 30) else { throw HongguoError(.input, "无效的剧集编号") }
-        let detail = try await fetchAppSeriesDetail(seriesId: seriesId, http: http)
-        return AppSeriesFacts(title: detail.title, cover: detail.cover, intro: detail.intro, episodeCount: detail.episodeCount,
-                              tags: detail.tags, firstShown: detail.firstShown, favoriteCount: detail.favoriteCount,
-                              heatText: detail.heatText, recordNumber: detail.recordNumber)
-    }
-
-    public static func isCompleteEpisodeList(_ indices: [Int], declaredCount: Int) -> Bool {
-        !indices.isEmpty && (declaredCount <= 0 || indices.count == declaredCount) &&
-            indices.enumerated().allSatisfy { $0.element == $0.offset + 1 }
-    }
-
-    /// Returns the series synopsis from the signed App `multi_video_detail/v1/` endpoint (cached).
-    public static func synopsis(seriesId: String, http: HTTPClient = .shared) async -> String {
-        guard seriesId.matchesDigits(min: 1, max: 30) else { return "" }
-        let detail = try? await fetchAppSeriesDetail(seriesId: seriesId, http: http)
-        return (detail?.intro ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    }
 
     public static func reviews(seriesId: String, http: HTTPClient = .shared) async throws -> SeriesReviews {
         guard seriesId.matchesDigits(min: 6, max: 30) else { throw HongguoError(.input, "剧集编号无效") }
@@ -146,33 +89,15 @@ public enum EpisodeSocialService {
         }()
         let appDetail = await appTask
         let webResult = await webTask
-
-        let result: SeriesReviews
-        switch webResult {
-        case .success(var web):
-            if let appDetail {
-                if web.heatText.isEmpty { web.heatText = appDetail.heatText }
-                if web.favoriteCount == nil { web.favoriteCount = appDetail.favoriteCount }
-                if web.recordNumber.isEmpty { web.recordNumber = appDetail.recordNumber }
-            }
-            result = web
-        case .failure(let webError):
-            if let appDetail,
-               !appDetail.heatText.isEmpty || appDetail.favoriteCount != nil || !appDetail.recordNumber.isEmpty {
-                var fallback = SeriesReviews(
-                    rating: nil,
-                    ratingCount: nil,
-                    heatText: appDetail.heatText,
-                    favoriteCount: appDetail.favoriteCount,
-                    reviews: [],
-                    reviewTotal: nil
-                )
-                fallback.recordNumber = appDetail.recordNumber
-                result = fallback
-            } else {
-                throw webError
-            }
-        }
+        // Score, reviews and cast come only from the series page; heat, collect count and filing
+        // number only from the App detail. Neither fills in for the other.
+        if case .failure(let webError) = webResult, appDetail == nil { throw webError }
+        let web = try? webResult.get()
+        var result = SeriesReviews(rating: web?.rating, ratingCount: web?.ratingCount,
+                                   heatText: appDetail?.heatText ?? "", favoriteCount: appDetail?.favoriteCount,
+                                   reviews: web?.reviews ?? [], reviewTotal: web?.reviewTotal)
+        result.recordNumber = appDetail?.recordNumber ?? ""
+        result.cast = web?.cast ?? []
         await reviewCache.set(seriesId, result, ttl: 60)
         return result
     }
@@ -203,6 +128,7 @@ public enum EpisodeSocialService {
             reviewTotal: integer(social["reviews"]["total_count"]))
         let record = (data["seriesDetail"]["record_number"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if record.count <= 80 { result.recordNumber = record }
+        result.cast = cast(data["seriesDetail"]["celebrities"])
         return result
     }
 
@@ -253,10 +179,6 @@ public enum EpisodeSocialService {
 
     private static let cache = TTLCache<EpisodeSocial>(limit: 64)
     private static let seriesDetailCache = TTLCache<AppSeriesDetail>(limit: 32)
-    private static let commentDevice: (deviceId: String, installId: String) = (
-        DanmakuSigner.newDeviceId(),
-        DanmakuSigner.newDeviceId()
-    )
 
     public static func load(seriesId: String, vid: String, http: HTTPClient = .shared) async throws -> EpisodeSocial {
         guard seriesId.matchesDigits(min: 6, max: 30), vid.matchesDigits(min: 6, max: 30) else {
@@ -269,64 +191,29 @@ public enum EpisodeSocialService {
         async let commentsTask = try? commentsPage(seriesId: seriesId, vid: vid, cursor: "", count: 20, http: http)
         let appDetail = await detailTask
         let appComments = await commentsTask
-
-        if appDetail != nil || appComments != nil {
-            let epCounts = appDetail?.episodes[vid]
-            var result = EpisodeSocial(
-                seriesId: seriesId,
-                vid: vid,
-                title: appDetail?.title ?? "",
-                cover: appDetail?.cover ?? "",
-                intro: appDetail?.intro ?? "",
-                episodeCount: appDetail?.episodeCount ?? 0,
-                tags: appDetail?.tags ?? [],
-                cast: [],
-                firstShown: appDetail?.firstShown,
-                favoriteCount: appDetail?.favoriteCount,
-                comments: appComments?.comments ?? [],
-                commentTotal: appComments?.total ?? epCounts?.comments,
-                episodeLikes: epCounts?.likes,
-                nextCursor: appComments?.cursor ?? "",
-                hasMoreComments: appComments?.hasMore ?? false
-            )
-            // If App detail missed counts for this episode or comments failed, merge from public web page when available.
-            if result.episodeLikes == nil || result.favoriteCount == nil || (result.comments.isEmpty && appComments == nil) {
-                if let web = try? await loadWeb(seriesId: seriesId, vid: vid, http: http) {
-                    if result.title.isEmpty { result.title = web.title }
-                    if result.cover.isEmpty { result.cover = web.cover }
-                    if result.intro.isEmpty { result.intro = web.intro }
-                    if result.episodeCount == 0 { result.episodeCount = web.episodeCount }
-                    if result.tags.isEmpty { result.tags = web.tags }
-                    if result.cast.isEmpty { result.cast = web.cast }
-                    if result.firstShown == nil { result.firstShown = web.firstShown }
-                    if result.favoriteCount == nil { result.favoriteCount = web.favoriteCount }
-                    if result.episodeLikes == nil { result.episodeLikes = web.episodeLikes }
-                    if result.commentTotal == nil { result.commentTotal = web.commentTotal }
-                    if result.comments.isEmpty { result.comments = web.comments }
-                }
-            }
-            await cache.set(key, result, ttl: 60)
-            return result
+        guard appDetail != nil || appComments != nil else {
+            throw HongguoError(.unavailable, "App 剧集信息和评论暂时取不到，请稍后重试")
         }
-
-        let result = try await loadWeb(seriesId: seriesId, vid: vid, http: http)
+        let epCounts = appDetail?.episodes[vid]
+        let result = EpisodeSocial(
+            seriesId: seriesId,
+            vid: vid,
+            title: appDetail?.title ?? "",
+            cover: appDetail?.cover ?? "",
+            intro: appDetail?.intro ?? "",
+            episodeCount: appDetail?.episodeCount ?? 0,
+            tags: appDetail?.tags ?? [],
+            cast: [],
+            firstShown: appDetail?.firstShown,
+            favoriteCount: appDetail?.favoriteCount,
+            comments: appComments?.comments ?? [],
+            commentTotal: appComments?.total ?? epCounts?.comments,
+            episodeLikes: epCounts?.likes,
+            nextCursor: appComments?.cursor ?? "",
+            hasMoreComments: appComments?.hasMore ?? false
+        )
         await cache.set(key, result, ttl: 60)
         return result
-    }
-
-    private static func loadWeb(seriesId: String, vid: String, http: HTTPClient) async throws -> EpisodeSocial {
-        var options = HTTPClient.Options()
-        options.headers = ["User-Agent": UserAgents.web, "Referer": Site.referer,
-                           "Accept": "text/html,application/xhtml+xml", "Accept-Language": "zh-CN,zh;q=0.9"]
-        options.timeout = 10
-        options.maxRedirects = 0
-        let response: HTTPResponse
-        do {
-            response = try await http.get(Site.playerURL(seriesId, vid), options: options)
-        } catch let error as HTTPStatusError where error.status == 302 {
-            throw HongguoError(.unavailable, "该集在官网需要解锁，暂无公开信息")
-        }
-        return try parse(response.text, seriesId: seriesId, vid: vid)
     }
 
     /// Fetches series-level favorite count + every episode's like & comment count in one signed
@@ -334,24 +221,10 @@ public enum EpisodeSocialService {
     private static func fetchAppSeriesDetail(seriesId: String, http: HTTPClient) async throws -> AppSeriesDetail {
         if let cached = await seriesDetailCache.get(seriesId) { return cached }
         let transport = AppTransport(http: http)
-        // PlatformBehavior: the persistent device and its token, or the registered playback device.
-        let identity: PlaybackIdentity
-        var dToken: [(String, String)] = []
-        if DataDevice.persistent {
-            identity = try await PersistentAppDevice.shared.get(transport: transport)
-            dToken = await PersistentAppDevice.shared.dTokenHeaders()
-        } else {
-            identity = try await PlaybackDevice.shared.register(transport: transport)
-        }
-        let ios = AppClientProfile.default == .ios
-        let profile: [(String, String)] = ios
-            ? [("aid", "8662"), ("app_name", "novelread"), ("version_code", "74300"), ("version_name", "7.4.3"),
-               ("channel", "App Store"), ("device_platform", "iphone"), ("device_type", "iPhone17,1"), ("os_version", "18.3"),
-               ("update_version_code", "74300")]
-            : [("aid", "8662"), ("app_name", "novelread"), ("version_code", "74332"), ("version_name", "7.4.3.32"),
-               ("channel", "vivo_8662_64"), ("device_platform", "android"), ("device_type", "PGT-AN10"), ("os_version", "12"),
-               ("update_version_code", "74332")]
-        let extra: [(String, String)] = (ios ? [("x-ss-dp", "8662"), ("sdk-version", "2")] : []) + dToken + DataDevice.authHeaders
+        // The persistent device, its token and the login Cookie, with the official iOS 7.4.3 profile.
+        let identity = try await PersistentAppDevice.shared.get(transport: transport)
+        let dToken = await PersistentAppDevice.shared.dTokenHeaders()
+        let extra: [(String, String)] = [("x-ss-dp", "8662"), ("sdk-version", "2")] + dToken + PersistentAppDevice.authHeaders()
         let bodyObj: [String: Any] = [
             "biz_param": [
                 "detail_page_version": 0, "disable_digg_stat": false,
@@ -365,14 +238,14 @@ public enum EpisodeSocialService {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let signed = try PlaybackSignerV5.shared.sign(
             base: "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_detail/v1/",
-            values: profile + [("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId)],
+            values: AppSource.iosProfile + [("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId)],
             body: payload,
             nowMillis: now
         )
         let j = try await transport.requestJSON(
             signed.url, method: "POST",
             headers: signed.headers + [
-                ("User-Agent", ios ? AppSource.iosPlayerUA : AppSource.playerUA), ("Accept", "application/json"),
+                ("User-Agent", AppSource.iosPlayerUA), ("Accept", "application/json"),
                 ("Content-Type", "application/json; charset=utf-8"), ("Content-Encoding", "gzip"),
             ] + extra,
             body: payload, deadline: Date().addingTimeInterval(10)
@@ -464,9 +337,8 @@ public enum EpisodeSocialService {
         }
         let stampMs = Int64(Date().timeIntervalSince1970 * 1000)
         let stamp = stampMs / 1000
-        let persisted = await DataDevice.optional(transport: AppTransport(http: http)).identity
-        let rawQuery = DanmakuSigner.buildQuery(stampMs: stampMs, deviceId: persisted?.deviceId ?? commentDevice.deviceId,
-                                                installId: persisted?.iid ?? commentDevice.installId)
+        let device = try await PersistentAppDevice.dataIdentity(transport: AppTransport(http: http)).identity
+        let rawQuery = DanmakuSigner.buildQuery(stampMs: stampMs, deviceId: device.deviceId, installId: device.iid)
         guard let url = URL(string: "https://api5-normal-sinfonlineb.fqnovel.com/novel/commentapi/comment/list/\(vid)/v1/?\(rawQuery)") else {
             throw HongguoError(.input, "评论请求地址无效")
         }
@@ -478,7 +350,7 @@ public enum EpisodeSocialService {
             ("X-XS-From-Web", "0"), ("Sdk-Version", "2"),
             ("Content-Type", "application/json; charset=utf-8"),
             ("Comment-Source", "4"), ("Server-Channel", "18"),
-        ] + signHeaders + DataDevice.authHeaders
+        ] + signHeaders + PersistentAppDevice.authHeaders()
         for (k, v) in headers { options.headers[k] = v }
         let bodyObj: [String: Any] = [
             "comment_source": 4, "server_channel": 18, "group_id": vid, "group_type": 30,
@@ -545,31 +417,12 @@ public enum EpisodeSocialService {
         url.hasPrefix("http://") ? "https://" + url.dropFirst(7) : url
     }
 
-    public static func parse(_ html: String, seriesId: String, vid: String) throws -> EpisodeSocial {
-        let router = try HTMLData.routerData(html)
-        guard let data = (router["loaderData"].object ?? [:]).values.first(where: { !$0["seriesDetail"].isNull && $0["isSuccess"].bool != false }) else {
-            throw HongguoError(.format, "来源页面未返回公开剧集信息")
-        }
-        let detail = data["seriesDetail"]
-        guard detail["series_id"].idString == seriesId else { throw HongguoError(.format, "来源页面剧集不匹配") }
-        let social = data["episodeSocialInfo"]
-        let comments = comments(social["reviews"]["reviews"])
-        let cast = (detail["celebrities"].array ?? []).compactMap { person -> EpisodeSocial.CastMember? in
+    /// The page's `celebrities` list.
+    static func cast(_ list: JSONValue) -> [EpisodeSocial.CastMember] {
+        (list.array ?? []).compactMap { person -> EpisodeSocial.CastMember? in
             guard let name = person["nickname"].string, !name.isEmpty else { return nil }
             return .init(id: person["celebrity_id"].idString ?? name, name: name, role: person["sub_title"].string ?? "",
                          avatar: secure(person["avatar"].string ?? ""))
         }
-        return EpisodeSocial(
-            seriesId: seriesId, vid: vid,
-            title: detail["series_name"].string ?? "", cover: secure(detail["series_cover"].string ?? ""),
-            intro: detail["series_intro"].string ?? "",
-            episodeCount: integer(detail["episode_cnt"]) ?? 0,
-            tags: (detail["tags"].array ?? []).compactMap(\.string),
-            cast: cast,
-            firstShown: date(detail["first_visible_time"]),
-            favoriteCount: integer(data["seriesSocialInfo"]["series_favorite_count"]),
-            comments: comments,
-            commentTotal: integer(social["reviews"]["total_count"]),
-            episodeLikes: integer(social["episode_like_count"]))
     }
 }

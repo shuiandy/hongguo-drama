@@ -476,80 +476,6 @@ public enum DiscoveryAccess {
         return parseSameIPSeries(payload, currentSeriesId: seriesId)
     }
 
-    // MARK: - Search (App API, preserving HEIC/HTTPS covers for iOS)
-
-    /// Official App search (`/reading/bookapi/search/tab/v`) preserving `.heic` cover URLs
-    /// (the macOS `AppSearch` parser drops `.heic` covers for AppKit compatibility, which left
-    /// iOS search results and detail "相关作品" cards with empty covers).
-    public static func search(
-        _ keyword: String,
-        page: Int = 1,
-        timeout: TimeInterval = 10
-    ) async throws -> [SeriesSummary] {
-        let kw = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !kw.isEmpty else { return [] }
-        let deadline = Date().addingTimeInterval(timeout)
-        let transport = AppTransport(http: .shared)
-        let identity = try await DataDevice.registered(transport: transport).identity
-        let signed = try AppLegacySigner.shared.search(
-            keyword: kw,
-            page: max(1, page),
-            cursor: nil,
-            identity: identity,
-            nowMillis: Int64(Date().timeIntervalSince1970 * 1000)
-        )
-        let payload = try await transport.requestJSON(signed.url, headers: signed.headers + DataDevice.authHeaders, deadline: deadline)
-        return try parseAppSearch(payload)
-    }
-
-    static func parseAppSearch(_ payload: JSONValue) throws -> [SeriesSummary] {
-        if let code = SearchText.integer(payload["code"]), code != 0 {
-            throw HongguoError(.upstream, "App 搜索返回业务错误")
-        }
-        guard let tabs = payload["search_tabs"].array ?? payload["data"]["search_tabs"].array else {
-            throw HongguoError(.format, "App 搜索数据结构异常")
-        }
-        guard let tab = tabs.first(where: { SearchText.integer($0["tab_type"]) == AppSearchService.searchTab }) else {
-            throw HongguoError(.format, "App 搜索暂未返回短剧结果")
-        }
-        var seen = Set<String>()
-        var results: [SeriesSummary] = []
-        for cell in tab["data"].array ?? [] {
-            guard let video = (cell["video_data"].array ?? []).first(where: { ($0["series_id"].idString ?? "").matchesDigits(min: 1, max: 30) }),
-                  let seriesId = video["series_id"].idString else { continue }
-            let title = SearchText.clean(cell["search_high_light"]["title"]["text"].string ?? video["title"].string ?? cell["cell_name"].string)
-            guard !title.isEmpty, seen.insert(seriesId).inserted else { continue }
-            let rawCover = video["cover"].string
-                ?? video["series_cover"].string
-                ?? video["video_detail"]["series_cover"].string
-                ?? ""
-            let cover = normalizedCover(rawCover)
-            let count = SearchText.integer(video["episode_cnt"]) ?? SearchText.integer(video["episode_count"]) ?? 0
-            let subs = video["sub_title_list"].array ?? []
-            let rawHeat = AccountService.cleanText(
-                subs.first(where: { Int($0["data_type"].number ?? 0) == 27 })?["content"].string
-                ?? subs.first(where: { ($0["content"].string ?? "").contains("热度") })?["content"].string
-            )
-            let heat = (!rawHeat.isEmpty && !rawHeat.contains("热度")) ? "\(rawHeat)热度" : rawHeat
-            let tags = subs
-                .filter { Int($0["data_type"].number ?? 0) == 3 }
-                .compactMap { AccountService.cleanText($0["content"].string) }
-                .filter { !$0.isEmpty }
-            let desc = SearchText.clean(video["series_intro"].string ?? video["video_desc"].string ?? cell["series_intro"].string)
-            results.append(SeriesSummary(
-                seriesId: seriesId,
-                title: title,
-                cover: cover,
-                episodeCount: count,
-                tags: tags,
-                description: desc,
-                heat: heat,
-                episodeLabel: count > 0 ? "全\(count)集" : ""
-            ))
-        }
-        return results
-    }
-
     // MARK: - Search Suggestions
 
     public static func searchSuggestions(query: String, timeout: TimeInterval = 5) async -> [String] {
@@ -958,7 +884,8 @@ public enum DiscoveryAccess {
         return SameIPSeriesResult(tabTitle: tabTitle, items: items, novel: novel, currentSeasonIndex: currentSeason)
     }
 
-    private static func normalizedCover(_ raw: String) -> String {
+    /// App covers as sent (HEIC kept), forced to https.
+    static func normalizedCover(_ raw: String) -> String {
         let cleaned = AccountService.cleanCover(raw)
         if !cleaned.isEmpty { return cleaned }
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -326,11 +326,7 @@ struct MeReservationsView: View {
             model.open(SeriesSummary(seriesId: item.seriesId, title: item.title, cover: item.cover, description: item.description))
             return
         }
-        let record = model.history.first { $0.seriesId == item.seriesId }
-        Task {
-            await PlayerController.shared.open(seriesId: item.seriesId, title: item.title, cover: item.cover,
-                                               index: record?.episodeIndex ?? 1, startAt: record?.position ?? 0)
-        }
+        Task { await PlayerController.shared.resume(seriesId: item.seriesId, title: item.title, cover: item.cover) }
     }
 }
 

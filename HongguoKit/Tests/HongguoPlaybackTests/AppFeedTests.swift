@@ -78,27 +78,4 @@ final class AppFeedTests: XCTestCase {
         XCTAssertThrowsError(try parsed("{\"code\":0,\"data\":{}}"))
         XCTAssertThrowsError(try parsed("[]"))
     }
-
-    func testRequestBodyPerChannelAndPage() throws {
-        func body(_ channel: AppFeedChannel, _ cursor: AppFeedCursor) throws -> [String: Any] {
-            try XCTUnwrap(JSONSerialization.jsonObject(with: AppFeed.requestBody(channel: channel, cursor: cursor)) as? [String: Any])
-        }
-        let first = try body(.liveAction, .first)
-        XCTAssertEqual(first["req_scene"] as? String, "default")
-        XCTAssertEqual(first["req_type"] as? String, "default")
-        XCTAssertEqual(first["offset"] as? Int, 0)
-        XCTAssertEqual(first["limit"] as? Int, 15)
-        let items = try XCTUnwrap(first["select_items"] as? [String: Any])
-        XCTAssertEqual(items["genre"] as? [String], ["short_play"])
-        XCTAssertEqual(items["sort"] as? [String], [])
-
-        let comic = try body(.comic, AppFeedCursor(offset: 30, sessionId: "s"))
-        XCTAssertEqual(comic["req_scene"] as? String, "comic_series")
-        XCTAssertEqual(comic["req_type"] as? String, "only_content")
-        XCTAssertEqual(comic["offset"] as? Int, 30)
-        XCTAssertEqual(comic["session_id"] as? String, "s")
-        XCTAssertEqual((comic["select_items"] as? [String: Any])?["genre"] as? [String], ["comic_series"])
-
-        XCTAssertEqual((try body(.all, .first)["select_items"] as? [String: Any])?["genre"] as? [String], [])
-    }
 }

@@ -5,9 +5,6 @@ import HongguoCore
 /// a probe, so `swift test` never touches the network. Raw responses go to captures/ (ignored
 /// by git); only shapes are printed.
 final class FeedProbeTests: XCTestCase {
-    // Live probes of the iOS app: run with its behavior (PlatformBehavior.iOS).
-    override func setUp() { super.setUp(); PlatformBehavior.current = .iOS }
-    override func tearDown() { PlatformBehavior.current = .mac; super.tearDown() }
 
     private var probe: String { ProcessInfo.processInfo.environment["HONGGUO_PROBE"] ?? "" }
     private var captures: URL {
@@ -134,9 +131,6 @@ private extension Array {
 /// `HONGGUO_PROBE=codec HONGGUO_VID=<episode id> swift test --filter CodecProbeTests`: what an
 /// episode's play model and the forms of its fallback address offer (encoding and size only).
 final class CodecProbeTests: XCTestCase {
-    // Live probes of the iOS app: run with its behavior (PlatformBehavior.iOS).
-    override func setUp() { super.setUp(); PlatformBehavior.current = .iOS }
-    override func tearDown() { PlatformBehavior.current = .mac; super.tearDown() }
 
     func testCodecFallbackOffers() async throws {
         let environment = ProcessInfo.processInfo.environment
@@ -181,9 +175,6 @@ final class CodecProbeTests: XCTestCase {
 /// `HONGGUO_PROBE=find HONGGUO_TITLE=<part of a title> HONGGUO_VID=<episode id> swift test --filter FindProbeTests`:
 /// which series (by search) holds an episode id, and at which episode number.
 final class FindProbeTests: XCTestCase {
-    // Live probes of the iOS app: run with its behavior (PlatformBehavior.iOS).
-    override func setUp() { super.setUp(); PlatformBehavior.current = .iOS }
-    override func tearDown() { PlatformBehavior.current = .mac; super.tearDown() }
 
     func testFindSeriesOfEpisode() async throws {
         let environment = ProcessInfo.processInfo.environment
@@ -191,7 +182,7 @@ final class FindProbeTests: XCTestCase {
             throw XCTSkip("set HONGGUO_PROBE=find, HONGGUO_TITLE and HONGGUO_VID")
         }
         let service = SeriesService()
-        let found = try await HongguoSearch().search(title).results
+        let found = try await AppSearchService().search(title).results
         for series in found.prefix(5) {
             let list = try await service.episodes(seriesId: series.seriesId)
             if let episode = list.episodes.first(where: { $0.vid == vid }) {
@@ -206,16 +197,13 @@ final class FindProbeTests: XCTestCase {
 /// `HONGGUO_PROBE=series swift test --filter SeriesTabProbeTests`: inspects `DiscoveryAccess.sameIPSeries`
 /// for multi-season / same-IP series (`scene=10&from=single_col_same_ip_series`).
 final class SeriesTabProbeTests: XCTestCase {
-    // Live probes of the iOS app: run with its behavior (PlatformBehavior.iOS).
-    override func setUp() { super.setUp(); PlatformBehavior.current = .iOS }
-    override func tearDown() { PlatformBehavior.current = .mac; super.tearDown() }
 
     func testSameIPSeriesPlan() async throws {
         guard ProcessInfo.processInfo.environment["HONGGUO_PROBE"] == "series" else {
             throw XCTSkip("set HONGGUO_PROBE=series")
         }
         let query = ProcessInfo.processInfo.environment["HONGGUO_TITLE"] ?? "直男上恋综气哭前女友"
-        let found = try await HongguoSearch().search(query, appFirst: true).results
+        let found = try await AppSearchService().search(query).results
         guard let first = found.first else {
             print("PROBE series: no search result for \(query)")
             return
@@ -247,12 +235,12 @@ final class SeriesTabProbeTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["HONGGUO_PROBE"] == "catalog" else {
             throw XCTSkip("set HONGGUO_PROBE=catalog")
         }
-        // 1. Episodes + Synopsis (App API first)
-        let eps = try await EpisodeSocialService.episodes(seriesId: "7675312158082616345")
-        let intro = await EpisodeSocialService.synopsis(seriesId: "7675312158082616345")
+        // 1. Episodes + synopsis (the website's series pages)
+        let eps = try await SeriesService().episodes(seriesId: "7675312158082616345")
+        let intro = try await SeriesService().publicDetails(seriesId: "7675312158082616345").description
         print("PROBE episodes: count=\(eps.episodes.count) source=\(eps.source) title=\(eps.title) introLen=\(intro.count)")
         XCTAssertGreaterThan(eps.episodes.count, 50)
-        XCTAssertEqual(eps.source, .api)
+        XCTAssertEqual(eps.source, .web)
         XCTAssertFalse(intro.isEmpty)
 
         // 2. Reviews on website-404 drama (S3 7692377412511730713) falls back to App detail
@@ -261,8 +249,8 @@ final class SeriesTabProbeTests: XCTestCase {
         XCTAssertFalse(rev.heatText.isEmpty)
         XCTAssertNotNil(rev.favoriteCount)
 
-        // 3. Search (App first, preserving HEIC covers for iOS)
-        let searchResults = try await DiscoveryAccess.search("收租精神小妹")
+        // 3. Search (the App search, HEIC covers kept)
+        let searchResults = try await AppSearchService().search("收租精神小妹").results
         let withCovers = searchResults.filter { !$0.cover.isEmpty }.count
         print("PROBE search: count=\(searchResults.count) withCovers=\(withCovers) first=\(searchResults.first?.title ?? "-") cover=\(searchResults.first?.cover.prefix(60) ?? "-")")
         XCTAssertFalse(searchResults.isEmpty)

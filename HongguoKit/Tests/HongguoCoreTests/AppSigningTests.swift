@@ -67,17 +67,6 @@ final class AppSigningTests: XCTestCase {
         }
     }
 
-    func testPlayer551MatchesNode() throws {
-        for (i, row) in (try vectors["player"] as! [[String: Any]]).enumerated() {
-            let body = (row["body"] as? String).flatMap(AppCrypto.fromHex)
-            let headers = try PlayerSignature551.sign(query: row["query"] as! String, body: body,
-                                                      ts: (row["ts"] as! NSNumber).uint64Value,
-                                                      randField: (row["randField"] as! NSNumber).int32Value,
-                                                      ladonRandom: hex(row["ladonRandom"]))
-            XCTAssertEqual(Dictionary(headers, uniquingKeysWith: { a, _ in a }), row["headers"] as! [String: String], "551 \(i)")
-        }
-    }
-
     func testContentKeyAndSpadeURL() throws {
         let v = try vectors
         for row in v["contentKeys"] as! [[String: String]] {

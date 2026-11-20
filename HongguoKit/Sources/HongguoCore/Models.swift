@@ -36,15 +36,6 @@ public struct SeriesSummary: Identifiable, Hashable, Codable, Sendable {
     }
 }
 
-public struct SearchPage: Sendable {
-    public var keyword: String
-    public var results: [SeriesSummary]
-    public var total: Int
-    public var totalPages: Int
-    public var page: Int
-    public var hasMore: Bool
-}
-
 public struct Genre: Hashable, Identifiable, Sendable {
     public var id: String { slug }
     public var slug: String

@@ -2,15 +2,13 @@ import XCTest
 @testable import HongguoCore
 
 /// Opt-in live smoke test against the real danmaku endpoint: `HONGGUO_LIVE=1 swift test --filter DanmakuLiveTests`.
-/// Read-only requests; the anonymous identity is written to a temporary folder, never to the app's data.
+/// Read-only requests, signed for the persistent device (the only device).
 final class DanmakuLiveTests: XCTestCase {
     func testOfficialDanmakuForARankedSeries() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["HONGGUO_LIVE"] == "1", "set HONGGUO_LIVE=1 to run")
         let catalog = try await CatalogService().browse(kind: CatalogKind.allCases[0])
         let series = SeriesService()
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("danmaku-live-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let danmaku = DanmakuService(identityFile: dir.appendingPathComponent("client.json"))
+        let danmaku = DanmakuService()
         var report: [String] = []
         var anyItems = false
         for summary in catalog.results.prefix(3) {

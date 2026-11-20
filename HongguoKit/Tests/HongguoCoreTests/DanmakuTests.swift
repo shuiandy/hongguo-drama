@@ -27,10 +27,7 @@ final class DanmakuSigningTests: XCTestCase {
         }
     }
 
-    func testDeviceIdAndVarint() throws {
-        for row in try XCTUnwrap(Self.fixture["deviceIds"].array) {
-            XCTAssertEqual(DanmakuSigner.newDeviceId(random: AppCrypto.fromHex(row["random"].string!)!), row["deviceId"].string)
-        }
+    func testVarint() throws {
         for row in try XCTUnwrap(Self.fixture["uvarint"].array) {
             XCTAssertEqual(AppCrypto.hex(DanmakuSigner.uvarint(UInt64(row["value"].number!))), row["hex"].string)
         }
@@ -111,7 +108,7 @@ final class DanmakuParsingTests: XCTestCase {
     }
 
     func service(_ transport: ScriptedTransport) -> DanmakuService {
-        DanmakuService(transport: transport, identityFile: nil,
+        DanmakuService(transport: transport,
                        identity: DanmakuIdentity(deviceId: "1234567890123456789", installId: "2234567890123456789"),
                        now: { Date(timeIntervalSince1970: 1_763_430_000.123) },
                        nonce: { Array(1...11) }, pageGap: .zero)
@@ -182,18 +179,6 @@ final class DanmakuParsingTests: XCTestCase {
         XCTAssertTrue(limited.truncated)
         let bad = await service(transport).fetch(seriesId: "xifan:a:b", vid: Self.vid)
         XCTAssertEqual(bad.error, "仅红果来源的剧集支持弹幕")
-    }
-
-    func testIdentityPersistsAcrossLoads() throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let file = dir.appendingPathComponent("danmaku-client.json")
-        let first = try DanmakuIdentity.loadOrCreate(at: file)
-        let second = try DanmakuIdentity.loadOrCreate(at: file)
-        XCTAssertEqual(first, second)
-        XCTAssertEqual(first.deviceId.count, 19)
-        try Data("{\"deviceId\":\"1\",\"installId\":\"2\"}".utf8).write(to: file)
-        XCTAssertThrowsError(try DanmakuIdentity.loadOrCreate(at: file))
     }
 }
 

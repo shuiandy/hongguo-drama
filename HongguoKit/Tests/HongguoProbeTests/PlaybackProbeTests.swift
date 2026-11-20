@@ -4,9 +4,6 @@ import HongguoCore
 /// Live, read-only probe for the BDInstall-aligned `PersistentAppDevice` + `AuthenticatedPlaybackSource`.
 /// Skipped unless `HONGGUO_PROBE=playback` is set. Never prints secrets or raw device IDs/tokens.
 final class PlaybackProbeTests: XCTestCase {
-    // Live probes of the iOS app: run with its behavior (PlatformBehavior.iOS).
-    override func setUp() { super.setUp(); PlatformBehavior.current = .iOS }
-    override func tearDown() { PlatformBehavior.current = .mac; super.tearDown() }
 
     func testAuthenticatedPlaybackSourceLive() async throws {
         try XCTSkipUnless(

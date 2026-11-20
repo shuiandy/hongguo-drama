@@ -26,10 +26,21 @@ final class ParsingTests: XCTestCase {
         ]]])
         let result = try SeriesService.parseEpisodeList(html, seriesId: "7400000000000000001")
         XCTAssertEqual(result.title, "测试剧")
+        XCTAssertEqual(result.source, .web)
         XCTAssertEqual(result.episodes.map(\.index), [1, 2, 3])
         XCTAssertEqual(result.episodes.last?.vid, "7400000000000000013")
-        XCTAssertEqual(result.episodes.map(\.webAvailable), [true, true, false])
-        XCTAssertEqual(result.webAccessibleEpisodes, 2)
+        // Every episode plays through the App source, whatever the website lets anonymous viewers see.
+        XCTAssertEqual(result.episodes.map(\.webAvailable), [nil, nil, nil])
+        XCTAssertNil(result.webAccessibleEpisodes)
+    }
+
+    func testEpisodeListFromDetailPage() throws {
+        let html = page(["loaderData": ["detail_page": [
+            "isSuccess": true,
+            "seriesDetail": ["series_id": "123456", "series_name": "详情页", "vid_list": ["11", "12"]],
+        ]]])
+        let result = try SeriesService.parseEpisodeList(html, seriesId: "123456")
+        XCTAssertEqual(result.episodes.map(\.vid), ["11", "12"])
     }
 
     func testEpisodeListRejectsOtherSeries() {
@@ -46,117 +57,12 @@ final class ParsingTests: XCTestCase {
         XCTAssertThrowsError(try SeriesService.parseEpisodeList(html, seriesId: "123456"))
     }
 
-    private func playerPage(vid: String, contentURL: String, pageURL: String, protected: Bool = false) -> String {
-        let ld = #"<script type="application/ld+json">{"@type":"VideoObject","url":"\#(pageURL)","contentUrl":"\#(contentURL)"}</script>"#
-        let recommendation = #"<script type="application/ld+json">{"@type":"VideoObject","url":"https://hongguoduanju.com/player/2/99","contentUrl":"https://media.example/other.mp4"}</script>"#
-        return page(["loaderData": ["player_(series_id)/(vid)/page": [
-            "vid": vid, "series_id": "1", "seriesDetail": ["series_id": "1"], "protectedPlayback": protected,
-            "publicVideoSeo": ["available": true, "itemId": vid, "seriesId": "1"],
-        ]]], extra: recommendation + ld)
-    }
-
-    func testWebPlayInfoBindsToCurrentPlayer() throws {
-        let html = playerPage(vid: "11", contentURL: "https://media.example/web.mp4?a=1&Range=bytes%3D0-100",
-                              pageURL: "https://hongguoduanju.com/player/1/11")
-        let info = try SeriesService.parseWebPlayInfo(html, vid: "11", seriesId: "1")
-        XCTAssertEqual(info.url.absoluteString, "https://media.example/web.mp4?a=1")
-        XCTAssertEqual(info.source, .web)
-        XCTAssertNil(info.spadeA)
-        XCTAssertEqual(info.referer, "https://hongguoduanju.com/")
-    }
-
-    func testWebPlayInfoRejectsPrivateMediaHost() {
-        let html = playerPage(vid: "11", contentURL: "http://192.168.1.10/a.mp4", pageURL: "https://hongguoduanju.com/player/1/11")
-        XCTAssertThrowsError(try SeriesService.parseWebPlayInfo(html, vid: "11", seriesId: "1")) { error in
-            XCTAssertEqual((error as? HongguoError)?.kind, .security)
-        }
-    }
-
-    func testWebPlayInfoPreviewOnly() {
-        let html = playerPage(vid: "11", contentURL: "https://media.example/web.mp4", pageURL: "https://hongguoduanju.com/player/1/11", protected: true)
-        XCTAssertThrowsError(try SeriesService.parseWebPlayInfo(html, vid: "11", seriesId: "1")) { error in
-            XCTAssertEqual((error as? HongguoError)?.kind, .previewOnly)
-        }
-    }
-
-    func testSearchParsing() throws {
-        let payload: [String: Any] = [
-            "searchList": [
-                ["video_data": ["series_id": "7400000000000000001", "series_name": "霸总 &amp; 我", "series_cover": "https:\\/\\/p.example\\/a.jpg",
-                                "episode_right_text": "全80集", "tags": ["甜宠", ["name": "都市"]]]],
-                ["video_data": [:], "keyword": "7400000000000000002", "name": "仅关键字"],
-                ["video_data": ["series_id": "7400000000000000001", "series_name": "重复"]],
-                ["video_data": ["series_id": "12", "series_name": "太短的编号"]],
-            ],
-            "totalCount": 2, "totalPages": 1, "pageNum": 1, "hasMore": false,
-        ]
-        let page = try SearchService.parse(JSONSerialization.data(withJSONObject: payload))
-        XCTAssertEqual(page.results.map(\.seriesId), ["7400000000000000001", "7400000000000000002"])
-        XCTAssertEqual(page.results[0].title, "霸总 & 我")
-        XCTAssertEqual(page.results[0].episodeCount, 80)
-        XCTAssertEqual(page.results[0].tags, ["甜宠", "都市"])
-        XCTAssertEqual(page.results[0].cover, "https://p.example/a.jpg")
-    }
-
-    func testSearchUpstreamError() {
-        XCTAssertThrowsError(try SearchService.parse(Data(#"{"code":"rate_limited","message":"busy"}"#.utf8)))
-        XCTAssertThrowsError(try SearchService.parse(Data("<html>".utf8)))
-    }
-
-    func testCatalogParsing() throws {
-        let html = page(["loaderData": ["category_page": [
-            "categoryRoute": ["contentType": "real-drama"],
-            "recommendList": [
-                ["series_id": "7400000000000000001", "series_name": "剧一", "episode_cnt": 60, "episode_right_text": "全60集", "tags": ["逆袭"]],
-                ["series_id": "bad", "series_name": "无效"],
-            ],
-            "selectorList": [["items": [["selector_item_id": "romance", "show_name": "恋爱"], ["selector_item_id": "BAD SLUG", "show_name": "x"]]]],
-            "pagination": ["pageNum": 1, "total": 100, "totalPages": 5],
-        ]]])
-        let result = try CatalogService.parseCatalog(html, kind: .realDrama, page: 1, sourceURL: CatalogService.url(kind: .realDrama, genre: nil, page: 1))
-        XCTAssertEqual(result.results.count, 1)
-        XCTAssertEqual(result.results[0].completionStatus, .completed)
-        XCTAssertEqual(result.genres, [Genre(slug: "romance", label: "恋爱")])
-        XCTAssertEqual(result.totalPages, 5)
-    }
-
-    func testRankingFallbackFromArticles() throws {
-        let html = """
-        <title>热播榜</title>
-        <article><span>1</span><h2 id="rank-title-7400000000000000001">榜首剧</h2>
-        <a href="/detail?series_id=7400000000000000001">看</a><p>1.2万热度</p></article>
-        """
-        let result = try CatalogService.parseRanking(html, kind: .hotDrama, page: 1, sourceURL: CatalogService.url(kind: .hotDrama, genre: nil, page: 1))
-        XCTAssertEqual(result.results.first?.title, "榜首剧")
-        XCTAssertEqual(result.results.first?.rank, 1)
-        XCTAssertEqual(result.results.first?.heat, "1.2万热度")
-    }
-
-    func testLegacyStreamPrefersH264AndSkipsByteVC2() {
-        let model = """
-        {"video_list":{
-          "v1":{"main_url":"https://cdn.example/hevc.mp4","video_meta":{"codec_type":"h265","vwidth":1080,"vheight":1920},"encrypt_info":{"spade_a":"k1"}},
-          "v2":{"main_url":"https://cdn.example/avc.mp4","video_meta":{"codec_type":"h264","vwidth":720,"vheight":1280},"encrypt_info":{"spade_a":"k2"}},
-          "v3":{"main_url":"https://cdn.example/vvc.mp4","video_meta":{"codec_type":"bytevc2","vwidth":1080,"vheight":1920}},
-          "v4":{"main_url":"http://10.0.0.1/private.mp4","video_meta":{"codec_type":"h264","vwidth":1080,"vheight":1920}}
-        }}
-        """
-        let best = LegacyAPI.bestStream(model)
-        XCTAssertEqual(best?.url.absoluteString, "https://cdn.example/avc.mp4")
-        XCTAssertEqual(best?.spadeA, "k2")
-    }
-
     func testSeriesIdFromShareURLs() {
         XCTAssertEqual(SeriesService.seriesIdFromURL(URL(string: "https://hongguoduanju.com/player/7400000000000000001/2")!), "7400000000000000001")
         XCTAssertEqual(SeriesService.seriesIdFromURL(URL(string: "https://x.example/s?video_series_id=123456")!), "123456")
         let scheme = "{\"video_id\":\"778899\"}".addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
         XCTAssertEqual(SeriesService.seriesIdFromURL(URL(string: "https://x.example/s?schemeParams=\(scheme)")!), "778899")
         XCTAssertNil(SeriesService.seriesIdFromURL(URL(string: "https://x.example/other")!))
-    }
-
-    func testNormalizeVideoURL() {
-        XCTAssertEqual(SeriesService.normalizeVideoURL("https://a.example/v.mp4?Range=bytes%3D0-1"), "https://a.example/v.mp4")
-        XCTAssertEqual(SeriesService.normalizeVideoURL("https:\\u002F\\u002Fa.example\\u002Fv.mp4?x=1\\u0026y=2"), "https://a.example/v.mp4?x=1&y=2")
     }
 }
 
