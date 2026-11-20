@@ -25,8 +25,9 @@ enum Emoticons {
               let data = try? Data(contentsOf: directory.appendingPathComponent("map.json")),
               let raw = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
         return raw.filter { code, file in
-            code.hasPrefix("["), code.hasSuffix("]"), code.count <= maxCodeLength,
-                !file.contains("/"), !file.hasPrefix("."), ["png", "webp"].contains((file as NSString).pathExtension.lowercased())
+            code.hasPrefix("[") && code.hasSuffix("]") && code.count <= maxCodeLength
+                && !file.contains("/") && !file.hasPrefix(".")
+                && ["png", "webp"].contains((file as NSString).pathExtension.lowercased())
         }
     }()
 
