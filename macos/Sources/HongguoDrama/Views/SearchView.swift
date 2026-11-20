@@ -245,7 +245,7 @@ struct SearchView: View {
         do {
             // The Electron search flow: optional App search first, the website with looser
             // queries, and the App new-release list when no title matches exactly.
-            let result = try await HongguoSearch.shared.search(submitted, page: target, appFirst: model.settings.searchAppFirst,
+            let result = try await HongguoSearch.shared.search(submitted, page: target, appFirst: true,
                                                                channel: target > 1 ? channel : nil, appCursor: target > 1 ? appCursor : nil)
             let known = Set(items.map(\.id))
             items += result.results.filter { !known.contains($0.id) }

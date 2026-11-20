@@ -108,7 +108,7 @@ struct SeriesDetailView: View {
         let keyword = WatchHistory.sequelKeyword(title)
         guard !keyword.isEmpty else { sequelError = "这部剧的名称无法用来查找续作"; return }
         do {
-            let result = try await HongguoSearch.shared.search(keyword, appFirst: model.settings.searchAppFirst)
+            let result = try await HongguoSearch.shared.search(keyword, appFirst: true)
             let candidates = result.results.map { SeriesRef(seriesId: $0.seriesId, title: $0.title) }
             let sequels = WatchHistory.findSequels(of: current, in: candidates)
             foundSequels = sequels

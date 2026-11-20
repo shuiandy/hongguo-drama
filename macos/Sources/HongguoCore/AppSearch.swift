@@ -426,9 +426,9 @@ public actor HongguoSearch {
     }
 
     /// - Parameters:
-    ///   - appFirst: the "App 搜索优先" setting.
+    ///   - appFirst: ask the App search first (default); the website only when it finds nothing.
     ///   - channel/appCursor: from page 1's result when loading more.
-    public func search(_ keyword: String, page: Int = 1, appFirst: Bool = false, fuzzy: Bool = true,
+    public func search(_ keyword: String, page: Int = 1, appFirst: Bool = true, fuzzy: Bool = true,
                        channel: HongguoSearchResult.Channel? = nil, appCursor: AppSearchCursor? = nil) async throws -> HongguoSearchResult {
         guard (1...50).contains(page) else { throw HongguoError(.input, "搜索页码必须是 1 至 50 的整数") }
         let query = SearchText.normalize(keyword)
@@ -455,7 +455,8 @@ public actor HongguoSearch {
             do {
                 let result = try await app(keyword, 1, nil)
                 appCooldownUntil = .distantPast
-                if !result.results.isEmpty, Self.hasTitleMatch(result.results, query) { return appResult(result) }
+                // Any App result is used; the website search only runs when the App finds nothing.
+                if !result.results.isEmpty { return appResult(result) }
             } catch {
                 appCooldownUntil = Date().addingTimeInterval(Self.appCooldown)
             }

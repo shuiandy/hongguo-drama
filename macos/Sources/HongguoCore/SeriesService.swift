@@ -37,16 +37,28 @@ public final class SeriesService: Sendable {
     public func episodes(seriesId: String, force: Bool = false) async throws -> SeriesEpisodes {
         guard seriesId.matchesDigits(min: 1, max: 30) else { throw HongguoError(.input, "无效的剧集编号") }
         if !force, let cached = await episodeCache.get(seriesId) { return cached }
+        // The signed App detail request first; the website and the legacy API only when it fails
+        // or returns an incomplete list.
         let result: SeriesEpisodes
         do {
-            result = try await episodesFromWeb(seriesId)
+            result = try await EpisodeSocialService.episodes(seriesId: seriesId, http: http)
         } catch {
-            let webMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            if (error as? HongguoError)?.kind == .cancelled || error is CancellationError { throw error }
+            let appMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            let expected = (error as? EpisodeSocialService.IncompleteEpisodeList)?.expectedCount ?? 0
             do {
-                result = try await api.episodes(seriesId: seriesId)
+                result = try await episodesFromWeb(seriesId)
             } catch {
-                let apiMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                throw HongguoError(.unavailable, "获取分集失败：官网数据源（\(webMessage)），备用接口（\(apiMessage)）")
+                let webMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                do {
+                    result = try await api.episodes(seriesId: seriesId)
+                } catch {
+                    let apiMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    throw HongguoError(.unavailable, "获取分集失败：App（\(appMessage)），官网（\(webMessage)），备用接口（\(apiMessage)）")
+                }
+            }
+            guard EpisodeSocialService.isCompleteEpisodeList(result.episodes.map(\.index), declaredCount: expected) else {
+                throw HongguoError(.format, "分集列表不完整，请稍后重试")
             }
         }
         await episodeCache.set(seriesId, result, ttl: 60)
@@ -296,13 +308,45 @@ public final class SeriesService: Sendable {
     public func publicDetails(seriesId: String) async throws -> PublicDetails {
         guard seriesId.matchesDigits(min: 6, max: 30) else { throw HongguoError(.input, "仅支持有效的红果剧集编号") }
         if let cached = await detailsCache.get(seriesId) { return cached }
+        // Synopsis, cover, episode count, collect count and first-shown date come from the App
+        // detail request. Only the score and the written reviews still come from the public
+        // series page (the App has no anonymous request for them); without it they stay empty.
+        async let appTask: Result<EpisodeSocialService.AppSeriesFacts, Error> = {
+            do { return .success(try await EpisodeSocialService.facts(seriesId: seriesId, http: http)) } catch { return .failure(error) }
+        }()
+        async let webTask: Result<PublicDetails, Error> = {
+            do { return .success(try await publicDetailsFromWeb(seriesId: seriesId)) } catch { return .failure(error) }
+        }()
+        let app = await appTask, web = await webTask
+        let details: PublicDetails
+        switch (app, web) {
+        case (.success(let facts), let web):
+            let page = try? web.get()
+            let label = facts.episodeCount > 0 ? "全\(facts.episodeCount)集" : (page?.episodeLabel ?? "")
+            details = PublicDetails(seriesId: seriesId,
+                                    description: facts.intro.isEmpty ? (page?.description ?? "") : facts.intro,
+                                    cover: facts.cover.isEmpty ? (page?.cover ?? "") : facts.cover,
+                                    episodeLabel: page?.episodeLabel.isEmpty == false ? page!.episodeLabel : label,
+                                    completionStatus: page?.completionStatus ?? .unknown,
+                                    rating: page?.rating, ratingCount: page?.ratingCount, likeCount: page?.likeCount,
+                                    favoriteCount: facts.favoriteCount ?? page?.favoriteCount,
+                                    reviewTotal: page?.reviewTotal, reviews: page?.reviews ?? [],
+                                    publishedAt: facts.firstShown.flatMap { $0 <= Date() ? $0 : nil } ?? page?.publishedAt)
+        case (.failure, .success(let page)):
+            details = page
+        case (.failure(let error), .failure):
+            throw error
+        }
+        await detailsCache.set(seriesId, details, ttl: 30)
+        return details
+    }
+
+    func publicDetailsFromWeb(seriesId: String) async throws -> PublicDetails {
         var options = pageOptions
         options.timeout = 10
         options.maxRedirects = 0
         let response = try await http.get(Site.detailURL(seriesId), options: options)
-        let details = try Self.parsePublicDetails(response.text, seriesId: seriesId)
-        await detailsCache.set(seriesId, details, ttl: 30)
-        return details
+        return try Self.parsePublicDetails(response.text, seriesId: seriesId)
     }
 
     public static func parsePublicDetails(_ html: String, seriesId: String, reviewLimit: Int = 50) throws -> PublicDetails {

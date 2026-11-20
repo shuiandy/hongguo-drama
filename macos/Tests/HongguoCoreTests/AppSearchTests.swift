@@ -188,7 +188,7 @@ final class HongguoSearchFlowTests: XCTestCase {
             return self.webPage([])
         }, app: { _, _, _ in XCTFail("App search is off"); throw HongguoError(.unavailable, "") },
            newReleases: { _, _ in ([NewRelease(series: self.summary("7200000000000000002", "霸总归来"), releasedToday: true)], false) })
-        let result = try await search.search("霸总，归来")
+        let result = try await search.search("霸总，归来", appFirst: false)
         XCTAssertEqual(result.channel, .web)
         XCTAssertEqual(result.relaxedQueries, ["霸总归来"])
         XCTAssertEqual(result.results.map(\.seriesId), ["7200000000000000009", "7200000000000000001", "7200000000000000002"])
@@ -212,7 +212,7 @@ final class HongguoSearchFlowTests: XCTestCase {
         // Website down: the App answers without being enabled.
         let fallback = HongguoSearch(web: { _, _ in throw HongguoError(.upstream, "官网 502") }, app: { _, _, _ in appPage },
                                      newReleases: { _, _ in ([], false) })
-        let rescued = try await fallback.search("霸总归来")
+        let rescued = try await fallback.search("霸总归来", appFirst: false)
         XCTAssertEqual(rescued.channel, .app)
         XCTAssertTrue(rescued.notice.contains("官网 502"))
 

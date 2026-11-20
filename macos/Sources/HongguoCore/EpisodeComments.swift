@@ -32,6 +32,15 @@ public final class EpisodeCommentService: Sendable {
         }
         let key = "\(seriesId):\(vid):\(limit)"
         if let cached = await cache.get(key) { return cached }
+        // The App comment list first: real paging, ids and totals. The player page is the fallback.
+        if let page = try? await EpisodeSocialService.commentsPage(seriesId: seriesId, vid: vid, count: limit, http: http),
+           !page.comments.isEmpty {
+            let result = EpisodeComments(seriesId: seriesId, vid: vid,
+                                         items: page.comments.prefix(limit).map { .init(id: $0.id, content: $0.content) },
+                                         total: page.total, likeCount: nil, notice: "")
+            await cache.set(key, result, ttl: 30)
+            return result
+        }
         var options = HTTPClient.Options()
         options.headers = ["User-Agent": UserAgents.web, "Referer": Site.referer,
                            "Accept": "text/html,application/xhtml+xml", "Accept-Language": "zh-CN,zh;q=0.9"]

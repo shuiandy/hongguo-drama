@@ -44,6 +44,15 @@ public final class CatalogService: Sendable {
     }
 
     public func browse(kind: CatalogKind, genre: String? = nil, page: Int = 1, forceRefresh: Bool = false) async throws -> CatalogPage {
+        // The App catalogue and ranking boards first; their theme ids (`cate_5000`) are only
+        // valid there. The website is the fallback for an empty or failed App reply.
+        let theme = (genre ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if let app = try? await DiscoveryAccess.catalog(kind: kind, genre: theme.isEmpty ? nil : theme, page: page, forceRefresh: forceRefresh),
+           !app.items.isEmpty || !theme.isEmpty {
+            return CatalogPage(results: app.items, page: max(1, page), total: app.items.count, totalPages: app.totalPages,
+                               genres: app.genres, pageTitle: kind.label, sourceURL: Self.url(kind: kind, genre: nil, page: page))
+        }
+        let genre: String? = theme.contains("_") ? nil : genre
         if let genre, !genre.isEmpty {
             guard !kind.isRanking, genre.range(of: "^[a-z0-9-]+$", options: .regularExpression) != nil else {
                 throw HongguoError(.input, "无效的目录分类或题材")
