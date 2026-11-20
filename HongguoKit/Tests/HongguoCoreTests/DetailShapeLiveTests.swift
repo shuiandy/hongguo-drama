@@ -143,11 +143,116 @@ final class DetailShapeLiveTests: XCTestCase {
                     report.append("\(name): code=\(json["code"].number.map { String(Int($0)) } ?? "-") list=\(vd["video_list"].array?.count ?? -1) top=\(EmptySourceProbeLiveTests.shape(json, depth: 1))")
                 } catch let error as AppSourceError {
                     report.append("\(name): \(error.code.rawValue) status=\(error.status.map(String.init) ?? "-")")
+                } catch {
+                    report.append("\(name): \(error)")
                 }
             }
         } else {
             report.append("no series id from the play reply; set HONGGUO_SID to try GET")
         }
         print("PLAYREPLY\n" + report.joined(separator: "\n"))
+    }
+
+    /// `--filter DetailShapeLiveTests/testOfficialDetailRoutes` (optional `HONGGUO_SID` or
+    /// `HONGGUO_PROBE`, and `HONGGUO_GET_KEYS=series_id,series_ids`): the other detail routes in the official 7.4.3
+    /// binary's RPC table: GET `/reading/bookapi/video_tab/{multi_video_detail,video_detail}/v1/`
+    /// (legacy query signature, as the bookapi reads use) and POST
+    /// `/novel/player/multi_video_detail/dynamic_data/v1/` and `/novel/player/album_detail/v1/`.
+    func testOfficialDetailRoutes() async throws {
+        let env = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(env["HONGGUO_LIVE"] == "1", "set HONGGUO_LIVE=1 to run")
+        var seriesId = env["HONGGUO_SID"] ?? ""
+        if !seriesId.matchesDigits(min: 6, max: 30) {
+            guard let first = try await AppSearchService().search(env["HONGGUO_PROBE"] ?? "入学第一天").results.first else {
+                throw XCTSkip("set HONGGUO_SID")
+            }
+            seriesId = first.seriesId
+        }
+        let keys = (env["HONGGUO_GET_KEYS"] ?? "series_id,series_ids,video_series_ids").split(separator: ",").map(String.init)
+        let transport = AppTransport(http: .shared)
+        let identity = try await PersistentAppDevice.shared.get(transport: transport)
+        let dToken = await PersistentAppDevice.shared.dTokenHeaders()
+        let dTokenValue = dToken.first { $0.0.lowercased() == "x-tt-dt" }?.1 ?? ""
+        var report: [String] = []
+
+        func describe(_ json: JSONValue) -> String {
+            let code = (json["code"].number ?? json["Code"].number).map { String(Int($0)) } ?? "-"
+            let message = (json["message"].string ?? json["msg"].string ?? "").prefix(30)
+            let data = json["data"]
+            let vd = data[seriesId]["video_data"].isNull ? data["video_data"] : data[seriesId]["video_data"]
+            let list = vd["video_list"].array?.count ?? data["video_list"].array?.count ?? -1
+            return "code=\(code) msg=\(message) list=\(list) data=\(EmptySourceProbeLiveTests.shape(data, depth: 1).replacingOccurrences(of: seriesId, with: "<sid>").prefix(300))"
+        }
+
+        func legacyGET(host: String, path: String, values: [(String, String)]) throws -> (url: String, headers: [(String, String)]) {
+            let signer = AppLegacySigner.shared
+            let device = AppLegacySigner.merged(AppLegacySigner.versioned("72232", "7.2.2.32"),
+                                                [("iid", identity.iid), ("device_id", identity.deviceId), ("cdid", identity.cdid)])
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            let ts = UInt32(now / 1000)
+            let fields = AppLegacySigner.merged(values, device)
+            for n in 0..<128 {
+                let ticket = String(now + Int64(n))
+                let query = AppCrypto.encodeQuery(fields + [("ts", String(ts)), ("_rticket", ticket)])
+                let url = "https://\(host)\(path)?\(query)"
+                guard AppLegacySigner.branch(querySm3: AppCrypto.sm3(Array(query.utf8)), bodyMd5: [UInt8](repeating: 0, count: 16), ts: ts) == 0 else { continue }
+                return (url, [
+                    ("User-Agent", AppLegacySigner.searchUA), ("Accept", "application/json; charset=utf-8,application/x-protobuf"),
+                    ("x-ss-req-ticket", ticket), ("x-tt-request-tag", "t=0;n=0"), ("sdk-version", "2"),
+                    ("passport-sdk-version", "50561"), ("x-xs-from-web", "0"), ("x-khronos", String(ts)),
+                    ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
+                    ("x-gorgon", AppLegacySigner.xGorgon(query: query, body: nil, ts: ts, random: signer.random32() >> 16)),
+                    ("x-helios", signer.helios(ts: ts)),
+                    ("x-medusa", try signer.medusa(url: url, body: nil, ts: ts, deviceId: identity.deviceId, versionName: "7.2.2.32", nowMillis: now)),
+                    ("x-tt-dt", dTokenValue),
+                ])
+            }
+            throw HongguoError(.format, "no legacy signature branch")
+        }
+
+        let b = "api5-normal-sinfonlineb.fqnovel.com"
+        var gets: [(String, String, [(String, String)])] = keys.map { ("/reading/bookapi/video_tab/multi_video_detail/v1/", $0, [($0, seriesId)]) }
+        gets.append(("/reading/bookapi/video_tab/video_detail/v1/", keys[0], [(keys[0], seriesId)]))
+        for (path, key, values) in gets {
+            let name = "GET \(path.replacingOccurrences(of: "/reading/bookapi/video_tab/", with: "video_tab/")) ?\(key)"
+            do {
+                let request = try legacyGET(host: b, path: path, values: values)
+                let json = try await transport.requestJSON(request.url, headers: request.headers, deadline: Date().addingTimeInterval(10))
+                report.append("\(name): \(describe(json))")
+            } catch let error as AppSourceError {
+                report.append("\(name): \(error.code.rawValue) status=\(error.status.map(String.init) ?? "-")")
+            } catch {
+                report.append("\(name): \(error)")
+            }
+            try await Task.sleep(for: .seconds(1))
+        }
+
+        let body: [String: Any] = [
+            "biz_param": ["detail_page_version": 0, "disable_digg_stat": false, "need_all_video_definition": false,
+                          "need_mp4_align": false, "source": 7, "use_os_player": false, "use_server_dns": false],
+            "dr_scene": "player", "series_id": seriesId,
+        ]
+        for path in ["/novel/player/multi_video_detail/dynamic_data/v1/", "/novel/player/album_detail/v1/"] {
+            let name = "POST \(path.replacingOccurrences(of: "/novel/player/", with: ""))"
+            do {
+                let payload = try AppCrypto.gzip(Array(try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])))
+                let signed = try PlaybackSignerV5.shared.sign(
+                    base: "https://\(b)\(path)",
+                    values: AppSource.iosProfile + [("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId)],
+                    body: payload, nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
+                let json = try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers + [
+                    ("User-Agent", AppSource.iosPlayerUA), ("Accept", "application/json"),
+                    ("Content-Type", "application/json; charset=utf-8"), ("Content-Encoding", "gzip"),
+                    ("x-ss-dp", "8662"), ("sdk-version", "2"),
+                ] + dToken, body: payload, deadline: Date().addingTimeInterval(10))
+                report.append("\(name): \(describe(json))")
+            } catch let error as AppSourceError {
+                report.append("\(name): \(error.code.rawValue) status=\(error.status.map(String.init) ?? "-")")
+            } catch {
+                report.append("\(name): \(error)")
+            }
+            try await Task.sleep(for: .seconds(1))
+        }
+        print("ROUTES\n" + report.joined(separator: "\n"))
     }
 }
