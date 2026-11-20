@@ -1,0 +1,83 @@
+import AppKit
+import SwiftUI
+import HongguoCore
+
+/// 关于: version, update check, project links and licence.
+struct SettingsAboutPane: View {
+    @Environment(AppModel.self) private var model
+    @State private var showLicense = false
+
+    var body: some View {
+        @Bindable var model = model
+        Form {
+            Section {
+                VStack(spacing: 8) {
+                    AppIconMark(size: 80)
+                    Text("红果短剧").font(.system(size: 20, weight: .heavy)).padding(.top, 4)
+                    Text("Mac 原生版 · 版本 \(UpdateChecker.currentVersion)").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        if let release = model.availableRelease {
+                            UpdateControls(release: release)
+                        } else {
+                            Button("检查更新") { Task { await model.checkForUpdate(manual: true) } }
+                                .buttonStyle(GlassButtonStyle(prominent: true, size: .small))
+                        }
+                        Button("查看更新说明") { NSWorkspace.shared.open(ReleaseRepo.releasesURL) }
+                            .buttonStyle(GlassButtonStyle(size: .small))
+                    }
+                    .padding(.top, 6)
+                    if !model.updateMessage.isEmpty {
+                        Text(model.updateMessage).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+            }
+
+            Section("更新") {
+                Toggle(isOn: $model.settings.checkUpdatesAtLaunch) {
+                    SettingLabel("启动时检查更新", note: "发现新版本时提示，不会自动下载。点“下载并安装”后会校验文件摘要和开发者签名，确认无误才允许重启安装。")
+                }
+            }
+
+            Section("项目") {
+                LabeledContent {
+                    Button("打开") { NSWorkspace.shared.open(ReleaseRepo.releasesURL) }
+                } label: {
+                    SettingLabel("项目主页", note: "GitHub 上的发布页")
+                }
+                LabeledContent {
+                    Button("查看") { showLicense = true }
+                } label: {
+                    SettingLabel("开源许可", note: "GPL-3.0")
+                }
+            }
+        }
+        .sheet(isPresented: $showLicense) { LicenseSheet() }
+    }
+}
+
+private struct LicenseSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("开源许可").font(.headline)
+            Text("""
+            红果短剧 Mac 原生版以 GNU General Public License v3.0 发布。部分签名与片源代码移植自 GPL-3.0 的 Electron 版红果短剧。
+
+            你可以自由使用、修改和再发布本程序，但再发布时必须同样以 GPL-3.0 开放源代码，并保留版权和许可声明。本程序不提供任何担保。
+
+            完整许可文本见 https://www.gnu.org/licenses/gpl-3.0.html
+
+            ByteVC2 兼容转换组件 librempeg 是独立程序，以 AGPL-3.0 发布，内含 x264（GPL-2.0 或更新版本）。其许可文本与对应源代码压缩包位于应用包内 Contents/Resources/licenses/librempeg。
+            """)
+            .font(.callout)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            HStack { Spacer(); Button("完成") { dismiss() }.keyboardShortcut(.defaultAction) }
+        }
+        .padding(20)
+        .frame(width: 440)
+    }
+}

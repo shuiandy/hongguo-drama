@@ -1,0 +1,286 @@
+{
+ "v5": [
+  {
+   "now": 1800000000000,
+   "values": [
+    [
+     "aid",
+     "8662"
+    ],
+    [
+     "app_name",
+     "novelread"
+    ],
+    [
+     "version_code",
+     "74332"
+    ],
+    [
+     "version_name",
+     "7.4.3.32"
+    ],
+    [
+     "channel",
+     "vivo_8662_64"
+    ],
+    [
+     "device_platform",
+     "android"
+    ],
+    [
+     "device_type",
+     "PGT-AN10"
+    ],
+    [
+     "os_version",
+     "12"
+    ],
+    [
+     "update_version_code",
+     "74332"
+    ],
+    [
+     "iid",
+     "2234567890123456789"
+    ],
+    [
+     "cdid",
+     "00000000-0000-4000-8000-000000000003"
+    ],
+    [
+     "device_id",
+     "1234567890123456789"
+    ]
+   ],
+   "body": "1f8b0800000000000013ab56cacdac484d892fcb4c49cd8fcf4c89cf4d2c50b2aa563234303051b28a563237c0004ab1b53a4a2945f1c5c9a979a94a564a05398995a9454ab5005ca6a1e54b000000",
+   "processNonce": "AQIDBAUGBwgJCgsMDQ4PEBES",
+   "processStarted": 1800000000000,
+   "random32": [
+    3212711710,
+    3252808940,
+    1148294893,
+    2459969027
+   ],
+   "url": "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/player/v1?aid=8662&app_name=novelread&version_code=74332&version_name=7.4.3.32&channel=vivo_8662_64&device_platform=android&device_type=PGT-AN10&os_version=12&update_version_code=74332&iid=2234567890123456789&cdid=00000000-0000-4000-8000-000000000003&device_id=1234567890123456789&_rticket=1800000000017",
+   "headers": {
+    "x-khronos": "1800000000",
+    "x-helios": "Hhd+v1s2kw/jSktZiFPiIo8uPz1B+tNicz7ZGyUGCU6IuV37",
+    "x-medusa": "BdJJay2ZBqFJp0QoP2fnRyK/hT3tlgABb8ojJqCWgfEPGA6PnDmbyS1lOlberBYvSeWuD6h9Vrp4/Q2iJQ0f/fUt/nqd2vlGiQCDxLg/nT/Z4h3pKA8Z6XYrAPlFlB0ArEiDH+h+YlL74Ddla5dhanJBzVGv1lmeb22Ex0zI/FSiYI+XA/Ejo1dESp6pUWa4FXILfjzAxIn3cyUXrZt4p+Y6sepR4hJ2JaN9omYvyDuaV1vXMNh1lxlhwB4grbWOBGgdSZvH3gwXZtoJFTqw0ls/XKUxqhZ/vPUtr0ZMibnBsDBQcNI2OgSFR5MU70HKhyM9Crwu3erCoHevdvZh033BuOlMWN7xYAo51d1ksgWmRLZhUJ9ju3O14taUsCGWxSqtC6+c9WsPXNNL7jM0z+ioVqVJI/oQkjP5EEuJByjlWP4Ijt+d8YpF83HoS4ZZ2JQnppLcFx2MGTWYRmV9HyHFVAXwTlLIpK6pHZFiYOF22keg0//BZOk+DIpb1D0qaYFlW99uNe83J5eeJv2jSs9JjixSmkbi7FiOWtnbWSxZ9dKIq47LLiIqUDegT6Y3PKPzh8CcDmJ1PrOyBu1Fnh1op8w9fLQKoBEJTGkEh1wqoMeqk4HtT1szg2XJBufGDgt2mU5a7+94yf/8d8n//HdxRA==",
+    "x-ss-stub": "79B83AD42D0ECBE6B9A96F0C51198D5B",
+    "x-ss-req-ticket": "1800000000017"
+   }
+  },
+  {
+   "now": 1763430000123,
+   "values": [
+    [
+     "aid",
+     "8662"
+    ],
+    [
+     "app_name",
+     "novelread"
+    ],
+    [
+     "version_code",
+     "74332"
+    ],
+    [
+     "version_name",
+     "7.4.3.32"
+    ],
+    [
+     "channel",
+     "vivo_8662_64"
+    ],
+    [
+     "device_platform",
+     "android"
+    ],
+    [
+     "device_type",
+     "PGT-AN10"
+    ],
+    [
+     "os_version",
+     "12"
+    ],
+    [
+     "update_version_code",
+     "74332"
+    ],
+    [
+     "iid",
+     "2234567890123456789"
+    ],
+    [
+     "cdid",
+     "00000000-0000-4000-8000-000000000003"
+    ],
+    [
+     "device_id",
+     "1234567890123456789"
+    ]
+   ],
+   "body": "1f8b0800000000000013ab56cacdac484d892fcb4c49cd8fcf4c89cf4d2c50b2aa563234303051b28a5632374007864ab1b53a4a2945f1c5c9a979a94a564a05398995a9454ab50052362a404b000000",
+   "processNonce": "AQIDBAUGBwgJCgsMDQ4PEBES",
+   "processStarted": 1763430000123,
+   "random32": [
+    3930911221,
+    404136429,
+    1574321740,
+    528738245
+   ],
+   "url": "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/player/v1?aid=8662&app_name=novelread&version_code=74332&version_name=7.4.3.32&channel=vivo_8662_64&device_platform=android&device_type=PGT-AN10&os_version=12&update_version_code=74332&iid=2234567890123456789&cdid=00000000-0000-4000-8000-000000000003&device_id=1234567890123456789&_rticket=1763430000136",
+   "headers": {
+    "x-khronos": "1763430000",
+    "x-helios": "9fFM6r4CX9JNf91XEp5lDEuTo3qmw3F8YB0n+KH4LAhj7wYA",
+    "x-medusa": "dc4baV2FVKM5uxYqT3u1RVKj1z9MPgABXorF54MfgakAWD4AgunjARbiuacAQI02qlKmCz6WYpuhfROEXXkJMDzzPtM2YaVJ2cpYSQU4cJXZZy4XosbzLQdvV98Wo5zmNdzk+u1Ewg1X/WFEzBKh/nREi/T25kIuvqfTrf4YxQJZgdkn1dQZTAMMK94Yk2NDLc0pd+A+pr0E7Q0ZzCqKVDV6eu3E5rMytyZBzORpHEAFRypVm1uxNd1yzoPwifREg0EE8i1CJ30UZyDBdRprYQHM8NTk6nPOq/1KJisLA0o9hBCObScj+jwLQ1NTkqrj9gMauBteAsGHkpQz38Sh1mi70veJi5KkOsf4mJ3qD2Ncu6VAdYwv9VoGSZZTbVBlIyuUASz9ltjfWK5EkbISpJK1C5zT/afZcfDzlTsWXarcpSs1ZBxz4o2MCWV8tCWxNaBE5b1Z8IvgXBgeavW9kWytf++5vSS1Op1zQosk2ijCBJaOCWRLm49XVNt1bzyoH1IYlWb2tQiLEa31z47CkHg8Wa1umQIa4+c36g+WfNvgsQKWDGqcElC/FcYZgpbgs6xv5mr5kuFFXe/RD8v2Oo+drXcUx9/6NQAHHyuUEG6eCLvjifW18xbQliy0SQcrvV4QBdrtv+NTcv/5T3L/+U/WXQ==",
+    "x-ss-stub": "2CF634C9C934ACC878B83C26227C7DE4",
+    "x-ss-req-ticket": "1763430000136"
+   }
+  },
+  {
+   "now": 1763430001999,
+   "values": [
+    [
+     "aid",
+     "8662"
+    ],
+    [
+     "app_name",
+     "novelread"
+    ],
+    [
+     "version_code",
+     "74332"
+    ],
+    [
+     "version_name",
+     "7.4.3.32"
+    ],
+    [
+     "channel",
+     "vivo_8662_64"
+    ],
+    [
+     "device_platform",
+     "android"
+    ],
+    [
+     "device_type",
+     "PGT-AN10"
+    ],
+    [
+     "os_version",
+     "12"
+    ],
+    [
+     "update_version_code",
+     "74332"
+    ],
+    [
+     "iid",
+     "2234567890123456789"
+    ],
+    [
+     "cdid",
+     "00000000-0000-4000-8000-000000000003"
+    ],
+    [
+     "device_id",
+     "1234567890123456789"
+    ],
+    [
+     "text",
+     "中文 !*'()~ +&=%"
+    ],
+    [
+     "ts",
+     "0"
+    ]
+   ],
+   "body": "1f8b0800000000000013ab56cacdac484d892fcb4c49cd8fcf4c89cf4d2c50b2aa563234303051b28a5632374007464ab1b53a4a2945f1c5c9a979a94a564a05398995a9454ab5000180c7754b000000",
+   "processNonce": "AQIDBAUGBwgJCgsMDQ4PEBES",
+   "processStarted": 1763430001999,
+   "random32": [
+    946347320,
+    3818468141,
+    530085629,
+    1541490119
+   ],
+   "url": "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/player/v1?aid=8662&app_name=novelread&version_code=74332&version_name=7.4.3.32&channel=vivo_8662_64&device_platform=android&device_type=PGT-AN10&os_version=12&update_version_code=74332&iid=2234567890123456789&cdid=00000000-0000-4000-8000-000000000003&device_id=1234567890123456789&text=%E4%B8%AD%E6%96%87%20%21*%27%28%29~%20%2B%26%3D%25&ts=1763430001&_rticket=1763430002003",
+   "headers": {
+    "x-khronos": "1763430001",
+    "x-helios": "OB1oOMDXSSbx3gtS+TgoEFu+IFt3vl4J8XhmCBeHXv3hqySp",
+    "x-medusa": "dM4baVyFVKM4uxYqTnu1RVOj1z/9dgABBMrnTfFfgTEJGGeorULSPPuSI/rxEWvVNwrvGeqgcUgduSldgApR+rEyHd3Ix0cA66XiX+7RrUDymD2xbeT8//pFrsTkibeajNsb7T9R1yy6+u4lG92SfS3UdNYzxFBSoTNzszvfKEXIfu1JcSc871/GBkYG4a+OeS1DNp51sp/o4cHtiGIKxuZDlyaKHTXqeM+mlsPjgk2b7cXcJVLeELNpYzNNQOxN0w8r6d+RnCaX2sC1J8JgJi1iCZgyqyndtzOX6R2kmrkvr1jU1hPncSPLYCXwFR8wcHjqDW14DRBv54Ejz3izVdzezlfrgsiXZvxr7IDl2BHwuszXg2PYql+r1ihmgDPa6as1Q+I66q+CJKlNc8mdgKAdPQa42zeoWmEZCKTF8deTjqaFUw51LcO7yZlrk6Ty4sTxzRkryAarI4seVCtHJ7S8EiZ0Pd91l3hOJ1Kvxs83dv/2gnB3yzypjeSEQRWk1qrjwzJ9Q93Lnk6K5BMXU4sstSsbm0HxM7+kIWQSqWjgCFwWjcFCLwNUFtY9912Yo1I9J5NSoDs9rOsTrS5zMjpRg2FSJXJ/2BP/RtlA3OSsJCv+QVTseLN7YYcn5ottoedAdyqaXuhMfP/7P3z/+z+YHw==",
+    "x-ss-stub": "E848BC0CD1AFD58BB57D670D128C8BF6",
+    "x-ss-req-ticket": "1763430002003"
+   }
+  }
+ ],
+ "player": [
+  {
+   "query": "ac=wifi&aid=8662&device_id=1234567890123456789&version_name=7.4.3.32&ts=1800000000&_rticket=1800000000123",
+   "body": "1f8b0800000000000013ab564a298a2f4e4ecd4b55b2522ac849ac4c2d52aa0500fa262cc415000000",
+   "ts": 1800000000,
+   "randField": -123456789,
+   "ladonRandom": "a1b2c3d4",
+   "headers": {
+    "x-ss-req-ticket": "1800000000000",
+    "x-khronos": "1800000000",
+    "x-ladon": "obLD1Jl0kTDMFAhwibw95L7oW5bGpNvKjza8pS72gmAOfq+U",
+    "x-argus": "8oG1GzXRCYFxRHbO9/LI7M+nXbi8pQS89TwD6CpCJChU0AVEh3CIe2jMYzfeEPPf8YhpY+AJUwgFApNeOD6DN6YfhiYNcSQORiFyjRZ/UNmT2kmKYIQZQODkqO/Ba03X13jVQTcAQmieOWP3VfMaA5VfZZwcg5VrsXqIIEwD8cestmBhWt7ba/Eo1EzyzhPGHJpfv5sHHIyM9H2xo2yTSnRpUyMlMgb8bNYbVsy8HoBf4VErIQI+pjofpk4dd/daq8Bwy13uxuTP/HBwdX+FUE52",
+    "x-ss-stub": "1e631ae7083c8e89eaefe499cdd282e0"
+   }
+  },
+  {
+   "query": "ac=wifi&aid=8662&device_id=1234567890123456789&version_name=7.4.3.32&ts=1763430000&_rticket=1763430000123",
+   "body": null,
+   "ts": 1763430000,
+   "randField": 987654321,
+   "ladonRandom": "00ff10ee",
+   "headers": {
+    "x-ss-req-ticket": "1763430000000",
+    "x-khronos": "1763430000",
+    "x-ladon": "AP8Q7scalG397ZcdjaLLduJT3TE+TuhJy92EdUh9MqP9dUtR",
+    "x-argus": "8oG1GzXRCYFxRHbO9/LI7M+nXbi8pQS89TwD6CpCJChU0AVEh3CIe2jMYzfeEPPf8YiICYdD262H1MWL+wiZCcnDQzewbMMG3CZhVsOGSurs4bZcQ5fT0http7X6e3xFwALROAYprCuQaqIF6QUHnbFiU2PiXstntxIm7GSBlT4+pWAuLNu3OycCcs+O23wQjShEJWux2h4BDzikbwkmJQj4W5QR2C6EJk8Rh1pIJ1lCrqhyyoAK7P9jhND8/72HpVSL8aKXXUDJdLMQuFTIch7H"
+   }
+  }
+ ],
+ "sm3": [
+  {
+   "input": "",
+   "digest": "1ab21d8355cfa17f8e61194831e81a8f22bec8c728fefb747ed035eb5082aa2b"
+  },
+  {
+   "input": "616263",
+   "digest": "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0"
+  },
+  {
+   "input": "61626364616263646162636461626364616263646162636461626364616263646162636461626364616263646162636461626364616263646162636461626364",
+   "digest": "debe9ff92275b8a138604889c18e5a4d6fdb70e5387e5765293dcba39c0c5732"
+  },
+  {
+   "input": "e7baa2e69e9ce79fade589a7",
+   "digest": "847e610716464edde054a0888df549e317c35b23db67271f1e3daedf92bc7482"
+  }
+ ],
+ "contentKeys": [
+  {
+   "spade": "kLMT9VuyEvtZshL5X7UR+0G2DvlfqSbQXakm0luuJdClrA==",
+   "key": "00112233445566778899aabbccddeeff"
+  },
+  {
+   "spade": "kLMTz1u0Es9ZthLPX7cR5kGoDuZfqybmXa0m5lusJealoA==",
+   "key": "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+  }
+ ],
+ "spadeUrls": [
+  {
+   "cipher": "qAABAMugLCwldWUQ7HD1cv7BPwpgB3qBZo+6Kjy2Y5bSrb/Y8h52NIOjxhlN6bgPzTOOIB/vwOKHnQigSeBWOOrXVJ93se+bPz+eJkvwqlabzJCg",
+   "seed": "c3ludGhldGljLWtleS1zZWVkLTAwMDE=",
+   "url": "https://v3-reading-video.qznovelvod.com/synthetic/abc.mp4?a=1&b=2"
+  }
+ ]
+}
