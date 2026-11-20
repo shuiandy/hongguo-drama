@@ -144,7 +144,7 @@ final class PlayerController {
     /// Resume position asked for when the current item was started (0 once it has been judged).
     @ObservationIgnored private var pendingStartAt: Double = 0
     @ObservationIgnored private var lastSaved = Date.distantPast
-    @ObservationIgnored private var retriedCatalogue = false
+    @ObservationIgnored private var retriedWithoutWeb = false
     @ObservationIgnored private var retriedWithFile = false
     @ObservationIgnored private var retriedFresh = false
     @ObservationIgnored private var usedPrefetched = false
@@ -243,7 +243,7 @@ final class PlayerController {
         guard let list = episodes, target >= 1, target <= list.episodes.count else { return }
         if target != index { persistPosition() }
         index = target
-        retriedCatalogue = false
+        retriedWithoutWeb = false
         retriedWithFile = false
         retriedFresh = false
         load(startAt: startAt, force: force)
@@ -420,8 +420,8 @@ final class PlayerController {
             }
             return
         }
-        if let info = currentInfo, info.source == .web, !retriedCatalogue {
-            retriedCatalogue = true
+        if let info = currentInfo, info.source == .web, !retriedWithoutWeb {
+            retriedWithoutWeb = true
             load(startAt: resumeAt, force: true)
             return
         }
