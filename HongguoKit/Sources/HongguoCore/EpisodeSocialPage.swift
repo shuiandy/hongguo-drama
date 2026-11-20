@@ -182,6 +182,62 @@ public enum EpisodeSocialService {
         )
     }
 
+    /// Diagnostic for the Mac app's `HONGGUO_PROBE_REVIEWS=<series id>` launch: asks the App comment
+    /// API for the series review list the way the official 7.4.3 binary builds it
+    /// (`FQCShortPlayCommentListViewModel`: group_type 1, comment_type 2; aid and compliance_status in
+    /// the query; lower-case comment-source and server-channel headers), with the saved login when
+    /// there is one, once with the review page's values (source 1, channel 0) and once with the
+    /// episode comments' (4, 18). Returns codes, counts, scores and key names only: no ids, names,
+    /// review text or login.
+    public static func probeSeriesReviews(seriesId: String, http: HTTPClient = .shared) async -> [String] {
+        guard seriesId.matchesDigits(min: 6, max: 30) else { return ["invalid series id"] }
+        let auth = PersistentAppDevice.authHeaders()
+        var lines = ["signed in: \(!auth.isEmpty)"]
+        let device: PlaybackIdentity
+        do { device = try await PersistentAppDevice.dataIdentity(transport: AppTransport(http: http)).identity }
+        catch { return lines + ["device: \(error.localizedDescription)"] }
+        for (source, channel) in [(1, 0), (4, 18)] {
+            do {
+                let stampMs = Int64(Date().timeIntervalSince1970 * 1000)
+                let rawQuery = DanmakuSigner.buildQuery(stampMs: stampMs, deviceId: device.deviceId, installId: device.iid) + "&compliance_status=0"
+                guard let url = URL(string: "https://api5-normal-sinfonlineb.fqnovel.com/novel/commentapi/comment/list/\(seriesId)/v1/?\(rawQuery)") else { continue }
+                var options = HTTPClient.Options()
+                options.timeout = 8
+                let headers: [(String, String)] = [
+                    ("User-Agent", DanmakuService.userAgent), ("Accept", "application/json"),
+                    ("X-XS-From-Web", "0"), ("Sdk-Version", "2"), ("Content-Type", "application/json; charset=utf-8"),
+                    ("comment-source", String(source)), ("server-channel", String(channel)),
+                ] + (try DanmakuSigner.headers(rawQuery: rawQuery, stamp: stampMs / 1000, nonce: AppCrypto.randomBytes(DanmakuSigner.nonceBytes))) + auth
+                for (key, value) in headers { options.headers[key] = value }
+                let body: [String: Any] = [
+                    "group_id": seriesId, "group_type": 1, "comment_type": 2, "comment_source": source, "server_channel": channel,
+                    "sort": 1, "count": 10, "cursor": "",
+                    "business_param": ["book_id": seriesId, "need_count": true, "fold_type": 0, "outflow_comment_count": 0],
+                ]
+                let response = try await http.post(url, json: try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]), options: options)
+                let payload = try JSONValue.parse(response.data)
+                let data = payload["data"]
+                let list = data["data_list"].array ?? []
+                let extra = data["extra"]
+                func number(_ value: JSONValue) -> String { value.number.map { String($0) } ?? "-" }
+                lines.append("source=\(source) channel=\(channel): code=\(number(payload["code"])) msg=\((payload["message"].string ?? "").prefix(30)) "
+                             + "list=\(list.count) total=\(number(data["common_list_info"]["total"])) "
+                             + "credibility_score=\(number(extra["credibility_score"])) credibility_score_count=\(number(extra["credibility_score_count"])) "
+                             + "score_cnt=\(number(extra["score_cnt"]))")
+                if let first = list.first {
+                    lines.append("  first item: " + AccountDataAccess.shape(of: first, limit: 3).replacingOccurrences(of: seriesId, with: "<sid>"))
+                }
+                if extra.object != nil {
+                    lines.append("  extra: " + AccountDataAccess.shape(of: extra, limit: 1).replacingOccurrences(of: seriesId, with: "<sid>"))
+                }
+            } catch {
+                lines.append("source=\(source) channel=\(channel): \(error.localizedDescription)")
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        return lines
+    }
+
     /// Fetches one page of episode comments from the official App comment API
     /// (`/novel/commentapi/comment/list/<vid>/v1/`, `comment_source=4, server_channel=18, comment_type=4`).
     public static func commentsPage(

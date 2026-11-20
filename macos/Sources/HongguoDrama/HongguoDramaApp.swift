@@ -7,6 +7,24 @@ struct HongguoDramaApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel.shared
 
+    init() {
+        // Diagnostic: `HONGGUO_PROBE_REVIEWS=<series id> HongguoDrama.app/Contents/MacOS/HongguoDrama`
+        // prints the App series review reply's codes and shape with the saved login, then quits.
+        if let seriesId = ProcessInfo.processInfo.environment["HONGGUO_PROBE_REVIEWS"], !seriesId.isEmpty {
+            Self.probeReviewsAndExit(seriesId)
+        }
+    }
+
+    private static func probeReviewsAndExit(_ seriesId: String) -> Never {
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            for line in await EpisodeSocialService.probeSeriesReviews(seriesId: seriesId) { print(line) }
+            done.signal()
+        }
+        done.wait()
+        exit(0)
+    }
+
     var body: some Scene {
         WindowGroup("红果短剧", id: "main") {
             ContentView()
