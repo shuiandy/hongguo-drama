@@ -96,68 +96,20 @@ public enum AccountDataAccess {
         return Profile(name: data["user_name"].string ?? "", avatar: normalizeHTTPSURL(rawAvatar))
     }
 
-    /// Full account watch history (`/reading/bookapi/read_history/list/v1/`), following `has_more`
-    /// pagination (up to 5 pages / 500 series) and preserving content categories.
+    /// The account's watch history with each row's shelf category: the same reader as
+    /// `AccountService.history` (every page, latest row per series, newest first, device token
+    /// sent), so the iOS and Mac apps share one history path and one in-memory copy. Throws when
+    /// signed out, so a caller never mistakes that for an empty history.
     public static func historyWithCategories() async throws -> [CategorizedHistory] {
-        var allItems: [CategorizedHistory] = []
-        var offset = 0
-        var lastMinTimestamp = 0
-        for page in 0..<5 {
-            let data = try checked(try await get(path: "/reading/bookapi/read_history/list/v1/", values: [
-                ("book_type", "2"), ("limit", "0"), ("offset", String(offset)),
-                ("last_min_read_timestamp_ms", String(lastMinTimestamp)),
-                ("full_field", "true"), ("is_first_load", page == 0 ? "true" : "false"),
-                ("query_soft_deleted", "false"),
-            ]))
-            guard let rows = data["data_list"].array else {
-                if page == 0 { throw HongguoError(.format, "APP 观看记录格式已变化") }
-                break
-            }
-            var pageMinTs = Int.max
-            for row in rows {
-                if row["is_delete"].bool == true { continue }
-                let seriesId = (row["book_id_str"].idString ?? row["book_id"].idString ?? row["series_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
-                let episodeId = (row["vid"].idString ?? row["item_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
-                guard seriesId.matchesDigits(min: 1, max: 30), episodeId.matchesDigits(min: 1, max: 30) else { continue }
-                func seconds(_ value: JSONValue) -> Double { max(0, (value.number ?? Double(value.string ?? "") ?? 0) / 1000) }
-                func pick(_ a: String, _ b: String) -> JSONValue { row[a].isNull ? row[b] : row[a] }
-                let index = row["vid_index"].number.map(Int.init) ?? 0
-                let rawTime = row["read_timestamp_ms"].number ?? row["last_watch_time"].number ?? 0
-                let millis = rawTime > 0 && rawTime < 10_000_000_000 ? rawTime * 1000 : rawTime
-                if millis > 0 { pageMinTs = min(pageMinTs, Int(millis)) }
-                let title = AccountService.cleanText(row["series_title"].string ?? row["book_name"].string)
-                let rawCover = row["series_cover_url"].string ?? row["thumb_url"].string ?? row["cover"].string ?? ""
-                let cleaned = AccountService.cleanCover(rawCover)
-                let cover = cleaned.isEmpty ? normalizeHTTPSURL(rawCover) : cleaned
-                let ct = Int(row["content_type"].number ?? 0)
-                let genre = row["genre"].string ?? ""
-                let item = AccountHistoryItem(seriesId: seriesId, seriesTitle: title.isEmpty ? "剧集 \(seriesId)" : title,
-                                              cover: cover,
-                                              episodeId: episodeId, episodeIndex: index > 0 ? index : 0,
-                                              position: seconds(pick("current_play_position", "current_play_time")),
-                                              duration: seconds(pick("duration", "current_total_time")),
-                                              updatedAt: Date(timeIntervalSince1970: millis / 1000),
-                                              total: max(0, (row["episode_cnt"].number ?? row["episode_count"].number).map(Int.init) ?? 0))
-                allItems.append(CategorizedHistory(item: item, category: categoryLabel(contentType: ct, genre: genre)))
-            }
-            let hasMore = data["has_more"].bool == true
-            let nextOffset = data["next_offset"].number.map(Int.init) ?? 0
-            guard hasMore, !rows.isEmpty, nextOffset > offset else { break }
-            offset = nextOffset
-            if pageMinTs < Int.max { lastMinTimestamp = pageMinTs }
-            if allItems.count >= 500 { break }
-        }
-        var seen = Set<String>()
-        return allItems.sorted { $0.item.updatedAt > $1.item.updatedAt }
-            .filter { seen.insert($0.item.seriesId).inserted }
-            .prefix(500).map { $0 }
+        try await history().map { CategorizedHistory(item: $0, category: $0.category) }
     }
 
     public static func history() async throws -> [AccountHistoryItem] {
-        try await historyWithCategories().map(\.item)
+        guard await AccountService.shared.status().profile != nil else { throw HongguoError(.input, "未登录") }
+        return try await AccountService.shared.history(refresh: true)
     }
 
-    private static func normalizeHTTPSURL(_ raw: String) -> String {
+    static func normalizeHTTPSURL(_ raw: String) -> String {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.hasPrefix("//") {
             text = "https:" + text
@@ -215,12 +167,13 @@ public enum AccountDataAccess {
     }
 
     /// Both online (`已上线`) and upcoming (`待上线`) series reserved by the account
-    /// (`/reading/user/subscribe/list/v1/`).
+    /// (`/reading/user/subscribe/list/v1/`). Throws when either list fails, so a caller keeps the
+    /// reservations it has instead of replacing them with a partial or empty list.
     public static func reservations() async throws -> [Reservation] {
         async let onlineTask = fetchReservations(isOnline: true)
         async let offlineTask = fetchReservations(isOnline: false)
-        let online = (try? await onlineTask) ?? []
-        let offline = (try? await offlineTask) ?? []
+        let online = try await onlineTask
+        let offline = try await offlineTask
         var seen = Set<String>()
         return (online + offline).filter { seen.insert($0.seriesId).inserted }
     }
@@ -517,12 +470,10 @@ public enum AccountDataAccess {
         let (identity, dToken) = try await PersistentAppDevice.dataIdentity(transport: transport)
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let signed = AppLegacySigner.accountPaths.contains(path)
-            ? try AppLegacySigner.shared.account(path: path, values: values, identity: identity, nowMillis: now)
+            ? try AppLegacySigner.shared.account(path: path, values: values, identity: identity, dToken: dToken, nowMillis: now)
             : try AppLegacySigner.shared.accountRead(path: path, values: values, identity: identity, dToken: dToken, nowMillis: now)
-        // The core's `account` signer leaves the device token out; add it when there is one.
-        let extraDToken: [(String, String)] = (AppLegacySigner.accountPaths.contains(path) && !dToken.isEmpty) ? [("x-tt-dt", dToken)] : []
         do {
-            return try await transport.requestJSON(signed.url, headers: signed.headers + extraDToken + [("Cookie", saved.cookie)],
+            return try await transport.requestJSON(signed.url, headers: signed.headers + [("Cookie", saved.cookie)],
                                                    deadline: Date().addingTimeInterval(12))
         } catch let error as AppSourceError {
             throw error.hongguoError

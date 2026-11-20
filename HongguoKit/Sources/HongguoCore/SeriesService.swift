@@ -154,22 +154,17 @@ public final class SeriesService: Sendable {
     }
 
     func publicDetailsFromWeb(seriesId: String) async throws -> PublicDetails {
-        var options = pageOptions
-        options.timeout = 10
-        options.maxRedirects = 0
-        let response = try await http.get(Site.detailURL(seriesId), options: options)
-        return try Self.parsePublicDetails(response.text, seriesId: seriesId)
+        Self.publicDetails(from: try await SitePages.seriesPage(seriesId, http: http), seriesId: seriesId)
     }
 
     public static func parsePublicDetails(_ html: String, seriesId: String, reviewLimit: Int = 50) throws -> PublicDetails {
-        let router = try HTMLData.routerData(html)
-        guard let data = (router["loaderData"].object ?? [:]).values.first(where: { !$0["seriesDetail"].isNull && $0["isSuccess"].bool != false }) else {
-            throw HongguoError(.format, "来源页面未返回公开剧集信息")
-        }
+        publicDetails(from: try SitePages.loaderData(html, seriesId: seriesId), seriesId: seriesId, reviewLimit: reviewLimit)
+    }
+
+    static func publicDetails(from data: JSONValue, seriesId: String, reviewLimit: Int = 50) -> PublicDetails {
         let detail = data["seriesDetail"]
-        guard detail["series_id"].idString == seriesId else { throw HongguoError(.format, "来源页面剧集不匹配") }
         let social = data["seriesSocialInfo"]
-        func count(_ value: JSONValue) -> Int? { value.number.flatMap { $0 >= 0 ? Int($0) : nil } }
+        func count(_ value: JSONValue) -> Int? { (value.number ?? value.string.flatMap(Double.init)).flatMap { $0 >= 0 ? Int($0) : nil } }
         let reviews = (social["reviews"]["reviews"].array ?? []).compactMap { item -> Review? in
             guard let content = item["content"].string?.trimmingCharacters(in: .whitespacesAndNewlines), !content.isEmpty else { return nil }
             let created = item["create_time"].number.map { Date(timeIntervalSince1970: $0 < 1e12 ? $0 : $0 / 1000) }
@@ -182,7 +177,7 @@ public final class SeriesService: Sendable {
         return PublicDetails(seriesId: seriesId, description: detail["series_intro"].string ?? "",
                              cover: HTMLData.safeCover(detail["series_cover"].string),
                              episodeLabel: meta.label, completionStatus: meta.status,
-                             rating: social["rating"].number, ratingCount: count(social["rating_count"]),
+                             rating: social["rating"].number ?? social["rating"].string.flatMap(Double.init), ratingCount: count(social["rating_count"]),
                              likeCount: count(social["series_like_count"]), favoriteCount: count(social["series_favorite_count"]),
                              reviewTotal: count(social["reviews"]["total_count"]), reviews: Array(reviews.prefix(reviewLimit)),
                              publishedAt: meta.published)

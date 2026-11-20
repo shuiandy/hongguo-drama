@@ -165,6 +165,32 @@ final class HistorySyncTests: XCTestCase {
         XCTAssertNil(row)
     }
 
+    func testHistoryRowsCarryTheShelfCategoryAndSendTheDeviceToken() async throws {
+        let comic = try JSONValue.parse(#"{"book_id_str":"7200000000000000009","vid":"7300000000000000009","vid_index":2,"read_timestamp_ms":1763400000000,"content_type":1004,"thumb_url":"https://p3-novel.byteimg.com/novel-pic/x.heic"}"#)
+        let item = try XCTUnwrap(AccountService.parseHistoryRow(comic))
+        XCTAssertEqual(item.category, "漫剧")
+        XCTAssertEqual(item.cover, "https://p3-novel.byteimg.com/novel-pic/x.heic", "the native apps show HEIC covers")
+        let ai = try JSONValue.parse(#"{"book_id_str":"7200000000000000008","vid":"7300000000000000008","content_type":1,"genre":"都市·AI剧"}"#)
+        XCTAssertEqual(AccountService.parseHistoryRow(ai)?.category, "AI剧")
+
+        final class Headers: @unchecked Sendable {
+            private let lock = NSLock()
+            private var seen: [(String, String)] = []
+            func set(_ value: [(String, String)]) { lock.lock(); seen = value; lock.unlock() }
+            var all: [(String, String)] { lock.lock(); defer { lock.unlock() }; return seen }
+        }
+        let headers = Headers()
+        let store = MemoryCredentialStore(AccountCredentials(cookie: "sessionid=s3cret", profile: AccountProfile(id: "1234567", nickname: "小红")))
+        let account = AccountService(store: store, webRequest: { url, _ in
+            HTTPResponse(data: Data(#"{"message":"success","data":{"user_id_str":"1234567","name":"小红"}}"#.utf8), status: 200, headers: [:], url: url)
+        }, accountRequest: { _, sent in headers.set(sent); return Self.page([Self.row(1, at: Self.base)], hasMore: false, next: 1) }, identity: {
+            PlaybackIdentity(deviceId: "1234567890123456789", iid: "2234567890123456789", cdid: "01234567-89ab-cdef-0123-456789abcdef")
+        })
+        _ = try await account.history(refresh: true)
+        XCTAssertEqual(headers.all.filter { $0.0 == "x-tt-dt" }.count, 1, "one device token header, as the official client sends")
+        XCTAssertEqual(headers.all.first { $0.0 == "Cookie" }?.1, "sessionid=s3cret")
+    }
+
     func testNewerCloudPositionMovesTheResumePoint() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("resume-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
