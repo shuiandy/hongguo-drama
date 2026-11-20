@@ -1,5 +1,7 @@
 import Foundation
 
+#if os(macOS)
+
 /// ByteVC2 兼容转换 (port of src/native/bytevc2.js). Some episodes are only offered in ByteVC2,
 /// which no Apple decoder plays. The separate `librempeg` helper (AGPL, built by
 /// scripts/build-librempeg.sh and bundled as Contents/Resources/bin/librempeg) decrypts and
@@ -172,6 +174,43 @@ public actor ByteVC2Converter {
         }
     }
 }
+
+#else
+
+/// ByteVC2 on iOS and tvOS. `Process` does not exist there, so the app installs a transcoder that
+/// links the BVC2 decoder library (this package does not). Without one `isEnabled` is false, the
+/// App source parser never picks a ByteVC2 row and `convert` is not reached.
+public actor ByteVC2Converter {
+    public static let shared = ByteVC2Converter()
+
+    /// Turns a ByteVC2 file into one the system can play.
+    public typealias Transcoder = @Sendable (_ input: URL, _ output: URL, _ key: [UInt8]?,
+                                             _ progress: (@Sendable (Double) -> Void)?) async throws -> Void
+
+    private static let transcoder = LockedValue<Transcoder?>(nil)
+
+    public static func install(transcoder: Transcoder?) {
+        Self.transcoder.withLock { $0 = transcoder }
+    }
+
+    public static var isEnabled: Bool { transcoder.withLock { $0 != nil } }
+    public static var executableURL: URL? { nil }
+    public static var fastConversion: Bool { false }
+
+    public static func configure(enabled: Bool, fast: Bool) {}
+
+    public struct Unavailable: LocalizedError {
+        public var errorDescription: String? { "本集仅提供 ByteVC2 编码，当前设备暂不支持兼容转换" }
+    }
+
+    public func convert(input: URL, output: URL, key: [UInt8]?,
+                        progress: (@Sendable (Double) -> Void)? = nil) async throws {
+        guard let transcode = Self.transcoder.withLock({ $0 }) else { throw Unavailable() }
+        try await transcode(input, output, key, progress)
+    }
+}
+
+#endif
 
 /// A value behind a lock, for state shared with synchronous callers.
 final class LockedValue<Value>: @unchecked Sendable {

@@ -140,6 +140,20 @@ extension Task where Success == Never, Failure == Never {
     }
 }
 
+// MARK: Client profile
+
+/// Which official client the App play requests imitate when a caller does not say
+/// (`PlatformBehavior.clientProfile`). `.android` is the Mac app's; `.ios` sends the official iOS
+/// 7.4.3 profile on every play-model request (the queued path included) and its User-Agent on
+/// media and `fallback_api` requests. Explicit `iosProfile:` arguments still win.
+public enum AppClientProfile: Sendable, Equatable {
+    case android
+    case ios
+
+    /// The profile of this process.
+    public static var `default`: AppClientProfile { PlatformBehavior.current.clientProfile }
+}
+
 // MARK: App source
 
 /// Official App playback source: anonymous in-memory device registration, v5-signed
@@ -210,13 +224,21 @@ actor AppSource {
     static let playerSceneAPI = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/player/v1/"
     static let iosPlayerUA = "Eggplant/7.4.3 (iPhone; iOS 18.3; Scale/3.00)"
 
+    /// User-Agent for media and `fallback_api` requests of the default client profile.
+    static func mediaUA(inline: Bool) -> String {
+        if AppClientProfile.default == .ios { return iosPlayerUA }
+        return inline ? playbackUA : videoUA
+    }
+
     func playbackRequest(payload: [UInt8], identity: PlaybackIdentity, modern: Bool, alternate: Bool = false,
-                         base override: String? = nil, iosProfile: Bool = false, deviceToken: String? = nil)
+                         base override: String? = nil, iosProfile requested: Bool? = nil, deviceToken: String? = nil)
         throws -> (url: String, headers: [(String, String)], body: [UInt8]) {
         let body = try AppCrypto.gzip(payload)
         let now = Int64(Date().timeIntervalSince1970 * 1000)
-        if modern {
-            let primary = iosProfile ? Self.playerSceneAPI : Self.playerAPI
+        let iosProfile = requested ?? (AppClientProfile.default == .ios)
+        // The iOS client signs the plain route with V5 too (the 551 legacy request is Android only).
+        if modern || iosProfile {
+            let primary = !modern ? Self.videoAPI : (iosProfile ? Self.playerSceneAPI : Self.playerAPI)
             let base = override ?? (alternate ? primary.replacingOccurrences(of: "sinfonlineb.", with: "sinfonlinea.") : primary)
             let profile: [(String, String)] = iosProfile
                 ? [("aid", "8662"), ("app_name", "novelread"), ("version_code", "74300"), ("version_name", "7.4.3"),
@@ -315,7 +337,7 @@ actor AppSource {
             guard let fallback = Self.parseFallback(model["fallback_api"]), !fallback.isEmpty else {
                 throw AppSourceError(.missingModel, "App 接口未返回本集片源地址")
             }
-            let outer = try await transport.requestJSON(fallback, headers: [("User-Agent", Self.videoUA)], deadline: deadline)
+            let outer = try await transport.requestJSON(fallback, headers: [("User-Agent", Self.mediaUA(inline: false))], deadline: deadline)
             for value in [outer, outer["video_info"]] where (value["Code"].number ?? value["code"].number ?? 0) != 0 {
                 throw AppSourceError(.businessRejected, "App 接口暂未提供本集播放信息")
             }
@@ -478,15 +500,22 @@ actor AppSource {
                     let key = (spade ?? "").isEmpty ? nil : try deriveContentKey(spade!)
                     var candidates = [row.item["main_url"].string, row.item["backup_url"].string]
                     candidates += (row.item["backup_url_list"].array ?? []).map(\.string)
+                    // Every valid CDN address is kept: the first plays, the rest are registered as
+                    // backups so a failed edge can be swapped without a new lookup (PlayBackupURLs).
+                    var validURLs: [URL] = []
                     for candidate in candidates.compactMap({ $0 }).filter({ !$0.isEmpty }) {
                         do {
                             let media = try seed.map { try decryptSpadeURL(candidate, seed: $0) } ?? cleanURL(candidate)
                             let url = try checkedURL(media, domains: mediaDomains)
                             guard URLGuard.isPublicURL(url) else { throw URLGuard.blocked() }
-                            return PlayInfo(url: url, spadeA: nil, codec: row.codec == "bytevc1" ? "hevc" : row.codec, source: .app,
-                                            vid: vid, userAgent: inline ? playbackUA : videoUA, referer: nil, contentKey: key,
-                                            quality: row.pixels > 0 ? QualityOption(shortSide: row.pixels) : nil)
+                            if !validURLs.contains(url) { validURLs.append(url) }
                         } catch { lastError = error }
+                    }
+                    if let primary = validURLs.first {
+                        PlayBackupURLs.shared.register(primary: primary, backups: Array(validURLs.dropFirst()))
+                        return PlayInfo(url: primary, spadeA: nil, codec: row.codec == "bytevc1" ? "hevc" : row.codec, source: .app,
+                                        vid: vid, userAgent: mediaUA(inline: inline), referer: nil, contentKey: key,
+                                        quality: row.pixels > 0 ? QualityOption(shortSide: row.pixels) : nil)
                     }
                 } catch { lastError = error }
             }
