@@ -3,15 +3,14 @@ import HongguoCore
 
 /// An actor's page: picture, name, the role in the series it was opened from and their
 /// introduction (all from the series detail's cast), then their works from the App's actor works
-/// read, loaded in pages as the grid scrolls. A work opens its detail page.
+/// read (one batch, as the official app shows it, with the total). A work opens its detail page.
 struct CelebrityView: View {
     let member: EpisodeSocial.CastMember
     @Environment(AppModel.self) private var model
 
     @State private var works: [SeriesSummary] = []
     @State private var total: Int?
-    @State private var nextOffset = 0
-    @State private var hasMore = true
+    @State private var loaded = false
     @State private var isLoading = false
     @State private var error: String?
     @State private var expanded = false
@@ -26,15 +25,16 @@ struct CelebrityView: View {
                         if let total, total > 0 { Text("共 \(total) 部").font(.system(size: 12)).foregroundStyle(.secondary) }
                     }
                     if works.isEmpty {
-                        if !isLoading && error == nil && !hasMore {
+                        if loaded {
                             ContentUnavailableView("暂无作品信息", systemImage: "film")
                         } else {
-                            LoadStateView(error: error, isLoading: isLoading) { Task { await loadMore() } }
+                            LoadStateView(error: error, isLoading: isLoading) { Task { await load() } }
                         }
                     } else {
-                        PosterGrid(items: works) { Task { await loadMore() } }
-                        if isLoading { ProgressView().frame(maxWidth: .infinity) }
-                        if let error { Text(error).font(.caption).foregroundStyle(.red) }
+                        PosterGrid(items: works)
+                        if let total, total > works.count {
+                            Text("红果只返回了其中 \(works.count) 部").font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -53,7 +53,7 @@ struct CelebrityView: View {
         }
         .navigationTitle(member.name)
         .transparentToolbar()
-        .task(id: member.id) { await loadMore() }
+        .task(id: member.id) { await load() }
     }
 
     private var header: some View {
@@ -84,18 +84,16 @@ struct CelebrityView: View {
         }
     }
 
-    private func loadMore() async {
-        guard hasMore, !isLoading else { return }
+    private func load() async {
+        guard !isLoading else { return }
         isLoading = true
         error = nil
         defer { isLoading = false }
         do {
-            let page = try await CelebrityService.works(of: member, offset: nextOffset)
-            let known = Set(works.map(\.seriesId))
-            works += page.items.filter { !known.contains($0.seriesId) }
-            total = page.total ?? total
-            nextOffset = page.nextOffset
-            hasMore = page.hasMore
+            let result = try await CelebrityService.works(of: member)
+            works = result.items
+            total = result.total
+            loaded = true
         } catch {
             self.error = describe(error)
         }

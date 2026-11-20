@@ -5,15 +5,16 @@ import Foundation
 /// comma-joined, `offset`, `count`, `req_scene` 0), legacy query signature, signed out. The reply
 /// keys each actor's `{has_more, total_count, video_list}` by the encrypted id. The actor's own
 /// name, picture and introduction come from the series detail's `celebrities`.
+///
+/// The server ignores `offset` (a second page repeats the first), and the official panel does not
+/// page either: it shows one batch and the total. So there is one read per actor.
 public struct CelebrityWorks: Sendable, Equatable {
     public var items: [SeriesSummary]
+    /// `total_count`: all of the actor's works, often more than `items`.
     public var total: Int?
-    public var hasMore: Bool
-    /// The offset of the next page.
-    public var nextOffset: Int
 
-    public init(items: [SeriesSummary], total: Int?, hasMore: Bool, nextOffset: Int) {
-        self.items = items; self.total = total; self.hasMore = hasMore; self.nextOffset = nextOffset
+    public init(items: [SeriesSummary], total: Int?) {
+        self.items = items; self.total = total
     }
 }
 
@@ -21,18 +22,16 @@ public enum CelebrityService {
     static let path = "/reading/user/celebrity/works/v1/"
     private static let cache = TTLCache<CelebrityWorks>(limit: 64)
 
-    /// One page of `member`'s works, newest first as the server orders them.
-    public static func works(of member: EpisodeSocial.CastMember, offset: Int = 0, count: Int = 20,
+    /// `member`'s works as the server lists them (one read, cached for five minutes).
+    public static func works(of member: EpisodeSocial.CastMember, count: Int = 50,
                              http: HTTPClient = .shared) async throws -> CelebrityWorks {
         guard !member.encryptedId.isEmpty else { throw HongguoError(.unavailable, "这位演员暂时没有作品信息") }
-        let key = "\(member.encryptedId):\(offset):\(count)"
+        let key = "\(member.encryptedId):\(count)"
         if let cached = await cache.get(key) { return cached }
-        let reply = try await request(encryptedIds: [member.encryptedId], offset: offset, count: count, http: http)
+        let reply = try await request(encryptedIds: [member.encryptedId], offset: 0, count: count, http: http)
         guard let works = try parse(reply)[member.encryptedId] else { throw HongguoError(.upstream, "红果没有返回这位演员的作品") }
-        var page = works
-        page.nextOffset = offset + max(count, works.items.count)
-        await cache.set(key, page, ttl: 300)
-        return page
+        await cache.set(key, works, ttl: 300)
+        return works
     }
 
     static func request(encryptedIds: [String], offset: Int, count: Int, http: HTTPClient = .shared) async throws -> JSONValue {
@@ -62,8 +61,7 @@ public enum CelebrityService {
         for (id, info) in json["data"]["works"].object ?? [:] {
             var seen = Set<String>()
             let items = (info["video_list"].array ?? []).compactMap { summary($0, seen: &seen) }
-            result[id] = CelebrityWorks(items: items, total: EpisodeSocialService.integer(info["total_count"]),
-                                        hasMore: info["has_more"].bool == true && !items.isEmpty, nextOffset: items.count)
+            result[id] = CelebrityWorks(items: items, total: EpisodeSocialService.integer(info["total_count"]))
         }
         return result
     }

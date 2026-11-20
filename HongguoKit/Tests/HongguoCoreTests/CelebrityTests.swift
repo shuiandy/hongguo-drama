@@ -26,10 +26,9 @@ final class CelebrityTests: XCTestCase {
         XCTAssertEqual(first.items[0].completionStatus, .completed)
         XCTAssertEqual(first.items[1].episodeCount, 12, "the nested detail stands in for missing card fields")
         XCTAssertEqual(first.total, 37)
-        XCTAssertTrue(first.hasMore)
         let second = try XCTUnwrap(works["enc_b"])
         XCTAssertTrue(second.items.isEmpty)
-        XCTAssertFalse(second.hasMore)
+        XCTAssertEqual(second.total, 0)
 
         XCTAssertThrowsError(try CelebrityService.parse(try JSONValue.parse(#"{"code":100103,"message":"PARAM_INVALID"}"#)))
     }
