@@ -408,6 +408,18 @@ final class PlayerController {
     /// stream falls back once to the full download-and-decrypt path.
     private func mediaFailed(_ message: String) {
         let resumeAt = player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0
+        // The stream broke in the last few seconds: the episode is effectively watched, so finish
+        // it quietly instead of fetching the source again (and showing an error if that fails).
+        if duration > 3, resumeAt >= duration - 3 {
+            isLoading = false
+            persistPosition(finished: true)
+            if autoNext, hasNext {
+                play(index: index + 1)
+            } else {
+                player.pause()
+            }
+            return
+        }
         if let info = currentInfo, info.source == .web, !retriedWithoutWeb {
             retriedWithoutWeb = true
             let service = AppModel.shared.series

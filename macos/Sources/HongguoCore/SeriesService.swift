@@ -123,7 +123,7 @@ public final class SeriesService: Sendable {
     // MARK: Play URL
 
     /// Resolves a playable URL. Order: the fast App source (one anonymous device kept in memory,
-    /// signed player/v1; an empty reply is asked again at once), then the queued App source with
+    /// signed player/v1; an empty reply is asked again at once, then after 1.5 s and 4 s), then the queued App source with
     /// its legacy signature, then the legacy preload API, and the official web page last.
     /// The web page comes last because it answers with a preview or 404 for nearly every
     /// episode and costs about two seconds each time; a web address that just failed to play
@@ -140,7 +140,15 @@ public final class SeriesService: Sendable {
         if !force, let cached = await playCache.get(key) { return cached }
         var failures: [String] = []
         var refused = false
-        for attempt in 0..<2 {
+        // Empty replies come in short bursts: ask again at once, then after 1.5 s and 4 s (the
+        // source drops its device after an empty reply, so the later tries use a fresh one).
+        let emptyBackoff: [Double] = [0, 1.5, 4]
+        for attempt in 0..<emptyBackoff.count {
+            if emptyBackoff[attempt] > 0 {
+                do { try await Task.sleep(for: .seconds(emptyBackoff[attempt])) } catch {
+                    throw HongguoError(.cancelled, "已取消 App 片源请求")
+                }
+            }
             do {
                 let info = try await fastSource.resolve(vid: vid, force: force || attempt > 0)
                 await playCache.set(key, info, ttl: 30)
@@ -148,7 +156,7 @@ public final class SeriesService: Sendable {
             } catch let error as AppSourceError {
                 if error.code == .cancelled { throw error.hongguoError }
                 refused = error.isHardRejection
-                if attempt == 0, error.code == .emptyResponse { continue }
+                if attempt < emptyBackoff.count - 1, error.code == .emptyResponse { continue }
                 failures.append("App：\(Self.describe(error))")
                 break
             } catch is CancellationError {
