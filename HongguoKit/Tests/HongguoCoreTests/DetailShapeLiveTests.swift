@@ -469,6 +469,48 @@ final class DetailShapeLiveTests: XCTestCase {
         print("PACK\n" + lines.joined(separator: "\n"))
     }
 
+    /// `--filter DetailShapeLiveTests/testSeriesReviewsOfficialBody`: the series review list with the
+    /// request exactly as the official binary builds it (`FQCRpcGetCommentListRequest` mappers: aid and
+    /// compliance_status in the query, the rest in a JSON body, business_param need_count, fold_type,
+    /// outflow_comment_count; lower-case comment-source and server-channel headers), once with the
+    /// review page's values (source 1, channel 0) and once with the episode comments' (4, 18).
+    /// Signed out. Two App requests. Prints key trees only.
+    func testSeriesReviewsOfficialBody() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["HONGGUO_LIVE"] == "1", "set HONGGUO_LIVE=1 to run")
+        let seriesId = try await probeSeriesId()
+        let probe = try await OfficialProbe.make()
+        var lines: [String] = []
+        for (source, channel) in [(1, 0), (4, 18)] {
+            do {
+                let stampMs = Int64(Date().timeIntervalSince1970 * 1000)
+                let rawQuery = DanmakuSigner.buildQuery(stampMs: stampMs, deviceId: probe.identity.deviceId, installId: probe.identity.iid)
+                    + "&compliance_status=0"
+                let url = try XCTUnwrap(URL(string: "https://api5-normal-sinfonlineb.fqnovel.com/novel/commentapi/comment/list/\(seriesId)/v1/?\(rawQuery)"))
+                var options = HTTPClient.Options()
+                options.timeout = 8
+                let headers: [(String, String)] = [
+                    ("User-Agent", DanmakuService.userAgent), ("Accept", "application/json"),
+                    ("X-XS-From-Web", "0"), ("Sdk-Version", "2"), ("Content-Type", "application/json; charset=utf-8"),
+                    ("comment-source", String(source)), ("server-channel", String(channel)),
+                ] + (try DanmakuSigner.headers(rawQuery: rawQuery, stamp: stampMs / 1000, nonce: AppCrypto.randomBytes(DanmakuSigner.nonceBytes)))
+                for (key, value) in headers { options.headers[key] = value }
+                let body: [String: Any] = [
+                    "group_id": seriesId, "group_type": 1, "comment_type": 2, "comment_source": source, "server_channel": channel,
+                    "sort": 1, "count": 10, "cursor": "",
+                    "business_param": ["book_id": seriesId, "need_count": true, "fold_type": 0, "outflow_comment_count": 0],
+                ]
+                let response = try await HTTPClient.shared.post(url, json: try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]), options: options)
+                let json = try JSONValue.parse(response.data)
+                lines.append("== reviews source=\(source) channel=\(channel): code=\(json["code"].number.map { String(Int($0)) } ?? "-") msg=\((json["message"].string ?? "").prefix(30))")
+                var data = json["data"]
+                if var list = data["data_list"].array, list.count > 1 { list = [list[0]]; data = Self.replacing(data, key: "data_list", with: .array(list)) }
+                Self.tree(data, name: "data", mask: [seriesId: "<sid>"], into: &lines)
+            } catch { lines.append("reviews source=\(source) channel=\(channel): \(error)") }
+            try await Task.sleep(for: .seconds(1))
+        }
+        print("REVIEWS2\n" + lines.joined(separator: "\n"))
+    }
+
     private static func replacing(_ value: JSONValue, key: String, with replacement: JSONValue) -> JSONValue {
         guard var object = value.object else { return value }
         object[key] = replacement
