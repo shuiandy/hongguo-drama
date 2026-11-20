@@ -441,7 +441,8 @@ struct AppLegacySigner {
     static let accountHost = "https://api5-normal-sinfonlinea.fqnovel.com"
 
     /// Port of `signedAccountRequest`: the registered identity plus the website login cookie (added by the caller).
-    func account(path: String, values: [(String, String)], identity: PlaybackIdentity, nowMillis: Int64) throws -> Signed {
+    /// `dToken` is the device token the official client sends as `x-tt-dt` (empty until issued).
+    func account(path: String, values: [(String, String)], identity: PlaybackIdentity, dToken: String = "", nowMillis: Int64) throws -> Signed {
         guard Self.accountPaths.contains(path) else { throw HongguoError(.input, "不支持的账号接口") }
         guard [identity.deviceId, identity.iid].allSatisfy({ $0.matchesDigits(min: 1, max: 30) && $0.contains(where: { $0 != "0" }) }),
               identity.cdid.range(of: "^[a-fA-F0-9-]{36}$", options: .regularExpression) != nil else {
@@ -463,7 +464,7 @@ struct AppLegacySigner {
                 ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
                 ("x-gorgon", Self.xGorgon(query: query, body: nil, ts: ts, random: random32() >> 16)), ("x-helios", helios(ts: ts)),
                 ("x-medusa", try medusa(url: url, body: nil, ts: ts, deviceId: identity.deviceId, versionName: "7.2.2.32", nowMillis: nowMillis)),
-                ("x-tt-dt", ""),
+                ("x-tt-dt", dToken),
             ]
             return Signed(url: url, query: query, headers: headers, body: nil)
         }

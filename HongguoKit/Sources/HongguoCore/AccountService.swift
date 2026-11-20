@@ -25,6 +25,8 @@ public struct AccountHistoryItem: Equatable, Sendable, Identifiable {
     public var duration: Double
     public var updatedAt: Date
     public var total: Int
+    /// The official app's shelf label: 真人剧, 漫剧, AI剧 or 高光; empty when the row does not say.
+    public var category: String = ""
 }
 
 public struct AccountLoginQR: Equatable, Sendable {
@@ -136,7 +138,12 @@ public actor AccountService {
     private let webRequest: WebRequest
     private let accountRequest: AccountRequest
     private let identity: @Sendable () async throws -> PlaybackIdentity
+    private let deviceToken: @Sendable () async -> String
     private let now: @Sendable () -> Date
+
+    /// Posted (on no particular thread) when a saved login is found to have expired and has been
+    /// removed, so the apps can show the signed-out state instead of keeping a stale profile.
+    public static let sessionExpiredNotification = Notification.Name("HongguoAccountSessionExpired")
 
     private var credentials: AccountCredentials?
     private var profile: AccountProfile?
@@ -171,6 +178,12 @@ public actor AccountService {
             catch let error as AppSourceError { throw HongguoError(.unavailable, error.message) }
         }
         self.identity = identity ?? { try await PersistentAppDevice.shared.get(transport: transport) }
+        // Tests inject the identity and send no device token.
+        if identity == nil {
+            self.deviceToken = { await PersistentAppDevice.shared.dTokenValue() }
+        } else {
+            self.deviceToken = { "" }
+        }
     }
 
     // MARK: Parsing (pure)
@@ -263,13 +276,17 @@ public actor AccountService {
         func pick(_ a: String, _ b: String) -> JSONValue { row[a].isNull ? row[b] : row[a] }
         let index = row["vid_index"].number.map(Int.init) ?? 0
         let title = cleanText(row["series_title"].string ?? row["book_name"].string)
+        let rawCover = row["series_cover_url"].string ?? row["thumb_url"].string ?? row["cover"].string ?? ""
+        let cleaned = cleanCover(rawCover)
         return AccountHistoryItem(seriesId: seriesId, seriesTitle: title.isEmpty ? "剧集 \(seriesId)" : title,
-                                  cover: cleanCover(row["series_cover_url"].string ?? row["thumb_url"].string ?? row["cover"].string),
+                                  cover: cleaned.isEmpty ? AccountDataAccess.normalizeHTTPSURL(rawCover) : cleaned,
                                   episodeId: episodeId, episodeIndex: index > 0 ? index : 0,
                                   position: seconds(pick("current_play_position", "current_play_time")),
                                   duration: seconds(pick("duration", "current_total_time")),
                                   updatedAt: Date(timeIntervalSince1970: historyMillis(row) / 1000),
-                                  total: max(0, (row["episode_cnt"].number ?? row["episode_count"].number).map(Int.init) ?? 0))
+                                  total: max(0, (row["episode_cnt"].number ?? row["episode_count"].number).map(Int.init) ?? 0),
+                                  category: AccountDataAccess.categoryLabel(contentType: Int(row["content_type"].number ?? 0),
+                                                                            genre: row["genre"].string ?? ""))
     }
 
     /// One page of `read_history/list`: its rows (deleted ones dropped) and the cursor of the next page.
@@ -388,6 +405,7 @@ public actor AccountService {
             profile = nil
             cachedHistory = nil
             try? store.clear()
+            NotificationCenter.default.post(name: Self.sessionExpiredNotification, object: nil)
         }
     }
 
@@ -522,12 +540,13 @@ public actor AccountService {
 
     private func historyPage(_ cursor: HistoryCursor, cookie: String, token: Int) async throws -> HistoryPage? {
         let device = try await identity()
+        let dToken = await deviceToken()
         guard token == generation else { return nil }
         let signed = try AppLegacySigner.shared.account(path: "/reading/bookapi/read_history/list/v1/", values: [
             ("book_type", "2"), ("limit", "0"), ("offset", String(cursor.offset)),
             ("last_min_read_timestamp_ms", String(cursor.minTimestampMillis)),
             ("full_field", "true"), ("is_first_load", cursor.isFirst ? "true" : "false"), ("query_soft_deleted", "false"),
-        ], identity: device, nowMillis: Int64(now().timeIntervalSince1970 * 1000))
+        ], identity: device, dToken: dToken, nowMillis: Int64(now().timeIntervalSince1970 * 1000))
         let page = try Self.parseHistoryPage(try await accountRequest(signed.url, signed.headers + [("Cookie", cookie)]), cursor: cursor)
         guard token == generation else { return nil }
         return page

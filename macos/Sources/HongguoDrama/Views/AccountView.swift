@@ -34,10 +34,20 @@ final class AccountState {
     func restore() async {
         guard !restoreStarted else { return }
         restoreStarted = true
+        // The background cookie check (or any later one) may find the login expired and drop it.
+        NotificationCenter.default.addObserver(forName: AccountService.sessionExpiredNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.sessionExpired() }
+        }
         let status = await AccountService.shared.status()
         profile = status.profile
         message = status.error
         restoring = false
+    }
+
+    private func sessionExpired() {
+        guard profile != nil else { return }
+        profile = nil
+        message = "登录已过期，请重新扫码登录"
     }
 
     /// Reads the App profile for the avatar (read only); a failure keeps the initial-letter circle.

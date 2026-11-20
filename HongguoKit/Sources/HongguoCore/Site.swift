@@ -1,7 +1,7 @@
 import Foundation
 
-/// The official website: kept for the series page (score and written reviews), share links and
-/// "open the source page" links. No list, search or play data comes from it.
+/// The official website, only as the target of share links and "open the source page" links. No
+/// page of it is read for data.
 public enum Site {
     public static let origin = "https://hongguoduanju.com"
     public static let referer = origin + "/"

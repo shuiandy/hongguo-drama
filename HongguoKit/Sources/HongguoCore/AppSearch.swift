@@ -87,8 +87,8 @@ public final class AppSearchService: Sendable {
                                          identity: identity, nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
         let payload: JSONValue
         do {
-            payload = try await transport.requestJSON(signed.url, headers: signed.headers + PersistentAppDevice.authHeaders(),
-                                                      deadline: deadline)
+            // Signed out on purpose (`user_is_login=0` in the query), as before: no website Cookie.
+            payload = try await transport.requestJSON(signed.url, headers: signed.headers, deadline: deadline)
         } catch let error as AppSourceError {
             if error.code == .timeout { throw HongguoError(.timeout, "App 搜索超时") }
             throw HongguoError(.unavailable, "App 搜索暂不可用")

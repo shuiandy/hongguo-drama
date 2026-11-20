@@ -103,10 +103,13 @@ final class AccountServiceTests: XCTestCase {
         web.profileOK = false
         let store = MemoryCredentialStore(AccountCredentials(cookie: "sessionid=old", profile: AccountProfile(id: "1234567", nickname: "小红")))
         let account = service(web, store: store)
+        let expired = expectation(forNotification: AccountService.sessionExpiredNotification, object: nil)
         let status = await account.status()
         XCTAssertEqual(status.profile?.id, "1234567", "the saved profile shows at once")
-        for _ in 0..<100 where store.current != nil { try await Task.sleep(for: .milliseconds(10)) }
+        await fulfillment(of: [expired], timeout: 2)
         XCTAssertNil(store.current, "an expired cookie is removed after the background check")
+        let after = await account.status()
+        XCTAssertNil(after.profile, "the apps see the signed-out state once told")
     }
 
     func testWebViewLoginNeedsSessionCookie() async throws {
