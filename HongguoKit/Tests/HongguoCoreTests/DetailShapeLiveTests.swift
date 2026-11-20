@@ -91,4 +91,63 @@ final class DetailShapeLiveTests: XCTestCase {
         }
         print("DETAIL\n" + report.joined(separator: "\n"))
     }
+
+    /// `--filter DetailShapeLiveTests/testPlayReplyShape` (optional `HONGGUO_VID`): what the working
+    /// play-model reply carries besides the model (in case it holds series facts or the episode
+    /// list), plus the detail path asked with GET. Three requests.
+    func testPlayReplyShape() async throws {
+        let env = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(env["HONGGUO_LIVE"] == "1", "set HONGGUO_LIVE=1 to run")
+        let vid = env["HONGGUO_VID"] ?? "7694243705045126169"
+        let transport = AppTransport(http: .shared)
+        let identity = try await PersistentAppDevice.shared.get(transport: transport)
+        let dToken = await PersistentAppDevice.shared.dTokenHeaders()
+        var report: [String] = []
+
+        let request = try AppSource.modelRequest(base: AppSource.playerAPI, payload: try AppSource.modelPayload(vids: [vid]), identity: identity)
+        var seriesId = env["HONGGUO_SID"] ?? ""
+        do {
+            let json = try await transport.requestJSON(request.url, method: "POST", headers: request.headers + dToken,
+                                                       body: request.body, deadline: Date().addingTimeInterval(10))
+            report.append("top: \(EmptySourceProbeLiveTests.shape(json, depth: 1))")
+            let data = json["data"]
+            report.append("data: \(EmptySourceProbeLiveTests.shape(data, depth: 1))")
+            let group = data["1004"].isNull ? data : data["1004"]
+            if let entry = group[vid].object {
+                for key in entry.keys.sorted() where key != "video_model" {
+                    report.append("entry.\(key): \(EmptySourceProbeLiveTests.shape(entry[key]!, depth: 1))")
+                }
+                if seriesId.isEmpty { seriesId = entry["series_id"]?.idString ?? entry["video_detail"]?["series_id"].idString ?? "" }
+            } else {
+                report.append("entry for vid missing; group keys=\(group.object?.keys.count ?? -1)")
+            }
+        } catch let error as AppSourceError {
+            report.append("play model: \(error.code.rawValue) status=\(error.status.map(String.init) ?? "-")")
+        }
+
+        if !seriesId.isEmpty {
+            for host in ["api5-normal-sinfonlineb.fqnovel.com", "reading.snssdk.com"] {
+                try await Task.sleep(for: .seconds(1))
+                let name = "GET \(host.prefix(20)) detail"
+                do {
+                    let signed = try PlaybackSignerV5.shared.sign(
+                        base: "https://\(host)/novel/player/multi_video_detail/v1/",
+                        values: AppSource.iosProfile + [("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId),
+                                                        ("series_id", seriesId), ("dr_scene", "player")],
+                        body: [], nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
+                    let json = try await transport.requestJSON(signed.url, method: "GET",
+                                                               headers: signed.headers + [("User-Agent", AppSource.iosPlayerUA), ("Accept", "application/json"),
+                                                                                          ("x-ss-dp", "8662"), ("sdk-version", "2")] + dToken,
+                                                               deadline: Date().addingTimeInterval(10))
+                    let vd = json["data"][seriesId]["video_data"]
+                    report.append("\(name): code=\(json["code"].number.map { String(Int($0)) } ?? "-") list=\(vd["video_list"].array?.count ?? -1) top=\(EmptySourceProbeLiveTests.shape(json, depth: 1))")
+                } catch let error as AppSourceError {
+                    report.append("\(name): \(error.code.rawValue) status=\(error.status.map(String.init) ?? "-")")
+                }
+            }
+        } else {
+            report.append("no series id from the play reply; set HONGGUO_SID to try GET")
+        }
+        print("PLAYREPLY\n" + report.joined(separator: "\n"))
+    }
 }
