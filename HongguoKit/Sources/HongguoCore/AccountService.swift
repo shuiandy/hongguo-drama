@@ -231,30 +231,66 @@ public actor AccountService {
         return AccountProfile(id: id, nickname: nickname.isEmpty ? "红果用户" : nickname)
     }
 
-    static func parseHistory(_ payload: JSONValue) throws -> [AccountHistoryItem] {
+    /// Where the next `read_history/list` page starts: the server's `next_offset` plus the oldest
+    /// read time seen so far, as the official client sends them.
+    struct HistoryCursor: Equatable, Sendable {
+        var offset = 0
+        var minTimestampMillis: Int64 = 0
+        var isFirst = true
+        static let first = HistoryCursor()
+    }
+
+    struct HistoryPage: Equatable, Sendable {
+        var items: [AccountHistoryItem]
+        /// Nil on the last page.
+        var next: HistoryCursor?
+    }
+
+    /// Most pages one full refresh reads. The server pages until `has_more` is false; this only stops a runaway loop.
+    static let historyPageLimit = 10
+
+    static func historyMillis(_ row: JSONValue) -> Double {
+        let raw = row["read_timestamp_ms"].number ?? row["last_watch_time"].number ?? 0
+        return raw > 0 && raw < 10_000_000_000 ? raw * 1000 : raw
+    }
+
+    static func parseHistoryRow(_ row: JSONValue) -> AccountHistoryItem? {
+        if row["is_delete"].bool == true { return nil }
+        let seriesId = (row["book_id_str"].idString ?? row["book_id"].idString ?? row["series_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
+        let episodeId = (row["vid"].idString ?? row["item_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
+        guard seriesId.matchesDigits(min: 1, max: 30), episodeId.matchesDigits(min: 1, max: 30) else { return nil }
+        func seconds(_ value: JSONValue) -> Double { max(0, (value.number ?? Double(value.string ?? "") ?? 0) / 1000) }
+        func pick(_ a: String, _ b: String) -> JSONValue { row[a].isNull ? row[b] : row[a] }
+        let index = row["vid_index"].number.map(Int.init) ?? 0
+        let title = cleanText(row["series_title"].string ?? row["book_name"].string)
+        return AccountHistoryItem(seriesId: seriesId, seriesTitle: title.isEmpty ? "剧集 \(seriesId)" : title,
+                                  cover: cleanCover(row["series_cover_url"].string ?? row["thumb_url"].string ?? row["cover"].string),
+                                  episodeId: episodeId, episodeIndex: index > 0 ? index : 0,
+                                  position: seconds(pick("current_play_position", "current_play_time")),
+                                  duration: seconds(pick("duration", "current_total_time")),
+                                  updatedAt: Date(timeIntervalSince1970: historyMillis(row) / 1000),
+                                  total: max(0, (row["episode_cnt"].number ?? row["episode_count"].number).map(Int.init) ?? 0))
+    }
+
+    /// One page of `read_history/list`: its rows (deleted ones dropped) and the cursor of the next page.
+    static func parseHistoryPage(_ payload: JSONValue, cursor: HistoryCursor = .first) throws -> HistoryPage {
         let data = try responseData(payload)
         guard let rows = data["data_list"].array else { throw HongguoError(.format, "APP 观看记录格式已变化") }
-        let items = rows.compactMap { row -> AccountHistoryItem? in
-            if row["is_delete"].bool == true { return nil }
-            let seriesId = (row["book_id_str"].idString ?? row["book_id"].idString ?? row["series_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
-            let episodeId = (row["vid"].idString ?? row["item_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
-            guard seriesId.matchesDigits(min: 1, max: 30), episodeId.matchesDigits(min: 1, max: 30) else { return nil }
-            func seconds(_ value: JSONValue) -> Double { max(0, (value.number ?? Double(value.string ?? "") ?? 0) / 1000) }
-            func pick(_ a: String, _ b: String) -> JSONValue { row[a].isNull ? row[b] : row[a] }
-            let index = row["vid_index"].number.map(Int.init) ?? 0
-            let rawTime = row["read_timestamp_ms"].number ?? row["last_watch_time"].number ?? 0
-            let millis = rawTime > 0 && rawTime < 10_000_000_000 ? rawTime * 1000 : rawTime
-            let title = cleanText(row["series_title"].string ?? row["book_name"].string)
-            return AccountHistoryItem(seriesId: seriesId, seriesTitle: title.isEmpty ? "剧集 \(seriesId)" : title,
-                                      cover: cleanCover(row["series_cover_url"].string ?? row["thumb_url"].string ?? row["cover"].string),
-                                      episodeId: episodeId, episodeIndex: index > 0 ? index : 0,
-                                      position: seconds(pick("current_play_position", "current_play_time")),
-                                      duration: seconds(pick("duration", "current_total_time")),
-                                      updatedAt: Date(timeIntervalSince1970: millis / 1000),
-                                      total: max(0, (row["episode_cnt"].number ?? row["episode_count"].number).map(Int.init) ?? 0))
-        }
+        let oldest = rows.map(historyMillis).filter { $0 > 0 }.min().map { Int64($0.rounded()) }
+        let nextOffset = data["next_offset"].number.map(Int.init) ?? 0
+        let more = data["has_more"].bool == true && !rows.isEmpty && nextOffset > cursor.offset
+        return HistoryPage(items: rows.compactMap(parseHistoryRow),
+                           next: more ? HistoryCursor(offset: nextOffset, minTimestampMillis: oldest ?? cursor.minTimestampMillis, isFirst: false) : nil)
+    }
+
+    /// Latest row per series, most recently watched first.
+    static func latestPerSeries(_ items: [AccountHistoryItem]) -> [AccountHistoryItem] {
         var seen = Set<String>()
-        return items.sorted { $0.updatedAt > $1.updatedAt }.filter { seen.insert($0.seriesId).inserted }.prefix(50).map { $0 }
+        return items.sorted { $0.updatedAt > $1.updatedAt }.filter { seen.insert($0.seriesId).inserted }
+    }
+
+    static func parseHistory(_ payload: JSONValue) throws -> [AccountHistoryItem] {
+        latestPerSeries(try parseHistoryPage(payload).items)
     }
 
     /// Error text safe to show: no URLs or session cookies.
@@ -435,26 +471,97 @@ public actor AccountService {
         do { try store.clear(); return "" } catch { return Self.safeMessage(error) }
     }
 
-    /// The account's App watch history (latest per series, up to 50). Empty when signed out.
-    public func history(refresh: Bool = false) async throws -> [AccountHistoryItem] {
+    /// The account's App watch history: latest row per series, newest first, every page the server
+    /// offers (it pages until `has_more` is false). `firstPageOnly` reads just the most recent page
+    /// and folds it into the last full list, for frequent background checks. Empty when signed out.
+    public func history(refresh: Bool = false, firstPageOnly: Bool = false) async throws -> [AccountHistoryItem] {
         _ = await status()
         guard let current = credentials, profile != nil else { return [] }
         if let cachedHistory, !refresh { return cachedHistory }
         let token = generation
+        var rows: [AccountHistoryItem] = []
+        var seen = Set<String>()
+        var cursor = HistoryCursor.first
+        for _ in 0..<(firstPageOnly ? 1 : Self.historyPageLimit) {
+            guard let page = try await historyPage(cursor, cookie: current.cookie, token: token) else { return [] }
+            rows += page.items
+            let before = seen.count
+            seen.formUnion(page.items.map(\.seriesId))
+            // Stop at the last page, or when a page brings no new series (a server ignoring the cursor).
+            guard let next = page.next, seen.count > before else { break }
+            cursor = next
+        }
+        let merged = Self.latestPerSeries(firstPageOnly ? rows + (cachedHistory ?? []) : rows)
+        cachedHistory = merged
+        return merged
+    }
+
+    /// The account's current row for one series, read fresh from the first history page (the most
+    /// recently watched series), else from the last full refresh. Nil when signed out or never watched.
+    /// Used right before playback starts, so another device's newer position is not missed.
+    public func latestHistoryRow(seriesId: String) async throws -> AccountHistoryItem? {
+        _ = await status()
+        guard let current = credentials, profile != nil else { return nil }
+        let token = generation
+        guard let page = try await historyPage(.first, cookie: current.cookie, token: token) else { return nil }
+        if let row = Self.latestPerSeries(page.items).first(where: { $0.seriesId == seriesId }) {
+            if var cached = cachedHistory, let at = cached.firstIndex(where: { $0.seriesId == seriesId }) {
+                cached[at] = row
+                cachedHistory = Self.latestPerSeries(cached)
+            }
+            return row
+        }
+        return cachedHistory?.first { $0.seriesId == seriesId }
+    }
+
+    /// `latestHistoryRow` for the moment before playback starts: never throws, and gives up with nil
+    /// after `timeout` seconds so a slow network never holds up the first frame.
+    public nonisolated func latestHistoryRow(seriesId: String, timeout: Double) async -> AccountHistoryItem? {
+        await withDeadline(timeout) { try? await self.latestHistoryRow(seriesId: seriesId) }
+    }
+
+    private func historyPage(_ cursor: HistoryCursor, cookie: String, token: Int) async throws -> HistoryPage? {
         let device = try await identity()
-        guard token == generation else { return [] }
+        guard token == generation else { return nil }
         let signed = try AppLegacySigner.shared.account(path: "/reading/bookapi/read_history/list/v1/", values: [
-            ("book_type", "2"), ("limit", "0"), ("offset", "0"), ("last_min_read_timestamp_ms", "0"),
-            ("full_field", "true"), ("is_first_load", "true"), ("query_soft_deleted", "false"),
+            ("book_type", "2"), ("limit", "0"), ("offset", String(cursor.offset)),
+            ("last_min_read_timestamp_ms", String(cursor.minTimestampMillis)),
+            ("full_field", "true"), ("is_first_load", cursor.isFirst ? "true" : "false"), ("query_soft_deleted", "false"),
         ], identity: device, nowMillis: Int64(now().timeIntervalSince1970 * 1000))
-        let rows = try Self.parseHistory(try await accountRequest(signed.url, signed.headers + [("Cookie", current.cookie)]))
-        guard token == generation else { return [] }
-        cachedHistory = rows
-        return rows
+        let page = try Self.parseHistoryPage(try await accountRequest(signed.url, signed.headers + [("Cookie", cookie)]), cursor: cursor)
+        guard token == generation else { return nil }
+        return page
     }
 
     /// The account's history row for one series, from the last fetched history.
     public func historyRow(seriesId: String) -> AccountHistoryItem? {
         cachedHistory?.first { $0.seriesId == seriesId }
+    }
+}
+
+/// Runs `work` and returns its value, or nil once `seconds` pass first. Unlike a task group it does
+/// not wait for a slow request to notice cancellation before returning.
+func withDeadline<T: Sendable>(_ seconds: Double, _ work: @escaping @Sendable () async -> T?) async -> T? {
+    let once = DeadlineOnce()
+    return await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
+        let task = Task {
+            let value = await work()
+            if once.claim() { continuation.resume(returning: value) }
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
+            if once.claim() { task.cancel(); continuation.resume(returning: nil) }
+        }
+    }
+}
+
+private final class DeadlineOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if done { return false }
+        done = true
+        return true
     }
 }

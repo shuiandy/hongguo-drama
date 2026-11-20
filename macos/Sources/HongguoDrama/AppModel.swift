@@ -409,6 +409,7 @@ final class AppModel {
     }
 
     private(set) var lastCloudSync = Date.distantPast
+    @ObservationIgnored private var lastFullCloudSync = Date.distantPast
     private(set) var lastCloudSyncCount = 0
     private(set) var cloudSyncing = false
     var cloudSyncMessage = ""
@@ -417,6 +418,15 @@ final class AppModel {
     /// then, with 双向同步 on, the account's favourites and likes (`AccountSync`). Local progress
     /// goes up as it is saved. `force` skips the one-minute throttle; `manual` (a button) also
     /// runs when 显示云端观看记录 is off.
+    /// Reads the account's current row for one series and merges it when it is newer, so continuing
+    /// never starts from a position another device has already moved past. Gives up after `timeout`
+    /// seconds and keeps this Mac's record (playback does not wait on a slow network).
+    func syncCloudPosition(seriesId: String, timeout: Double = 3) async {
+        guard settings.cloudHistorySync, SourceRouter.isHongguo(seriesId) else { return }
+        guard let row = await AccountService.shared.latestHistoryRow(seriesId: seriesId, timeout: timeout) else { return }
+        if store.mergeCloudHistory([row]) > 0 { refreshHistory() }
+    }
+
     func syncCloudHistory(force: Bool = false, manual: Bool = false) async {
         guard !cloudSyncing, force || Date().timeIntervalSince(lastCloudSync) > 60 else { return }
         guard await AccountService.shared.status().profile != nil else { return }
@@ -426,7 +436,10 @@ final class AppModel {
         if AccountState.shared.avatar.isEmpty { await AccountState.shared.loadAvatar() }
         guard manual || settings.cloudHistorySync else { lastCloudSync = Date(); return }
         do {
-            let items = try await AccountService.shared.history(refresh: true)
+            // Every page at launch, on demand and every 30 minutes; the 3-minute checks read the newest page.
+            let full = force || manual || Date().timeIntervalSince(lastFullCloudSync) > 30 * 60
+            let items = try await AccountService.shared.history(refresh: true, firstPageOnly: !full)
+            if full { lastFullCloudSync = Date() }
             lastCloudSync = Date()
             lastCloudSyncCount = items.count
             store.mergeCloudHistory(items)
