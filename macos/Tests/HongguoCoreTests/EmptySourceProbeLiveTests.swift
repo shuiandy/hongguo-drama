@@ -162,3 +162,34 @@ final class PlayShapeLiveTests: XCTestCase {
         print("SHAPES\n" + report.joined(separator: "\n"))
     }
 }
+
+/// `HONGGUO_LIVE=1 swift test --filter FreshDeviceWarmupLiveTests`: registers one device, then asks
+/// for one play model every 5 s for up to 90 s and prints when it first answers.
+final class FreshDeviceWarmupLiveTests: XCTestCase {
+    func testWarmup() async throws {
+        let env = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(env["HONGGUO_LIVE"] == "1", "set HONGGUO_LIVE=1 to run")
+        let vid = env["HONGGUO_VID"] ?? "7694243705045126169"
+        let transport = AppTransport(http: .shared)
+        let identity = try await PlaybackDevice.registerOnce(transport: transport)
+        let started = Date()
+        let object: [String: Any] = ["biz_param": ["need_all_video_definition": true, "video_platform": 1024, "device_level": 3,
+                                                   "use_os_player": false, "need_mp4_align": false],
+                                     "mixed_video_id_map": ["1004": [vid]], "dr_scene": "player"]
+        let payload = Array(try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))
+        var lines: [String] = []
+        while Date().timeIntervalSince(started) < 90 {
+            let signed = try await AppSource.shared.playbackRequest(payload: payload, identity: identity, modern: true)
+            let at = Int(Date().timeIntervalSince(started))
+            do {
+                _ = try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers, body: signed.body,
+                                                    deadline: Date().addingTimeInterval(8))
+                lines.append("\(at)s ok"); break
+            } catch let error as AppSourceError {
+                lines.append("\(at)s \(error.code.rawValue)")
+            }
+            try await Task.sleep(for: .seconds(5))
+        }
+        print("WARMUP " + lines.joined(separator: ", "))
+    }
+}
