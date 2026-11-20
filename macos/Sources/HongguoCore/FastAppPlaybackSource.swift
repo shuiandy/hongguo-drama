@@ -144,6 +144,10 @@ public actor FastAppPlaybackSource {
 
     private func getIdentity(forceFresh: Bool) async throws -> (identity: PlaybackIdentity, reused: Bool) {
         if !forceFresh, let identity { return (identity, true) }
+        if !forceFresh, let saved = PersistedPlaybackDevice.load() {
+            identity = saved
+            return (saved, true)
+        }
         if forceFresh {
             // Clear the cached identity without cancelling an already in-flight fresh registration
             // so concurrent callers sharing that fresh registration are not disrupted.
@@ -160,6 +164,7 @@ public actor FastAppPlaybackSource {
         do {
             let fresh = try await task.value
             identity = fresh
+            PersistedPlaybackDevice.save(fresh)
             if identityTask == task { identityTask = nil }
             return (fresh, false)
         } catch {
@@ -280,14 +285,15 @@ public actor FastAppPlaybackSource {
                 // Only rotate when the failing attempt used a cached identity; a fresh identity
                 // already tried both hosts, so surfacing directly avoids stacking a second registration
                 // inside the same call before PlayerEngine's immediate retry.
-                let shouldRotate = attempt == 0 && obtained.reused
+                // An empty reply is not the device's fault often enough to throw an established device
+                // away (new devices fare worse); register again only after an explicit refusal.
+                let shouldRotate = attempt == 0 && obtained.reused && error.isHardRejection
                 if shouldRotate, deadline.timeIntervalSinceNow >= 2 {
                     obtained = try await getIdentity(forceFresh: true)
                     continue
                 }
                 if error.code == .emptyResponse || error.isHardRejection {
                     batchCooldownUntil = Date().addingTimeInterval(Self.batchCooldownSeconds)
-                    identity = nil
                 }
                 throw error
             }

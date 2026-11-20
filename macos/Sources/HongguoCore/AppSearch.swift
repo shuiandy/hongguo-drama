@@ -107,7 +107,7 @@ actor AppSearchIdentity {
         if let identity { return identity }
         guard Date() >= retryAfter else { throw HongguoError(.unavailable, "App 搜索暂不可用") }
         do {
-            let value = try await PlaybackDevice.registerOnce(transport: transport)
+            let value = try await PersistedPlaybackDevice.obtain(transport: transport)
             identity = value
             return value
         } catch {

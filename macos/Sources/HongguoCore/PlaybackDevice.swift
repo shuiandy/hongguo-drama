@@ -7,11 +7,45 @@
 // Changes: fixed anonymous phone profile; process-only identity; no cookies or tokens.
 import Foundation
 
-/// Anonymous playback identity returned by the App's device registration. Kept in memory only.
-struct PlaybackIdentity: Sendable, Equatable {
+/// Anonymous playback identity returned by the App's device registration.
+struct PlaybackIdentity: Sendable, Equatable, Codable {
     var deviceId: String
     var iid: String
     var cdid: String
+}
+
+/// One registered device kept on disk (Application Support/HongguoDrama/playback-device.json) and
+/// reused across launches, like an installed app. Since 2026-11 newly registered devices often get
+/// empty play replies while an established one keeps working, so registering again is the last resort.
+enum PersistedPlaybackDevice {
+    struct Saved: Codable { var identity: PlaybackIdentity; var registeredAt: Date }
+
+    static var fileURL: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("HongguoDrama", isDirectory: true)
+            .appendingPathComponent("playback-device.json")
+    }
+
+    static func load() -> PlaybackIdentity? {
+        guard let url = fileURL, let data = try? Data(contentsOf: url),
+              let saved = try? JSONDecoder().decode(Saved.self, from: data),
+              !saved.identity.deviceId.isEmpty, !saved.identity.iid.isEmpty else { return nil }
+        return saved.identity
+    }
+
+    static func save(_ identity: PlaybackIdentity) {
+        guard let url = fileURL, let data = try? JSONEncoder().encode(Saved(identity: identity, registeredAt: Date())) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+    }
+
+    /// The saved device, or a newly registered one that is then saved.
+    static func obtain(transport: AppTransport) async throws -> PlaybackIdentity {
+        if let saved = load() { return saved }
+        let fresh = try await PlaybackDevice.registerOnce(transport: transport)
+        save(fresh)
+        return fresh
+    }
 }
 
 /// Registers a fresh anonymous device per playback request (identities can be single-use),

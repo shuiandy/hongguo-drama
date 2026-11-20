@@ -193,3 +193,27 @@ final class FreshDeviceWarmupLiveTests: XCTestCase {
         print("WARMUP " + lines.joined(separator: ", "))
     }
 }
+
+/// `HONGGUO_LIVE=1 swift test --filter SavedDeviceLiveTests`: one play-model request with the device
+/// saved in Application Support (registering and saving one if there is none).
+final class SavedDeviceLiveTests: XCTestCase {
+    func testSavedDevice() async throws {
+        let env = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(env["HONGGUO_LIVE"] == "1", "set HONGGUO_LIVE=1 to run")
+        let vid = env["HONGGUO_VID"] ?? "7694243705045126169"
+        let hadSaved = PersistedPlaybackDevice.load() != nil
+        let transport = AppTransport(http: .shared)
+        let identity = try await PersistedPlaybackDevice.obtain(transport: transport)
+        let object: [String: Any] = ["biz_param": ["need_all_video_definition": true, "video_platform": 1024, "device_level": 3,
+                                                   "use_os_player": false, "need_mp4_align": false],
+                                     "mixed_video_id_map": ["1004": [vid]], "dr_scene": "player"]
+        let payload = Array(try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))
+        let signed = try await AppSource.shared.playbackRequest(payload: payload, identity: identity, modern: true)
+        var outcome = "ok"
+        do {
+            _ = try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers, body: signed.body,
+                                                deadline: Date().addingTimeInterval(8))
+        } catch let error as AppSourceError { outcome = error.code.rawValue }
+        print("SAVED device (was saved: \(hadSaved)): \(outcome)")
+    }
+}
