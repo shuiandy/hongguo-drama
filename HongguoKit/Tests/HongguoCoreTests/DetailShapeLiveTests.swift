@@ -298,17 +298,17 @@ final class DetailShapeLiveTests: XCTestCase {
         }
 
         /// V5-signed gzipped POST on sinfonlineb with the iOS 7.4.3 profile.
-        func post(_ path: String, _ body: [String: Any]) async throws -> JSONValue {
+        func post(_ path: String, _ body: [String: Any], query: [(String, String)] = [], headers extra: [(String, String)] = []) async throws -> JSONValue {
             let payload = try AppCrypto.gzip(Array(try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])))
             let signed = try PlaybackSignerV5.shared.sign(
                 base: "https://api5-normal-sinfonlineb.fqnovel.com\(path)",
-                values: AppSource.iosProfile + [("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId)],
+                values: AppSource.iosProfile + [("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId)] + query,
                 body: payload, nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
             return try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers + [
                 ("User-Agent", AppSource.iosPlayerUA), ("Accept", "application/json"),
                 ("Content-Type", "application/json; charset=utf-8"), ("Content-Encoding", "gzip"),
                 ("x-ss-dp", "8662"), ("sdk-version", "2"),
-            ] + dToken, body: payload, deadline: Date().addingTimeInterval(10))
+            ] + extra + dToken, body: payload, deadline: Date().addingTimeInterval(10))
         }
     }
 
@@ -509,6 +509,27 @@ final class DetailShapeLiveTests: XCTestCase {
             try await Task.sleep(for: .seconds(1))
         }
         print("REVIEWS2\n" + lines.joined(separator: "\n"))
+    }
+
+    /// `--filter DetailShapeLiveTests/testSeriesReviewsIOSProfile`: the series review list with the
+    /// official body, signed like the play request (V5, gzip, iOS 7.4.3 profile) instead of the
+    /// Android 7.3.5 comment signer, in case the server only takes group_type 1 from newer clients.
+    /// One App request. Prints the key tree.
+    func testSeriesReviewsIOSProfile() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["HONGGUO_LIVE"] == "1", "set HONGGUO_LIVE=1 to run")
+        let seriesId = try await probeSeriesId()
+        let probe = try await OfficialProbe.make()
+        var lines: [String] = []
+        let json = try await probe.post("/novel/commentapi/comment/list/\(seriesId)/v1/", [
+            "group_id": seriesId, "group_type": 1, "comment_type": 2, "comment_source": 1, "server_channel": 0,
+            "sort": 1, "count": 10, "cursor": "",
+            "business_param": ["book_id": seriesId, "need_count": true, "fold_type": 0, "outflow_comment_count": 0],
+        ], query: [("compliance_status", "0")], headers: [("comment-source", "1"), ("server-channel", "0")])
+        lines.append("reviews iOS profile: code=\(json["code"].number.map { String(Int($0)) } ?? "-") msg=\((json["message"].string ?? "").prefix(30))")
+        var data = json["data"]
+        if var list = data["data_list"].array, list.count > 1 { list = [list[0]]; data = Self.replacing(data, key: "data_list", with: .array(list)) }
+        Self.tree(data, name: "data", mask: [seriesId: "<sid>"], into: &lines)
+        print("REVIEWS3\n" + lines.joined(separator: "\n"))
     }
 
     private static func replacing(_ value: JSONValue, key: String, with replacement: JSONValue) -> JSONValue {
