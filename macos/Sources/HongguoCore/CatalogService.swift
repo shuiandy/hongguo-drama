@@ -32,6 +32,9 @@ public enum CatalogKind: String, CaseIterable, Identifiable, Sendable {
 public final class CatalogService: Sendable {
     private let http: HTTPClient
     private let cache = TTLCache<CatalogPage>(limit: 32)
+    private let rankPages = TTLCache<CatalogPage>(limit: 64)
+    private let rankCursors = TTLCache<DiscoveryAccess.RankCursor>(limit: 64)
+    private let rankOffsets = TTLCache<Int>(limit: 64)
 
     public init(http: HTTPClient = .shared) { self.http = http }
 
@@ -47,7 +50,9 @@ public final class CatalogService: Sendable {
         // The App catalogue and ranking boards first; their theme ids (`cate_5000`) are only
         // valid there. The website is the fallback for an empty or failed App reply.
         let theme = (genre ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if let app = try? await DiscoveryAccess.catalog(kind: kind, genre: theme.isEmpty ? nil : theme, page: page, forceRefresh: forceRefresh),
+        if kind.isRanking {
+            if let app = try? await appRanking(kind: kind, page: page, forceRefresh: forceRefresh) { return app }
+        } else if let app = try? await DiscoveryAccess.catalog(kind: kind, genre: theme.isEmpty ? nil : theme, page: page, forceRefresh: forceRefresh),
            !app.items.isEmpty || !theme.isEmpty {
             return CatalogPage(results: app.items, page: max(1, page), total: app.items.count, totalPages: app.totalPages,
                                genres: app.genres, pageTitle: kind.label, sourceURL: Self.url(kind: kind, genre: nil, page: page))
@@ -76,6 +81,48 @@ public final class CatalogService: Sendable {
             : try Self.parseCatalog(response.text, kind: kind, page: page, sourceURL: url)
         await cache.set(url.absoluteString, parsed, ttl: 120)
         return parsed
+    }
+
+    /// App ranking board pages. Page 1 opens the board; later pages continue from the cursor the
+    /// previous page left, so pages must be read in order (the list view does). nil when the
+    /// board did not answer or a later page has no cursor to continue from.
+    private func appRanking(kind: CatalogKind, page: Int, forceRefresh: Bool) async throws -> CatalogPage? {
+        let pg = max(1, page)
+        let selected: String
+        switch kind {
+        case .hotRealDrama: selected = "human"
+        case .hotComicDrama: selected = "comic_series_rank"
+        case .hotAIDrama: selected = "ai_playlet"
+        default: selected = "all"
+        }
+        let sub = kind == .hotDrama ? "ranklist_hot_sc" : ""
+        let pageKey = "\(kind.rawValue):\(pg)"
+        if !forceRefresh, let cached = await rankPages.get(pageKey) { return cached }
+        let board: DiscoveryAccess.RankPage
+        if pg == 1 {
+            board = try await DiscoveryAccess.ranking(selectedItem: selected, subSelectedItem: sub)
+        } else {
+            guard let cursor = await rankCursors.get(pageKey) else { return nil }
+            board = try await DiscoveryAccess.rankingMore(cursor: cursor, selectedItem: selected, subSelectedItem: sub)
+        }
+        guard !board.items.isEmpty else { return nil }
+        let first = await rankOffsets.get("\(kind.rawValue):\(pg)") ?? 0
+        let results = board.items.enumerated().map { index, item in
+            SeriesSummary(seriesId: item.seriesId, title: item.title, cover: item.cover, episodeCount: item.episodeCount,
+                          tags: item.metaLine.split(separator: "·").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty },
+                          description: item.intro, rank: first + index + 1,
+                          heat: item.metricTags.first ?? item.recommendText,
+                          episodeLabel: item.episodeCount > 0 ? "全\(item.episodeCount)集" : "", completionStatus: .unknown)
+        }
+        let more = board.hasMore && board.cursor != nil
+        if more, let cursor = board.cursor {
+            await rankCursors.set("\(kind.rawValue):\(pg + 1)", cursor, ttl: 600)
+            await rankOffsets.set("\(kind.rawValue):\(pg + 1)", first + results.count, ttl: 600)
+        }
+        let result = CatalogPage(results: results, page: pg, total: first + results.count, totalPages: more ? pg + 1 : pg,
+                                 genres: [], pageTitle: kind.label, sourceURL: Self.url(kind: kind, genre: nil, page: pg))
+        await rankPages.set(pageKey, result, ttl: 120)
+        return result
     }
 
     static func metadata(_ item: JSONValue) -> (label: String, status: CompletionStatus, published: Date?) {
