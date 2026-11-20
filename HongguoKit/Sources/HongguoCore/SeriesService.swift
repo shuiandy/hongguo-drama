@@ -169,14 +169,17 @@ public final class SeriesService: Sendable {
         }
         // The website's fallback channel: plain H.264 MP4 (360p), no App signing or device. Since
         // November 2026 the App play endpoints often answer empty for every client but the official app.
-        do {
-            let info = try await playInfoFromWebFallback(vid: vid)
-            await playCache.set(key, info, ttl: 30)
-            return info
-        } catch let error as HongguoError where error.kind == .cancelled {
-            throw error
-        } catch {
-            failures.append("官网备用通道：\(Self.describe(error))")
+        // Off in the iOS app (`PlatformBehavior.websiteFallbackChannel`).
+        if PlatformBehavior.current.websiteFallbackChannel {
+            do {
+                let info = try await playInfoFromWebFallback(vid: vid)
+                await playCache.set(key, info, ttl: 30)
+                return info
+            } catch let error as HongguoError where error.kind == .cancelled {
+                throw error
+            } catch {
+                failures.append("官网备用通道：\(Self.describe(error))")
+            }
         }
         // After an explicit refusal or an empty reply the same request through the queue would fail too.
         if !refused, !appPaused, !empty {

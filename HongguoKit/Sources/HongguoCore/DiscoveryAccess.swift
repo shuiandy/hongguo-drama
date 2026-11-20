@@ -490,7 +490,7 @@ public enum DiscoveryAccess {
         guard !kw.isEmpty else { return [] }
         let deadline = Date().addingTimeInterval(timeout)
         let transport = AppTransport(http: .shared)
-        let identity = try await AppSearchIdentity.shared.get(transport: transport)
+        let identity = try await DataDevice.registered(transport: transport).identity
         let signed = try AppLegacySigner.shared.search(
             keyword: kw,
             page: max(1, page),
@@ -498,7 +498,7 @@ public enum DiscoveryAccess {
             identity: identity,
             nowMillis: Int64(Date().timeIntervalSince1970 * 1000)
         )
-        let payload = try await transport.requestJSON(signed.url, headers: signed.headers, deadline: deadline)
+        let payload = try await transport.requestJSON(signed.url, headers: signed.headers + DataDevice.authHeaders, deadline: deadline)
         return try parseAppSearch(payload)
     }
 

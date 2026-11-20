@@ -275,7 +275,7 @@ public actor FastAppPlaybackSource {
                                                                body: signed.body, deadline: deadline)
                 } catch let error as AppSourceError where error.code == .emptyResponse && deadline.timeIntervalSinceNow >= 1 {
                     let android = try await AppSource.shared.playbackRequest(payload: payload, identity: obtained.identity,
-                                                                             modern: true, alternate: attempt == 1)
+                                                                             modern: true, alternate: attempt == 1, iosProfile: false)
                     response = try await transport.requestJSON(android.url, method: "POST", headers: android.headers,
                                                                body: android.body, deadline: deadline)
                 }

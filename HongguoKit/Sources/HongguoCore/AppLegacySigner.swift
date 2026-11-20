@@ -482,9 +482,14 @@ struct AppLegacySigner {
     static let metadataPaths = ["/reading/distribution/category/landpage/v/", "/reading/bookapi/bookmall/cell/change/v"]
 
     /// Port of `signedMetadataRequest` (catalogue lists; one anonymous identity per process).
-    func metadata(path: String, values: [(String, String)], payload: [UInt8]?, nowMillis: Int64) throws -> Signed {
+    /// `identity` and `dToken` replace the fixed metadata device (`PlatformBehavior.persistentDataDevice`).
+    func metadata(path: String, values: [(String, String)], payload: [UInt8]?, identity: PlaybackIdentity? = nil,
+                  dToken: String = "", nowMillis: Int64) throws -> Signed {
         guard Self.metadataPaths.contains(path) else { throw HongguoError(.input, "不支持的 App 目录接口") }
-        let device = Self.merged(Self.versioned("73532", "7.3.5.32"), [("iid", metadataInstallId), ("device_id", metadataDeviceId)])
+        let devId = identity?.deviceId ?? metadataDeviceId
+        var devicePairs: [(String, String)] = [("iid", identity?.iid ?? metadataInstallId), ("device_id", devId)]
+        if let cdid = identity?.cdid, !cdid.isEmpty { devicePairs.append(("cdid", cdid)) }
+        let device = Self.merged(Self.versioned("73532", "7.3.5.32"), devicePairs)
         let ts = UInt32(nowMillis / 1000)
         let bodyMd5 = payload.map(AppCrypto.md5) ?? [UInt8](repeating: 0, count: 16)
         // `{ ...values, ...metadataDevice }`: device fields win but keep the position of an earlier key.
@@ -501,8 +506,8 @@ struct AppLegacySigner {
                 ("x-gorgon", Self.xGorgon(query: query, body: payload, ts: ts, random: random32() >> 16)),
                 ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
                 ("x-helios", helios(ts: ts)),
-                ("x-medusa", try medusa(url: url, body: payload, ts: ts, deviceId: metadataDeviceId, versionName: "7.3.5.32", nowMillis: nowMillis)),
-                ("x-tt-dt", ""),
+                ("x-medusa", try medusa(url: url, body: payload, ts: ts, deviceId: devId, versionName: "7.3.5.32", nowMillis: nowMillis)),
+                ("x-tt-dt", dToken),
             ]
             if let payload {
                 headers.append(("Content-Type", "application/json; charset=utf-8"))

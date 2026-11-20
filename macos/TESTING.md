@@ -1,5 +1,7 @@
 # 原生 macOS 版实测记录
 
+> 2026-11-20 起，core 和它的测试移到了仓库顶层 `HongguoKit/`：`swift test`（含 `HONGGUO_LIVE=1` 的线上测试）在 `HongguoKit/` 目录里运行；`macos/` 里只剩 App，`swift build` 和 `scripts/build-app.sh` 照旧。
+
 不记录登录凭据、设备身份或带签名的媒体地址；片源只记主机名。
 
 ## 2026-11-18 App 片源移植

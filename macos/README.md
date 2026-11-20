@@ -62,7 +62,7 @@ ARCHS="arm64 x86_64" SIGN_IDENTITY="Developer ID Application: <名字> (<TEAMID>
 ## 结构
 
 ```
-macos/
+HongguoKit/                 Mac、iOS、tvOS 共用的 Swift 包（见 HongguoKit/README.md）
   Package.swift
   Sources/HongguoCore/      网络、解析、解密、持久化（不依赖 UI，可单测）
     URLGuard.swift          SSRF 防护（公网地址校验、Fake-IP 时用 DoH 复核）
@@ -81,10 +81,12 @@ macos/
     CencDecryptor.swift     spade_a 取密钥、CENC MP4 解密与 moov 重建
     PlaybackCache.swift     加密片源的解密缓存
     LibraryStore.swift      观看记录与设置
+  Tests/HongguoCoreTests/   解析、解密、签名（含 Electron 版生成的向量）、SSRF、存储
+macos/
+  Package.swift             依赖 ../HongguoKit
   Sources/HongguoDrama/     SwiftUI + AppKit 应用
     Views/                  侧边栏、分类、搜索、详情、观看记录、设置
     Player/                 播放控制、流式加载、播放器窗口、悬浮小窗
-  Tests/HongguoCoreTests/   解析、解密、签名（含 Electron 版生成的向量）、SSRF、存储
   scripts/gen-signing-vectors.cjs  用 src/native 的 JS 实现重新生成签名测试向量
 ```
 

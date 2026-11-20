@@ -1,3 +1,6 @@
+// Mac only: replaces the running .app bundle and relaunches it.
+#if os(macOS)
+
 import CryptoKit
 import Foundation
 import Security
@@ -230,3 +233,5 @@ public actor AppUpdateInstaller {
         return dict[kSecCodeInfoTeamIdentifier as String] as? String
     }
 }
+
+#endif
