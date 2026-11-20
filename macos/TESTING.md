@@ -10,7 +10,7 @@
 
 - `swift build` / `swift build -c release`：干净构建 0 错误、0 警告。
 - `swift test`：38 项全部通过。其中签名向量 8 项：SM3、v5 f13（上游 32 组）、carrier（上游 4 组）、
-  v5 完整签名（node 生成 3 组）、551 Argus/Ladon（2 组）、内容密钥与片源地址解密、gzip 往返、域名白名单。
+  v5 完整签名（node 生成 3 组）、内容密钥与片源地址解密、gzip 往返、域名白名单。
 - `./scripts/build-app.sh` 打包，`codesign --verify --strict` 通过（ad-hoc）。
 
 真实网络冒烟（临时测试文件，测完删除）：

@@ -1,42 +1,30 @@
 @testable import HongguoCore
 import XCTest
 
-/// URLGuard's handling of a proxy's virtual DNS answers under both `ProxyPolicy` values
+/// URLGuard's handling of a proxy's virtual DNS answers, one behavior for every app
 /// (from the iOS app's URLGuardShimTests, iOS 382e2c2).
-final class URLGuardProxyPolicyTests: XCTestCase {
+final class URLGuardProxyTests: XCTestCase {
     func testPublicAnswersPass() {
         XCTAssertEqual(URLGuard.classify(["155.102.176.84"]), .publicOnly)
         XCTAssertEqual(URLGuard.classify(["2604:980:3007:124::2a", "163.181.60.204"]), .publicOnly)
     }
 
     func testFakeIPAndULAAreProxyVirtual() {
-        XCTAssertEqual(URLGuard.classify(["198.18.35.93"], policy: .mobileProxy), .proxyVirtual)
-        XCTAssertEqual(URLGuard.classify(["198.19.255.1"], policy: .mobileProxy), .proxyVirtual)
-        XCTAssertEqual(URLGuard.classify(["198.18.0.7", "fd00:6868:6868::7"], policy: .mobileProxy), .proxyVirtual)
-        XCTAssertEqual(URLGuard.classify(["fc00::1"], policy: .mobileProxy), .proxyVirtual)
-    }
-
-    func testStrictPolicyCountsOnlyFakeIPAsVirtual() {
-        XCTAssertEqual(URLGuard.classify(["198.18.35.93"], policy: .strict), .proxyVirtual)
-        XCTAssertEqual(URLGuard.classify(["fc00::1"], policy: .strict), .privateTarget)
-        XCTAssertEqual(URLGuard.classify(["198.18.0.7", "fd00:6868:6868::7"], policy: .strict), .privateTarget)
-    }
-
-    func testMacDefaultIsStrict() {
-        XCTAssertEqual(PlatformBehavior.mac.proxyPolicy, .strict)
-        XCTAssertEqual(PlatformBehavior.iOS.proxyPolicy, .mobileProxy)
+        XCTAssertEqual(URLGuard.classify(["198.18.35.93"]), .proxyVirtual)
+        XCTAssertEqual(URLGuard.classify(["198.19.255.1"]), .proxyVirtual)
+        XCTAssertEqual(URLGuard.classify(["198.18.0.7", "fd00:6868:6868::7"]), .proxyVirtual)
+        XCTAssertEqual(URLGuard.classify(["fc00::1"]), .proxyVirtual)
     }
 
     func testRealPrivateTargetsStayBlocked() {
-        for policy in [URLGuard.ProxyPolicy.strict, .mobileProxy] {
-            for address in ["127.0.0.1", "10.0.0.5", "192.168.1.1", "172.16.0.1", "169.254.1.1", "100.64.0.1", "::1", "fe80::1"] {
-                XCTAssertEqual(URLGuard.classify([address], policy: policy), .privateTarget, address)
-            }
-            // A virtual answer mixed with a real private one is not a proxy's answer.
-            XCTAssertEqual(URLGuard.classify(["198.18.0.7", "10.0.0.5"], policy: policy), .privateTarget)
-            XCTAssertEqual(URLGuard.classify(["198.18.0.7", "127.0.0.1"], policy: policy), .privateTarget)
-            XCTAssertEqual(URLGuard.classify([], policy: policy), .privateTarget)
+        for address in ["127.0.0.1", "10.0.0.5", "192.168.1.1", "172.16.0.1", "169.254.1.1", "100.64.0.1", "::1", "fe80::1"] {
+            XCTAssertEqual(URLGuard.classify([address]), .privateTarget, address)
         }
+        // A virtual answer mixed with a real private one is not a proxy's answer.
+        XCTAssertEqual(URLGuard.classify(["198.18.0.7", "10.0.0.5"]), .privateTarget)
+        XCTAssertEqual(URLGuard.classify(["198.18.0.7", "127.0.0.1"]), .privateTarget)
+        XCTAssertEqual(URLGuard.classify(["fd00::1", "fe80::1"]), .privateTarget)
+        XCTAssertEqual(URLGuard.classify([]), .privateTarget)
     }
 
     func testServiceHostsMatchWholeLabels() {
@@ -74,7 +62,6 @@ final class URLGuardProxyPolicyTests: XCTestCase {
         let started = Date()
         try await URLGuard.check(
             url,
-            policy: .mobileProxy,
             cache: cache,
             resolveHost: { _ in ["198.18.0.7"] },
             resolveDoH: { _ in
@@ -90,8 +77,7 @@ final class URLGuardProxyPolicyTests: XCTestCase {
         do {
             try await URLGuard.check(
                 url,
-                policy: .mobileProxy,
-                cache: cache,
+                    cache: cache,
                 resolveHost: { _ in ["198.18.0.7"] },
                 resolveDoH: { _ in (["155.102.176.84"], 60) }
             )
@@ -107,8 +93,7 @@ final class URLGuardProxyPolicyTests: XCTestCase {
         do {
             try await URLGuard.check(
                 url,
-                policy: .mobileProxy,
-                cache: cache,
+                    cache: cache,
                 resolveHost: { _ in ["198.18.0.7"] },
                 resolveDoH: { _ in throw URLGuard.blocked() }
             )
@@ -121,22 +106,12 @@ final class URLGuardProxyPolicyTests: XCTestCase {
     }
 }
 
-extension URLGuardProxyPolicyTests {
-    func testStrictPolicyMakesServiceHostsWaitForDoH() async {
-        let url = URL(string: "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/")!
+extension URLGuardProxyTests {
+    func testNonServiceHostPassesWithAPublicDoHAnswer() async {
+        let url = URL(string: "https://unknown-host.example.com/video.mp4")!
         do {
-            try await URLGuard.check(url, policy: .strict, cache: ResolutionCache(),
-                                     resolveHost: { _ in ["198.18.0.7"] }, resolveDoH: { _ in throw URLGuard.blocked() })
-            XCTFail("Under .strict an unconfirmed service host must stay blocked")
-        } catch let error as HongguoError {
-            XCTAssertEqual(error.kind, .security)
-        } catch {
-            XCTFail("Unexpected error: \(error)")
-        }
-        // A public DoH answer lets it through.
-        do {
-            try await URLGuard.check(url, policy: .strict, cache: ResolutionCache(),
-                                     resolveHost: { _ in ["198.18.0.7"] }, resolveDoH: { _ in (["155.102.176.84"], 60) })
+            try await URLGuard.check(url, cache: ResolutionCache(),
+                                     resolveHost: { _ in ["fd00:6868:6868::7"] }, resolveDoH: { _ in (["155.102.176.84"], 60) })
         } catch {
             XCTFail("A public DoH answer must pass: \(error)")
         }

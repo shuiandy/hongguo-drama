@@ -5,9 +5,6 @@ import HongguoCore
 /// a probe, so `swift test` never touches the network. Raw responses go to captures/ (ignored
 /// by git); only shapes are printed.
 final class FeedProbeTests: XCTestCase {
-    // Live probes of the iOS app: run with its behavior (PlatformBehavior.iOS).
-    override func setUp() { super.setUp(); PlatformBehavior.current = .iOS }
-    override func tearDown() { PlatformBehavior.current = .mac; super.tearDown() }
 
     private var probe: String { ProcessInfo.processInfo.environment["HONGGUO_PROBE"] ?? "" }
     private var captures: URL {
@@ -134,9 +131,6 @@ private extension Array {
 /// `HONGGUO_PROBE=codec HONGGUO_VID=<episode id> swift test --filter CodecProbeTests`: what an
 /// episode's play model and the forms of its fallback address offer (encoding and size only).
 final class CodecProbeTests: XCTestCase {
-    // Live probes of the iOS app: run with its behavior (PlatformBehavior.iOS).
-    override func setUp() { super.setUp(); PlatformBehavior.current = .iOS }
-    override func tearDown() { PlatformBehavior.current = .mac; super.tearDown() }
 
     func testCodecFallbackOffers() async throws {
         let environment = ProcessInfo.processInfo.environment
@@ -181,9 +175,6 @@ final class CodecProbeTests: XCTestCase {
 /// `HONGGUO_PROBE=find HONGGUO_TITLE=<part of a title> HONGGUO_VID=<episode id> swift test --filter FindProbeTests`:
 /// which series (by search) holds an episode id, and at which episode number.
 final class FindProbeTests: XCTestCase {
-    // Live probes of the iOS app: run with its behavior (PlatformBehavior.iOS).
-    override func setUp() { super.setUp(); PlatformBehavior.current = .iOS }
-    override func tearDown() { PlatformBehavior.current = .mac; super.tearDown() }
 
     func testFindSeriesOfEpisode() async throws {
         let environment = ProcessInfo.processInfo.environment
@@ -206,9 +197,6 @@ final class FindProbeTests: XCTestCase {
 /// `HONGGUO_PROBE=series swift test --filter SeriesTabProbeTests`: inspects `DiscoveryAccess.sameIPSeries`
 /// for multi-season / same-IP series (`scene=10&from=single_col_same_ip_series`).
 final class SeriesTabProbeTests: XCTestCase {
-    // Live probes of the iOS app: run with its behavior (PlatformBehavior.iOS).
-    override func setUp() { super.setUp(); PlatformBehavior.current = .iOS }
-    override func tearDown() { PlatformBehavior.current = .mac; super.tearDown() }
 
     func testSameIPSeriesPlan() async throws {
         guard ProcessInfo.processInfo.environment["HONGGUO_PROBE"] == "series" else {

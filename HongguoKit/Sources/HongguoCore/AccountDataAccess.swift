@@ -514,7 +514,7 @@ public enum AccountDataAccess {
     public static func get(path: String, values: [(String, String)] = []) async throws -> JSONValue {
         guard let saved = try KeychainCredentialStore().load() else { throw HongguoError(.input, "未登录") }
         let transport = AppTransport(http: .shared)
-        let (identity, dToken) = try await DataDevice.registered(transport: transport)
+        let (identity, dToken) = try await PersistentAppDevice.dataIdentity(transport: transport)
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let signed = AppLegacySigner.accountPaths.contains(path)
             ? try AppLegacySigner.shared.account(path: path, values: values, identity: identity, nowMillis: now)
@@ -537,7 +537,7 @@ public enum AccountDataAccess {
         let encoded = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         let payload = Array(encoded)
         let transport = AppTransport(http: .shared)
-        let (identity, dToken) = try await DataDevice.registered(transport: transport)
+        let (identity, dToken) = try await PersistentAppDevice.dataIdentity(transport: transport)
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let signed = try AppLegacySigner.shared.accountWrite(path: path, values: values, payload: payload,
                                                              identity: identity, dToken: dToken, nowMillis: now)

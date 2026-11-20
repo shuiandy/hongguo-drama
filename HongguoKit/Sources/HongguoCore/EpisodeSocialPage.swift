@@ -334,24 +334,10 @@ public enum EpisodeSocialService {
     private static func fetchAppSeriesDetail(seriesId: String, http: HTTPClient) async throws -> AppSeriesDetail {
         if let cached = await seriesDetailCache.get(seriesId) { return cached }
         let transport = AppTransport(http: http)
-        // PlatformBehavior: the persistent device and its token, or the registered playback device.
-        let identity: PlaybackIdentity
-        var dToken: [(String, String)] = []
-        if DataDevice.persistent {
-            identity = try await PersistentAppDevice.shared.get(transport: transport)
-            dToken = await PersistentAppDevice.shared.dTokenHeaders()
-        } else {
-            identity = try await PlaybackDevice.shared.register(transport: transport)
-        }
-        let ios = AppClientProfile.default == .ios
-        let profile: [(String, String)] = ios
-            ? [("aid", "8662"), ("app_name", "novelread"), ("version_code", "74300"), ("version_name", "7.4.3"),
-               ("channel", "App Store"), ("device_platform", "iphone"), ("device_type", "iPhone17,1"), ("os_version", "18.3"),
-               ("update_version_code", "74300")]
-            : [("aid", "8662"), ("app_name", "novelread"), ("version_code", "74332"), ("version_name", "7.4.3.32"),
-               ("channel", "vivo_8662_64"), ("device_platform", "android"), ("device_type", "PGT-AN10"), ("os_version", "12"),
-               ("update_version_code", "74332")]
-        let extra: [(String, String)] = (ios ? [("x-ss-dp", "8662"), ("sdk-version", "2")] : []) + dToken + DataDevice.authHeaders
+        // The persistent device, its token and the login Cookie, with the official iOS 7.4.3 profile.
+        let identity = try await PersistentAppDevice.shared.get(transport: transport)
+        let dToken = await PersistentAppDevice.shared.dTokenHeaders()
+        let extra: [(String, String)] = [("x-ss-dp", "8662"), ("sdk-version", "2")] + dToken + PersistentAppDevice.authHeaders()
         let bodyObj: [String: Any] = [
             "biz_param": [
                 "detail_page_version": 0, "disable_digg_stat": false,
@@ -365,14 +351,14 @@ public enum EpisodeSocialService {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let signed = try PlaybackSignerV5.shared.sign(
             base: "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_detail/v1/",
-            values: profile + [("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId)],
+            values: AppSource.iosProfile + [("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId)],
             body: payload,
             nowMillis: now
         )
         let j = try await transport.requestJSON(
             signed.url, method: "POST",
             headers: signed.headers + [
-                ("User-Agent", ios ? AppSource.iosPlayerUA : AppSource.playerUA), ("Accept", "application/json"),
+                ("User-Agent", AppSource.iosPlayerUA), ("Accept", "application/json"),
                 ("Content-Type", "application/json; charset=utf-8"), ("Content-Encoding", "gzip"),
             ] + extra,
             body: payload, deadline: Date().addingTimeInterval(10)
@@ -464,7 +450,7 @@ public enum EpisodeSocialService {
         }
         let stampMs = Int64(Date().timeIntervalSince1970 * 1000)
         let stamp = stampMs / 1000
-        let persisted = await DataDevice.optional(transport: AppTransport(http: http)).identity
+        let persisted = await PersistentAppDevice.optionalDataIdentity(transport: AppTransport(http: http)).identity
         let rawQuery = DanmakuSigner.buildQuery(stampMs: stampMs, deviceId: persisted?.deviceId ?? commentDevice.deviceId,
                                                 installId: persisted?.iid ?? commentDevice.installId)
         guard let url = URL(string: "https://api5-normal-sinfonlineb.fqnovel.com/novel/commentapi/comment/list/\(vid)/v1/?\(rawQuery)") else {
@@ -478,7 +464,7 @@ public enum EpisodeSocialService {
             ("X-XS-From-Web", "0"), ("Sdk-Version", "2"),
             ("Content-Type", "application/json; charset=utf-8"),
             ("Comment-Source", "4"), ("Server-Channel", "18"),
-        ] + signHeaders + DataDevice.authHeaders
+        ] + signHeaders + PersistentAppDevice.authHeaders()
         for (k, v) in headers { options.headers[k] = v }
         let bodyObj: [String: Any] = [
             "comment_source": 4, "server_channel": 18, "group_id": vid, "group_type": 30,

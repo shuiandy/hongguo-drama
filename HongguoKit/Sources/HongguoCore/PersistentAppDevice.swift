@@ -1,11 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Persistent single-device identity + BDInstall-aligned 6-hour renewal, activation
 // (`app_alert_check`), `x-tt-dt` (`device_token`), and logged-in Cookie helper shared across all
-// iOS Hongguo API channels. Mirrors official iOS 7.4.3 `BDInstall` (`_needRegsiter` = 21600 s,
-// `registerDeviceBaseURL`, `activateDeviceBaseURL`, `addDTokenForRequest:`).
+// Hongguo API channels of every app (Mac, iOS, tvOS). Mirrors official iOS 7.4.3 `BDInstall`
+// (`_needRegsiter` = 21600 s, `registerDeviceBaseURL`, `activateDeviceBaseURL`, `addDTokenForRequest:`).
+// Registration envelope and ttEncrypt adapted from src/native/playback-device.js, itself from
+// tsukiyo-zero/hongguoTV commit 388931852ddc614db8b00775a3dc54c5ede6307f,
+// kotlin-tv/core/src/main/kotlin/com/hongguotv/core/DeviceRegister.kt
+// (adapted from charlie901208/HGTV feat/phone-login, GPL-3.0-only).
 // Never logs device IDs, device tokens, or cookies.
 import Foundation
 import Security
+
+/// The App identity a request is signed with: the persistent device's ids.
+struct PlaybackIdentity: Sendable, Equatable, Codable {
+    var deviceId: String
+    var iid: String
+    var cdid: String
+}
 
 public actor PersistentAppDevice {
     public static let shared = PersistentAppDevice()
@@ -25,6 +36,21 @@ public actor PersistentAppDevice {
     private static let fallbackRegisterBase = "https://log.snssdk.com/service/2/device_register/"
     private static let activateBase = "https://ichannel.snssdk.com/service/2/app_alert_check/"
     private static let registerUA = "com.phoenix.read/74332 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3)"
+    /// ttEncrypt key derivation salt of `device_register`.
+    static let kdfSalt = AppCrypto.fromHex("4dd4c2e6b83162090e52b3c7a6733ba41cb2462b829ab58a196b39db57177524f49baf7f08e8d68d26a72e37c1a95a2f1f05a51892aef2949732b62a38aadd58")!
+
+    /// A numeric id from a `device_register` reply (`<name>_str` first), "" when absent or invalid.
+    static func responseId(_ response: JSONValue, _ name: String) -> String {
+        let preferred = response["\(name)_str"]
+        let value: JSONValue = (preferred.isNull || preferred == .string("")) ? response[name] : preferred
+        switch value {
+        case .int(let i): return i > 0 && i <= 9_007_199_254_740_991 ? String(i) : ""
+        case .double(let d): return d > 0 && d.rounded() == d && d <= 9_007_199_254_740_991 ? String(Int64(d)) : ""
+        case .string(let s):
+            return s.range(of: "^[0-9]{1,30}$", options: .regularExpression) != nil && s.contains(where: { $0 != "0" }) ? s : ""
+        default: return ""
+        }
+    }
 
     /// Optional diagnostic hook for lifecycle events (status/booleans only, never secrets).
     public nonisolated(unsafe) static var onLog: (@Sendable (String) -> Void)?
@@ -251,7 +277,7 @@ public actor PersistentAppDevice {
         let json = try JSONSerialization.data(withJSONObject: envelope, options: [.withoutEscapingSlashes])
         let compressed = try AppCrypto.gzip(Array(json))
         let random = AppCrypto.randomBytes(32)
-        let derived = AppCrypto.sha512(AppCrypto.sha512(random) + PlaybackDevice.kdfSalt)
+        let derived = AppCrypto.sha512(AppCrypto.sha512(random) + kdfSalt)
         let plaintext = AppCrypto.sha512(compressed) + compressed
         let cipher = try AppCrypto.aes128CBC(encrypt: true, key: Array(derived[0..<16]), iv: Array(derived[16..<32]),
                                              plaintext, pkcs7: true)
@@ -302,8 +328,8 @@ public actor PersistentAppDevice {
                 if (response["code"].number ?? response["Code"].number ?? 0) != 0 {
                     throw AppSourceError(.businessRejected, "Registration rejected")
                 }
-                let deviceId = PlaybackDevice.responseId(response, "device_id")
-                let iid = PlaybackDevice.responseId(response, "install_id")
+                let deviceId = responseId(response, "device_id")
+                let iid = responseId(response, "install_id")
                 guard !deviceId.isEmpty, !iid.isEmpty else {
                     throw AppSourceError(.invalidResponse, "Invalid registration")
                 }
@@ -378,6 +404,21 @@ public actor PersistentAppDevice {
 
     static var isSignedIn: Bool {
         !authHeaders().isEmpty
+    }
+
+    /// The identity and `device_token` for data requests (search, account, discovery).
+    static func dataIdentity(transport: AppTransport) async throws -> (identity: PlaybackIdentity, dToken: String) {
+        let identity = try await shared.get(transport: transport)
+        let token = await shared.dTokenValue()
+        return (identity, token)
+    }
+
+    /// Like `dataIdentity`, for requests that can go out with the signer's fixed device when the
+    /// persistent one is not reachable (catalogue, book mall, comments): nil and "" then.
+    static func optionalDataIdentity(transport: AppTransport) async -> (identity: PlaybackIdentity?, dToken: String) {
+        let identity = try? await shared.get(transport: transport)
+        let token = await shared.dTokenValue()
+        return (identity, token)
     }
 
     // MARK: - Keychain Persistence

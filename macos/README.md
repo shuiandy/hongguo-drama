@@ -13,9 +13,8 @@
 | 搜索 | 已完成 | 官网 `/api/search/result`，记住最近搜索 |
 | 分享链接 / 剧集编号直达 | 已完成 | 手动跟随跳转，每一跳都过 SSRF 校验 |
 | 剧集详情、简介、评分、评论 | 已完成 | 官网公开数据 |
-| 播放：官网明文片源 | 已完成 | 自有 URLSession 流式加载，AVPlayer 硬解 |
-| 播放：App 签名片源（player/v1） | 已完成 | 移植 `app-source.js` 播放路径：匿名设备注册（仅内存）、v5 签名，失败时换官方备用主机，再走一次 551 签名旧接口 |
-| 播放：旧 App 接口加密片源 | 已完成 | 最后的回退；加密片源下载后 CENC 解密到本地缓存再播放 |
+| 播放：官方 iOS 7.4.3 取源逻辑 | 已完成 | 和 iOS 版共用 HongguoKit 的 `AuthenticatedPlaybackSource`：持久设备、v5 签名、iOS 配置，空回复时换官方备用主机和路径，再续期或换设备。没有别的取源通道，也没有官网兜底 |
+| 加密片源边下边解 | 已完成 | CENC 加密片源流式解密播放，不行时下载后解密到本地缓存再播放 |
 | 原生播放控件、全屏、画中画 | 已完成 | `AVPlayerView`，系统级 PiP |
 | 无边框悬浮小窗 | 已完成 | 置顶、跨桌面、按视频比例缩放、拖动、双击还原 |
 | 无标题栏播放器窗口 | 已完成 | 透明标题栏，悬停显示顶栏 |
@@ -70,14 +69,12 @@ HongguoKit/                 Mac、iOS、tvOS 共用的 Swift 包（见 HongguoKi
     HTMLData.swift          只解析页面里的 JSON 字面量，不执行任何远端脚本
     SearchService.swift     官网搜索
     CatalogService.swift    分类与榜单
-    SeriesService.swift     分集、取源（App 快速通道 → App 排队通道 → 旧接口 → 官网）、详情、分享链接
-    FastAppPlaybackSource.swift  App 快速通道：内存里复用一个匿名设备身份，批量预取
-    AppSource.swift         App 播放取源：排队限速、选流、密钥与片源地址解密、域名白名单
-    PlaybackDevice.swift    匿名播放设备注册（只在内存，失败冷却 10 秒）
+    SeriesService.swift     分集、取源（只走官方 iOS 那套）、详情、分享链接
+    AuthenticatedPlaybackSource.swift  唯一的取源：官方 iOS 7.4.3 请求、自愈、批量预取、磁盘缓存
+    AppSource.swift         iOS 播放请求的构造、选流、密钥与片源地址解密、域名白名单
+    PersistentAppDevice.swift  持久设备（钥匙串，6 小时续期，x-tt-dt），所有 App 接口共用
     PlaybackSignerV5.swift  player/v1 的 v5 签名（Medusa / Helios）
-    PlayerSignature551.swift 旧接口重试用的 Argus / Ladon 签名
     AppCrypto.swift         SM3、AES-CBC、gzip 等底层工具
-    LegacyAPI.swift         未签名的旧 App 接口（最后的回退）
     CencDecryptor.swift     spade_a 取密钥、CENC MP4 解密与 moov 重建
     PlaybackCache.swift     加密片源的解密缓存
     LibraryStore.swift      观看记录与设置
@@ -95,14 +92,14 @@ macos/
 ## 安全说明
 
 * 所有来自远端数据的地址（片源、分享链接、跳转）都经过 `URLGuard`：只允许 http/https、
-  不允许内嵌账号密码、主机名与解析结果必须是公网地址。系统 DNS 只返回 Fake-IP
-  （198.18.0.0/15，Surge/Clash 等代理常见）时，会用固定的 DoH 解析复核真实地址。
+  不允许内嵌账号密码、主机名与解析结果必须是公网地址。系统 DNS 只返回代理的虚拟地址
+  （Fake-IP 198.18.0.0/15 或 ULA fc00::/7，Surge/Clash 等代理常见）时，会用固定的 DoH 解析复核真实地址；
+  红果自己的 https 域名先放行、后台复核，复核结果不是公网就从此拦截。
 * App Transport Security 保持开启，http 片源会先升级为 https。
 * 播放流量走应用自己的 URLSession（不存 Cookie、不带账号信息），AVPlayer 只看到私有的
   `hgstream://` 地址。
-* 代码中没有任何账号凭据；接口里的设备参数是协议常量。App 取源时注册的匿名设备身份只保存在内存，
-  不写盘，每次取源重新注册；注册失败后 10 秒内不再重试。所有取源请求排成一队、间隔至少 1 秒，
-  遇到 403 / 429 / 业务拒绝会停止已排队的请求。
+* 代码中没有任何账号凭据；接口里的设备参数是协议常量。App 接口共用一个持久设备身份，存在钥匙串里，
+  6 小时续期一次；遇到 429 / 业务拒绝会停止重试。设备号、device_token 和 Cookie 都不写日志。
 * App 返回的片源地址只接受 qznovelvod.com / fqnovelvod.com / douyinvod.com 的 HTTPS 地址，并再过
   `URLGuard`；App 接口本身只允许 fqnovel.com / snssdk.com，带签名的请求不跟随跳转。
 * 已知限制：DNS 校验与实际连接之间存在理论上的 DNS 重绑定窗口（URLSession 不支持固定 IP 连接），

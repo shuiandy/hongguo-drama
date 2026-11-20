@@ -95,30 +95,6 @@ public enum SearchText {
     }
 }
 
-// MARK: - Shared anonymous identity
-
-/// One registered App identity for search, kept in memory; failures are shared for 10 s.
-actor AppSearchIdentity {
-    static let shared = AppSearchIdentity()
-    private var identity: PlaybackIdentity?
-    private var retryAfter = Date.distantPast
-
-    func get(transport: AppTransport) async throws -> PlaybackIdentity {
-        if let identity { return identity }
-        guard Date() >= retryAfter else { throw HongguoError(.unavailable, "App 搜索暂不可用") }
-        do {
-            let value = try await PersistedPlaybackDevice.obtain(transport: transport)
-            identity = value
-            return value
-        } catch {
-            retryAfter = Date().addingTimeInterval(10)
-            throw HongguoError(.unavailable, "App 搜索暂不可用")
-        }
-    }
-
-    func reset() { identity = nil }
-}
-
 // MARK: - App search
 
 public struct AppSearchCursor: Equatable, Sendable {
@@ -152,7 +128,12 @@ public final class AppSearchService: Sendable {
             throw HongguoError(.input, "App 搜索游标已失效，请重新搜索")
         }
         let deadline = Date().addingTimeInterval(timeout)
-        let identity = try await AppSearchIdentity.shared.get(transport: transport)
+        let identity: PlaybackIdentity
+        do {
+            identity = try await PersistentAppDevice.shared.get(transport: transport)
+        } catch {
+            throw HongguoError(.unavailable, "App 搜索暂不可用")
+        }
         guard Date() < deadline else { throw HongguoError(.timeout, "App 搜索超时") }
         let signed = try signer().search(keyword: kw, page: page,
                                          cursor: cursor.map { .init(searchId: $0.searchId, passback: $0.passback, nextOffset: $0.nextOffset) },

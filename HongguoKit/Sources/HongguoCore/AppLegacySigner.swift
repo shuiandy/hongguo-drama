@@ -35,7 +35,7 @@ struct AppLegacySigner {
     static let searchAPI = "https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/search/tab/v"
     static let metadataHost = "https://api5-normal-sinfonlineb.fqnovel.com"
     static let searchUA = "com.phoenix.read/72232 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3)"
-    static let metadataUA = AppSource.videoUA.replacingOccurrences(of: "71332", with: "73532")
+    static let metadataUA = "com.phoenix.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
 
     static let device: [(String, String)] = [
         ("ac", "wifi"), ("channel", "update_64"), ("aid", "8662"), ("app_name", "novelread"),
@@ -482,7 +482,7 @@ struct AppLegacySigner {
     static let metadataPaths = ["/reading/distribution/category/landpage/v/", "/reading/bookapi/bookmall/cell/change/v"]
 
     /// Port of `signedMetadataRequest` (catalogue lists; one anonymous identity per process).
-    /// `identity` and `dToken` replace the fixed metadata device (`PlatformBehavior.persistentDataDevice`).
+    /// `identity` and `dToken` (the persistent device) replace the fixed metadata device.
     func metadata(path: String, values: [(String, String)], payload: [UInt8]?, identity: PlaybackIdentity? = nil,
                   dToken: String = "", nowMillis: Int64) throws -> Signed {
         guard Self.metadataPaths.contains(path) else { throw HongguoError(.input, "不支持的 App 目录接口") }

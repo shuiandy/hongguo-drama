@@ -1,8 +1,7 @@
 import Foundation
 
 /// Raw access to `/reading/bookapi/bookmall/tab/v/` using `AppLegacySigner`'s anonymous
-/// metadata signing profile (read-only), or the persistent device when
-/// `PlatformBehavior.persistentDataDevice` is on.
+/// metadata signing profile (read-only), with the persistent device when it is reachable.
 public enum AppBookMallAccess {
     /// GET /reading/bookapi/bookmall/tab/v/ with query values.
     public static func tab(
@@ -12,7 +11,7 @@ public enum AppBookMallAccess {
         timeout: TimeInterval = 10
     ) async throws -> JSONValue {
         let transport = AppTransport(http: .shared)
-        let device = await DataDevice.optional(transport: transport)
+        let device = await PersistentAppDevice.optionalDataIdentity(transport: transport)
         let signed = try AppLegacySigner.shared.bookMallTab(
             host: host ?? AppLegacySigner.metadataHost,
             path: path,
@@ -25,7 +24,7 @@ public enum AppBookMallAccess {
             return try await transport.requestJSON(
                 signed.url,
                 method: "GET",
-                headers: signed.headers + DataDevice.authHeaders,
+                headers: signed.headers + PersistentAppDevice.authHeaders(),
                 body: nil,
                 deadline: Date().addingTimeInterval(timeout)
             )

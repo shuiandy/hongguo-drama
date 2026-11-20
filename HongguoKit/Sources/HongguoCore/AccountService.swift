@@ -170,7 +170,7 @@ public actor AccountService {
             do { return try await transport.requestJSON(url, headers: headers, deadline: Date().addingTimeInterval(12)) }
             catch let error as AppSourceError { throw HongguoError(.unavailable, error.message) }
         }
-        self.identity = identity ?? { try await AppSearchIdentity.shared.get(transport: transport) }
+        self.identity = identity ?? { try await PersistentAppDevice.shared.get(transport: transport) }
     }
 
     // MARK: Parsing (pure)

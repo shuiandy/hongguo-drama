@@ -1,8 +1,8 @@
 // swift-tools-version:5.9
 import PackageDescription
 
-// Shared by the Mac app (macos/), the iOS app and the coming tvOS app. Each app picks its
-// behavior with `PlatformBehavior.current` at launch (Mac is the default).
+// Shared by the Mac app (macos/), the iOS app and the coming tvOS app. One behavior for all of
+// them: the official iOS 7.4.3 client's play logic, no per-platform switches.
 let package = Package(
     name: "HongguoKit",
     platforms: [.macOS(.v14), .iOS("26.0"), .tvOS("26.0")],

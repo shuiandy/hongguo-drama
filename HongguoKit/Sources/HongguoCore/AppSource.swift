@@ -4,10 +4,10 @@
 // Signing and Spade algorithms adapted from woshishiq1/drpys
 // commit 22261adfa31435e3b3ef5a730b8a2a75bcaf1715, spider/js/红果果[短].js,
 // via N3urda/hongguoTV eea73e6a45569a2cbbb9440f7cd5290c459b0b70.
-// Changes: registered in-memory playback identity; pure JS SM3;
-// bounded HTTPS transport; exact episode matching; supported codec selection.
+// Changes: persistent device identity (PersistentAppDevice); the official iOS 7.4.3 request
+// profile only; pure JS SM3; bounded HTTPS transport; exact episode matching; supported codec selection.
 // Swift port: playback only (search/catalogue/account signers are not ported); ByteVC2 rows are
-// skipped because AVFoundation cannot decode them; "auto" picks the best tier, others are variants.
+// skipped unless they can be converted; "auto" picks the best tier, others are variants.
 // Crypto tables and SDK protocol constants below are not user credentials.
 import Foundation
 
@@ -21,15 +21,13 @@ struct AppSourceError: LocalizedError, Sendable {
     var code: Code
     var message: String
     var status: Int?
-    var registrationFailure: String?
     var incompleteEncryptionMetadata = false
     var minimumPixels = 0
 
-    init(_ code: Code, _ message: String, status: Int? = nil, registrationFailure: String? = nil) {
+    init(_ code: Code, _ message: String, status: Int? = nil) {
         self.code = code
         self.message = message
         self.status = status
-        self.registrationFailure = registrationFailure
     }
 
     var errorDescription: String? { message }
@@ -37,7 +35,6 @@ struct AppSourceError: LocalizedError, Sendable {
     /// Explicit upstream refusals stop work that was queued before they arrived.
     var isHardRejection: Bool {
         status == 403 || status == 429 || code == .businessRejected
-            || (code == .deviceRegistrationFailed && ["BUSINESS_REJECTED", "HTTP_403", "HTTP_429"].contains(registrationFailure ?? ""))
     }
 
     var hongguoError: HongguoError {
@@ -140,230 +137,50 @@ extension Task where Success == Never, Failure == Never {
     }
 }
 
-// MARK: Client profile
-
-/// Which official client the App play requests imitate when a caller does not say
-/// (`PlatformBehavior.clientProfile`). `.android` is the Mac app's; `.ios` sends the official iOS
-/// 7.4.3 profile on every play-model request (the queued path included) and its User-Agent on
-/// media and `fallback_api` requests. Explicit `iosProfile:` arguments still win.
-public enum AppClientProfile: Sendable, Equatable {
-    case android
-    case ios
-
-    /// The profile of this process.
-    public static var `default`: AppClientProfile { PlatformBehavior.current.clientProfile }
-}
-
 // MARK: App source
 
-/// Official App playback source: anonymous in-memory device registration, v5-signed
-/// `multi_video_model/player/v1` (other official host on an empty reply), then one legacy
-/// 551-signed attempt; all requests share one paced queue (one at a time, 1 s apart).
-actor AppSource {
-    static let shared = AppSource()
-
-    static let videoAPI = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/"
-    /// The scene path (`multi_video_model/player/v1`) answers empty since 2026-11; the plain path with
-    /// the V5 signature still answers (the official iOS 7.4.3 RPC table lists both).
-    static let playerAPI = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/"
-    static let videoUA = "com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
-    static let playbackUA = videoUA.replacingOccurrences(of: "71332", with: "74332")
-    static let playerUA = "com.phoenix.read/73932 (Linux; U; Android 12; zh_CN_#Hans; PGT-AN10; Build/V417IR;tt-ok/3.12.13.20)"
+/// The official iOS 7.4.3 client's play-model request and the parsing of its reply. The requests
+/// are made by `AuthenticatedPlaybackSource` (and `CodecFallback`) with the persistent device;
+/// this is the only play source of every app.
+enum AppSource {
+    /// `FQVPlayerApiService.mGetVideoModelV2` of the official iOS 7.4.3 client (`/multi_video_model/:dr_scene/v1/`).
+    static let playerSceneAPI = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/player/v1/"
+    /// The official iOS 7.4.3 client's User-Agent, sent on model, `fallback_api` and media requests.
+    static let iosPlayerUA = "Eggplant/7.4.3 (iPhone; iOS 18.3; Scale/3.00)"
     static let mediaDomains = ["qznovelvod.com", "fqnovelvod.com", "douyinvod.com"]
-    static let playbackDevice: [(String, String)] = [
-        ("ac", "wifi"), ("channel", "update_64"), ("aid", "8662"), ("app_name", "novelread"),
-        ("version_code", "74332"), ("version_name", "7.4.3.32"), ("device_platform", "android"), ("os", "android"),
-        ("ssmix", "a"), ("device_type", "25053RT47C"), ("device_brand", "Redmi"), ("language", "zh"), ("os_api", "36"),
-        ("os_version", "16"), ("manifest_version_code", "74332"), ("resolution", "1280*2772"), ("dpi", "520"),
-        ("update_version_code", "74332"), ("host_abi", "arm64-v8a"), ("dragon_device_type", "phone"), ("pv_player", "74332"),
-        ("compliance_status", "0"), ("need_personal_recommend", "1"), ("player_so_load", "1"), ("is_android_pad_screen", "0"),
+    /// Query values of the official iOS 7.4.3 client.
+    static let iosProfile: [(String, String)] = [
+        ("aid", "8662"), ("app_name", "novelread"), ("version_code", "74300"), ("version_name", "7.4.3"),
+        ("channel", "App Store"), ("device_platform", "iphone"), ("device_type", "iPhone17,1"), ("os_version", "18.3"),
+        ("update_version_code", "74300"),
     ]
 
-    private let transport: AppTransport
-    private let device: PlaybackDevice
-    private var tail: Task<Void, Never> = Task {}
-    private var readyAt = Date.distantPast
-    private var rejectionGeneration = 0
-
-    init(http: HTTPClient = .shared, device: PlaybackDevice = .shared) {
-        transport = AppTransport(http: http)
-        self.device = device
-    }
-
-    func playInfo(vid: String) async throws -> PlayInfo {
-        guard vid.range(of: "^[0-9]{1,30}$", options: .regularExpression) != nil else {
-            throw AppSourceError(.input, "分集编号无效")
-        }
-        let generation = rejectionGeneration
-        let previous = tail
-        let work = Task { () throws -> PlayInfo in
-            await previous.value
-            try Task.checkCancellationAsApp()
-            if self.rejectionGeneration != generation { throw AppSourceError(.businessRejected, "App 接口已拒绝之前的请求，已停止排队中的取址") }
-            let wait = self.readyAt.timeIntervalSinceNow
-            if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
-            try Task.checkCancellationAsApp()
-            defer { self.readyAt = max(self.readyAt, Date().addingTimeInterval(1)) }
-            do {
-                return try await self.fetchFresh(vid: vid)
-            } catch let error as AppSourceError {
-                if error.isHardRejection { self.rejectionGeneration += 1 }
-                throw error
-            }
-        }
-        tail = Task { _ = try? await work.value }
-        return try await withTaskCancellationHandler {
-            try await work.value
-        } onCancel: {
-            work.cancel()
-        }
-    }
-
-    /// The official iOS 7.4.3 client's `mGetVideoModelV2` route; with the iOS profile below it answers
-    /// where the Android profile gets empty replies (2026-11-20).
-    static let playerSceneAPI = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/player/v1/"
-    static let iosPlayerUA = "Eggplant/7.4.3 (iPhone; iOS 18.3; Scale/3.00)"
-
-    /// User-Agent for media and `fallback_api` requests of the default client profile.
-    static func mediaUA(inline: Bool) -> String {
-        if AppClientProfile.default == .ios { return iosPlayerUA }
-        return inline ? playbackUA : videoUA
-    }
-
-    func playbackRequest(payload: [UInt8], identity: PlaybackIdentity, modern: Bool, alternate: Bool = false,
-                         base override: String? = nil, iosProfile requested: Bool? = nil, deviceToken: String? = nil)
-        throws -> (url: String, headers: [(String, String)], body: [UInt8]) {
-        let body = try AppCrypto.gzip(payload)
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
-        let iosProfile = requested ?? (AppClientProfile.default == .ios)
-        // The iOS client signs the plain route with V5 too (the 551 legacy request is Android only).
-        if modern || iosProfile {
-            let primary = !modern ? Self.videoAPI : (iosProfile ? Self.playerSceneAPI : Self.playerAPI)
-            let base = override ?? (alternate ? primary.replacingOccurrences(of: "sinfonlineb.", with: "sinfonlinea.") : primary)
-            let profile: [(String, String)] = iosProfile
-                ? [("aid", "8662"), ("app_name", "novelread"), ("version_code", "74300"), ("version_name", "7.4.3"),
-                   ("channel", "App Store"), ("device_platform", "iphone"), ("device_type", "iPhone17,1"), ("os_version", "18.3"),
-                   ("update_version_code", "74300")]
-                : [("aid", "8662"), ("app_name", "novelread"), ("version_code", "74332"), ("version_name", "7.4.3.32"),
-                   ("channel", "vivo_8662_64"), ("device_platform", "android"), ("device_type", "PGT-AN10"), ("os_version", "12"),
-                   ("update_version_code", "74332")]
-            let signed = try PlaybackSignerV5.shared.sign(base: base, values: profile + [
-                ("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId),
-            ], body: body, nowMillis: now)
-            var headers = signed.headers + [
-                ("User-Agent", iosProfile ? Self.iosPlayerUA : Self.playerUA), ("Accept", "application/json"),
-                ("Content-Type", "application/json; charset=utf-8"), ("Content-Encoding", "gzip"),
-            ]
-            if iosProfile { headers += [("x-ss-dp", "8662"), ("sdk-version", "2")] }
-            if let deviceToken, !deviceToken.isEmpty { headers.append(("x-tt-dt", deviceToken)) }
-            return (signed.url, headers, body)
-        }
-        let khronos = UInt64(now / 1000)
-        var values = Self.playbackDevice
-        values += [("device_id", identity.deviceId), ("iid", identity.iid), ("cdid", identity.cdid),
-                   ("ts", String(khronos)), ("_rticket", String(now))]
-        let query = AppCrypto.encodeQuery(values)
-        let signature = Dictionary(try PlayerSignature551.sign(query: query, body: body, ts: khronos), uniquingKeysWith: { a, _ in a })
-        let headers: [(String, String)] = [
-            ("User-Agent", Self.playbackUA), ("Accept", "application/json; charset=utf-8,application/x-protobuf"),
-            ("x-ss-req-ticket", signature["x-ss-req-ticket"] ?? ""), ("sdk-version", "2"), ("x-xs-from-web", "0"),
-            ("passport-sdk-version", "5051452"), ("x-ss-dp", "8662"), ("x-khronos", signature["x-khronos"] ?? ""),
-            ("x-ladon", signature["x-ladon"] ?? ""), ("x-argus", signature["x-argus"] ?? ""), ("x-tt-dt", ""),
-            ("x-tt-store-region", "cn"), ("x-tt-store-region-src", "did"),
-            ("Content-Type", "application/json; charset=UTF-8"), ("Content-Encoding", "gzip"),
-            ("x-ss-stub", signature["x-ss-stub"] ?? ""), ("Connection", "close"),
-        ]
-        return ("\(Self.videoAPI)?\(query)", headers, body)
-    }
-
-    func fetchFresh(vid: String) async throws -> PlayInfo {
-        let payloadObject: [String: Any] = [
+    /// The JSON body of a play-model request for `vids` (at most 6).
+    static func modelPayload(vids: [String]) throws -> [UInt8] {
+        let object: [String: Any] = [
             "biz_param": ["detail_page_version": 0, "device_level": 3, "disable_digg_stat": false,
                           "disable_video_relate_book": false, "need_all_video_definition": true, "need_mp4_align": false,
                           "use_os_player": false, "use_server_dns": false, "video_platform": 1024],
-            "mixed_video_id_map": ["1004": [vid]],
+            "mixed_video_id_map": ["1004": vids],
             "dr_scene": "player",
         ]
-        let payload = Array(try JSONSerialization.data(withJSONObject: payloadObject, options: [.sortedKeys]))
-        var identity = try await device.register(transport: transport)
-        try Task.checkCancellationAsApp()
-        // Registration has its own 8 s budget; the model request gets 12 s.
-        let deadline = Date().addingTimeInterval(12)
-        var response: JSONValue = .null
-        for attempt in 0..<2 {
-            try Task.checkCancellationAsApp()
-            do {
-                let signed = try playbackRequest(payload: payload, identity: identity, modern: attempt == 0)
-                do {
-                    response = try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers,
-                                                               body: signed.body, deadline: deadline)
-                } catch let error as AppSourceError {
-                    if attempt > 0 || error.code != .emptyResponse || deadline.timeIntervalSinceNow < 1 { throw error }
-                    // An empty primary response can recover on the other official host with the same identity.
-                    let alternate = try playbackRequest(payload: payload, identity: identity, modern: true, alternate: true, iosProfile: true)
-                    response = try await transport.requestJSON(alternate.url, method: "POST", headers: alternate.headers,
-                                                               body: alternate.body, deadline: deadline)
-                }
-                break
-            } catch let error as AppSourceError {
-                if error.code == .cancelled { throw error }
-                if attempt > 0 || error.code != .emptyResponse || deadline.timeIntervalSinceNow < 1 { throw error }
-                // Keep the legacy attempt even when a fresh registration fails.
-                if deadline.timeIntervalSinceNow >= 8 {
-                    do {
-                        identity = try await device.register(transport: transport)
-                    } catch let registration as AppSourceError {
-                        if registration.code == .cancelled || registration.isHardRejection { throw registration }
-                    }
-                }
-                if deadline.timeIntervalSinceNow < 1.5 { throw error }
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                try Task.checkCancellationAsApp()
-            }
-        }
-        if (response["Code"].number ?? response["code"].number ?? 0) != 0 {
-            throw AppSourceError(.businessRejected, "App 接口暂未提供本集播放信息")
-        }
-        let data = response["data"]
-        let entries = !data["1004"].isNull ? data["1004"] : (!data["video_model_data"].isNull ? data["video_model_data"] : data)
-        let entry = entries[vid]
-        let model: JSONValue
-        if let text = entry["video_model"].string { model = (try? JSONValue.parse(text)) ?? .null } else { model = entry["video_model"] }
-        guard model.object != nil else {
-            throw AppSourceError(entry["video_model"].isNull ? .missingModel : .invalidResponse, "App 接口未返回所选分集，已停止取址")
-        }
-        let inline = !(model["video_list"].object?.isEmpty ?? true)
-        func readFallback() async throws -> JSONValue {
-            guard let fallback = Self.parseFallback(model["fallback_api"]), !fallback.isEmpty else {
-                throw AppSourceError(.missingModel, "App 接口未返回本集片源地址")
-            }
-            let outer = try await transport.requestJSON(fallback, headers: [("User-Agent", Self.mediaUA(inline: false))], deadline: deadline)
-            for value in [outer, outer["video_info"]] where (value["Code"].number ?? value["code"].number ?? 0) != 0 {
-                throw AppSourceError(.businessRejected, "App 接口暂未提供本集播放信息")
-            }
-            return outer["video_info"]["data"]
-        }
-        if !inline {
-            return try Self.parsePlayModel(try await readFallback(), vid: vid, inline: false)
-        }
-        do {
-            return try Self.parsePlayModel(model, vid: vid, inline: true)
-        } catch let error as AppSourceError {
-            // Only absent encryption metadata enables this recovery path; the fallback must
-            // independently pass identity, duration, encryption and URL validation.
-            let duration = model["video_duration"].number ?? .nan
-            guard error.incompleteEncryptionMetadata, let videoId = model["video_id"].string,
-                  !videoId.trimmingCharacters(in: .whitespaces).isEmpty, duration.isFinite, duration > 0,
-                  error.minimumPixels > 0, !model["fallback_api"].isNull else { throw error }
-            let info = try await readFallback()
-            let fallbackDuration = info["video_duration"].number ?? .nan
-            guard info["video_id"].string == videoId, fallbackDuration.isFinite, fallbackDuration > 0,
-                  abs(fallbackDuration - duration) <= 0.5 else {
-                throw AppSourceError(.invalidResponse, "备用片源编号或完整时长无法确认，已停止取址")
-            }
-            return try Self.parsePlayModel(info, vid: vid, inline: false, requireEncryptionMetadata: true,
-                                           minimumPixels: error.minimumPixels)
-        }
+        return Array(try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))
+    }
+
+    /// A V5-signed, gzipped play-model POST to `base` with the iOS profile and `identity`.
+    static func modelRequest(base: String, payload: [UInt8], identity: PlaybackIdentity)
+        throws -> (url: String, headers: [(String, String)], body: [UInt8]) {
+        let body = try AppCrypto.gzip(payload)
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let signed = try PlaybackSignerV5.shared.sign(base: base, values: iosProfile + [
+            ("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId),
+        ], body: body, nowMillis: now)
+        let headers = signed.headers + [
+            ("User-Agent", iosPlayerUA), ("Accept", "application/json"),
+            ("Content-Type", "application/json; charset=utf-8"), ("Content-Encoding", "gzip"),
+            ("x-ss-dp", "8662"), ("sdk-version", "2"),
+        ]
+        return (signed.url, headers, body)
     }
 
     // MARK: Parsing (pure, unit-tested)
@@ -397,7 +214,7 @@ actor AppSource {
     }
 
     /// `spade_a` -> 16-byte content key. Verbatim port of `deriveContentKey` (differs from
-    /// `CencDecryptor.deriveKey`, which serves the legacy preload API).
+    /// `CencDecryptor.deriveKey`, which reads the `spade_a` of downloads saved by older versions).
     static func deriveContentKey(_ value: String) throws -> [UInt8] {
         let raw = AppCrypto.base64Decode(value.trimmingCharacters(in: .whitespaces))
         guard raw.count >= 3 else { throw AppSourceError(.invalidResponse, "spade_a too short") }
@@ -514,7 +331,7 @@ actor AppSource {
                     if let primary = validURLs.first {
                         PlayBackupURLs.shared.register(primary: primary, backups: Array(validURLs.dropFirst()))
                         return PlayInfo(url: primary, spadeA: nil, codec: row.codec == "bytevc1" ? "hevc" : row.codec, source: .app,
-                                        vid: vid, userAgent: mediaUA(inline: inline), referer: nil, contentKey: key,
+                                        vid: vid, userAgent: iosPlayerUA, referer: nil, contentKey: key,
                                         quality: row.pixels > 0 ? QualityOption(shortSide: row.pixels) : nil)
                     }
                 } catch { lastError = error }

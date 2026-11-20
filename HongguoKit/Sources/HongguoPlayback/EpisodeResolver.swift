@@ -153,17 +153,7 @@ public actor EpisodeResolver {
     public func episodes(seriesId: String) async throws -> SeriesEpisodes {
         if let list = episodeLists[seriesId] { return list }
         episodeListLookups += 1
-        let list: SeriesEpisodes
-        do {
-            list = try await EpisodeSocialService.episodes(seriesId: seriesId)
-        } catch {
-            try Task.checkCancellation()
-            let expected = (error as? EpisodeSocialService.IncompleteEpisodeList)?.expectedCount ?? 0
-            list = try await series.episodes(seriesId: seriesId)
-            guard EpisodeSocialService.isCompleteEpisodeList(list.episodes.map(\.index), declaredCount: expected) else {
-                throw HongguoError(.format, "分集列表不完整，请稍后重试")
-            }
-        }
+        let list = try await series.episodes(seriesId: seriesId)
         episodeLists[seriesId] = list
         return list
     }
@@ -222,7 +212,7 @@ public actor EpisodeResolver {
     /// Returns a prepared episode, resolving it unless a fresh one is already in memory.
     /// `prefetch` only labels the result for timing reports.
     public func prepare(vid: String, seriesId: String, preferredShortSide: Int? = nil,
-                        force: Bool = false, prefetch: Bool = false, automaticRetry: Bool = false) async throws -> PreparedEpisode {
+                        force: Bool = false, prefetch: Bool = false) async throws -> PreparedEpisode {
         let key = Self.key(vid, preferredShortSide)
         let now = Date()
         if !force, let hit = ready[key], now < hit.expiresAt {
@@ -269,8 +259,6 @@ public actor EpisodeResolver {
         // Never accept an already-expired seed (Codex #7).
         let seeded: SeedEntry? = (rawSeed != nil && now < rawSeed!.expiresAt) ? rawSeed : nil
         if seeded == nil { sourceLookups += 1 }
-        let webAvailable = force && !automaticRetry ? nil : episodeLists[seriesId]?.episodes.first { $0.vid == vid }?.webAvailable
-        let service = series
         let overrideLookup = lookupOverride
         let task = Task<(PreparedEpisode, String), Error> {
             let started = Date()
@@ -288,6 +276,7 @@ public actor EpisodeResolver {
                 if let overrideLookup {
                     return try await overrideLookup(vid, seriesId, preferredShortSide, forceLookup, prefetch)
                 }
+                // The official iOS client's play request is the only source.
                 do {
                     let resolved = try await AuthenticatedPlaybackSource.shared.resolveWithMeta(
                         vid: vid, force: forceLookup, allowRecovery: !prefetch
@@ -297,14 +286,7 @@ public actor EpisodeResolver {
                     throw CancellationError()
                 } catch {
                     if let hongguo = error as? HongguoError, hongguo.kind == .cancelled { throw hongguo }
-                    guard !prefetch else { throw PlaybackProblem.from(error) }
-                    do {
-                        let fallback = try await service.playInfo(vid: vid, seriesId: seriesId, force: forceLookup, webAvailable: webAvailable)
-                            .selecting(shortSide: preferredShortSide)
-                        return (fallback, Date().addingTimeInterval(Self.lifetime), "core-\(fallback.source.rawValue)")
-                    } catch {
-                        throw PlaybackProblem.from(error)
-                    }
+                    throw PlaybackProblem.from(error)
                 }
             }
 
@@ -537,11 +519,6 @@ public actor EpisodeResolver {
         }
         order.removeAll { $0.hasPrefix(prefix) }
         await AuthenticatedPlaybackSource.shared.forget(vid: vid)
-        await FastAppPlaybackSource.shared.forget(vid: vid)
-    }
-
-    public func markWebFailure(_ info: PlayInfo) async {
-        await series.markWebMediaFailure(info)
     }
 }
 

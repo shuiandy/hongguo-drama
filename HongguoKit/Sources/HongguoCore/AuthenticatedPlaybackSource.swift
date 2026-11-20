@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Official-aligned persistent-device playback source for iOS.
+// The play source of every app (Mac, iOS, tvOS): the official iOS 7.4.3 client's logic.
 // Mirrors official iOS 7.4.3 `BDInstall` + `FQVPlayerApiService` + `FQVShortVideoVideoModelCacheManager`:
 // - uses the Keychain-persisted, 6-hour-renewed & activated `PersistentAppDevice` with `x-tt-dt`,
 // - caches resolved `PlayInfo` on disk respecting server `expire_time`,
@@ -7,6 +7,7 @@
 //   primary/alternate plus plain iOS `/multi_video_model/v1/`,
 // - proactively upgrades ByteVC2-only episodes to H.264/HEVC via `CodecFallback` when available,
 // - self-heals on empty replies via BDInstall renewal -> anonymous isolation -> fresh rotation.
+// There is no other source: no Android profile, website channel or web page.
 import Foundation
 
 /// Disk-backed cache for resolved `PlayInfo` records, mirroring `FQVShortVideoVideoModelCacheManager`.
@@ -445,42 +446,25 @@ public actor AuthenticatedPlaybackSource {
                 }
             }
 
-            // C) Genuine fresh device rotation (never coalesced onto an old renewal) + Android scene fallback.
-            if entries == nil, deadline.timeIntervalSinceNow >= 2 {
-                if let rotated = try? await PersistentAppDevice.shared.rotateIfAllowed(transport: transport),
-                   rotated.rotated {
-                    identity = rotated.identity
-                    do {
-                        entries = try await requestModels(
-                            vids: [vid],
-                            channels: [.multiScenePrimary, .multiSceneAndroid],
-                            identity: identity,
-                            extraHeaders: [],
-                            deadline: deadline
-                        )
-                        routeTag = "auth-rotate"
-                    } catch let error as AppSourceError {
-                        if error.code == .cancelled { throw error }
-                        lastError = error
-                    } catch {
-                        lastError = error
-                    }
-                } else {
-                    do {
-                        entries = try await requestModels(
-                            vids: [vid],
-                            channels: [.multiSceneAndroid],
-                            identity: identity,
-                            extraHeaders: [],
-                            deadline: deadline
-                        )
-                        routeTag = "auth-android"
-                    } catch let error as AppSourceError {
-                        if error.code == .cancelled { throw error }
-                        lastError = error
-                    } catch {
-                        lastError = error
-                    }
+            // C) Genuine fresh device rotation (never coalesced onto an old renewal).
+            if entries == nil, deadline.timeIntervalSinceNow >= 2,
+               let rotated = try? await PersistentAppDevice.shared.rotateIfAllowed(transport: transport),
+               rotated.rotated {
+                identity = rotated.identity
+                do {
+                    entries = try await requestModels(
+                        vids: [vid],
+                        channels: [.multiScenePrimary, .multiPlainIOS],
+                        identity: identity,
+                        extraHeaders: [],
+                        deadline: deadline
+                    )
+                    routeTag = "auth-rotate"
+                } catch let error as AppSourceError {
+                    if error.code == .cancelled { throw error }
+                    lastError = error
+                } catch {
+                    lastError = error
                 }
             }
         }
@@ -599,8 +583,6 @@ public actor AuthenticatedPlaybackSource {
         case multiSceneAlternate
         /// Official iOS 7.4.3 `FQVPlayerApiService.mGetVideoModel` (`/multi_video_model/v1/`).
         case multiPlainIOS
-        /// Android profile fallback on the `:dr_scene` endpoint.
-        case multiSceneAndroid
     }
 
     private static let multiScenePath = "/novel/player/multi_video_model/player/v1/"
@@ -608,16 +590,7 @@ public actor AuthenticatedPlaybackSource {
 
     private func requestModels(vids: [String], channels: [Channel], identity: PlaybackIdentity,
                                extraHeaders: [(String, String)], deadline: Date) async throws -> JSONValue {
-        let multiPayloadObject: [String: Any] = [
-            "biz_param": [
-                "detail_page_version": 0, "device_level": 3, "disable_digg_stat": false,
-                "disable_video_relate_book": false, "need_all_video_definition": true, "need_mp4_align": false,
-                "use_os_player": false, "use_server_dns": false, "video_platform": 1024,
-            ],
-            "mixed_video_id_map": ["1004": vids],
-            "dr_scene": "player",
-        ]
-        let multiPayload = Array(try JSONSerialization.data(withJSONObject: multiPayloadObject, options: [.sortedKeys]))
+        let multiPayload = try AppSource.modelPayload(vids: vids)
         try Task.checkCancellationAsApp()
 
         var lastError: Error?
@@ -667,45 +640,13 @@ public actor AuthenticatedPlaybackSource {
 
     private func buildRequest(channel: Channel, multiPayload: [UInt8], identity: PlaybackIdentity)
         throws -> (url: String, headers: [(String, String)], body: [UInt8]) {
-        func v5Post(base: String, iosProfile: Bool) throws -> (url: String, headers: [(String, String)], body: [UInt8]) {
-            let body = try AppCrypto.gzip(multiPayload)
-            let now = Int64(Date().timeIntervalSince1970 * 1000)
-            let values: [(String, String)] = iosProfile
-                ? [
-                    ("aid", "8662"), ("app_name", "novelread"), ("version_code", "74300"), ("version_name", "7.4.3"),
-                    ("channel", "App Store"), ("device_platform", "iphone"), ("device_type", "iPhone17,1"), ("os_version", "18.3"),
-                    ("update_version_code", "74300"), ("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId),
-                ]
-                : [
-                    ("aid", "8662"), ("app_name", "novelread"), ("version_code", "74332"), ("version_name", "7.4.3.32"),
-                    ("channel", "vivo_8662_64"), ("device_platform", "android"), ("device_type", "PGT-AN10"), ("os_version", "12"),
-                    ("update_version_code", "74332"), ("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId),
-                ]
-            let signed = try PlaybackSignerV5.shared.sign(base: base, values: values, body: body, nowMillis: now)
-            return (
-                signed.url,
-                signed.headers + [
-                    ("User-Agent", iosProfile ? AppSource.iosPlayerUA : AppSource.playerUA),
-                    ("Accept", "application/json"),
-                    ("Content-Type", "application/json; charset=utf-8"),
-                    ("Content-Encoding", "gzip"),
-                    ("x-ss-dp", "8662"),
-                    ("sdk-version", "2"),
-                ],
-                body
-            )
-        }
-
+        let base: String
         switch channel {
-        case .multiScenePrimary:
-            return try v5Post(base: "https://api5-normal-sinfonlineb.fqnovel.com\(Self.multiScenePath)", iosProfile: true)
-        case .multiSceneAlternate:
-            return try v5Post(base: "https://api5-normal-sinfonlinea.fqnovel.com\(Self.multiScenePath)", iosProfile: true)
-        case .multiPlainIOS:
-            return try v5Post(base: "https://api5-normal-sinfonlineb.fqnovel.com\(Self.multiPlainPath)", iosProfile: true)
-        case .multiSceneAndroid:
-            return try v5Post(base: "https://api5-normal-sinfonlineb.fqnovel.com\(Self.multiScenePath)", iosProfile: false)
+        case .multiScenePrimary: base = "https://api5-normal-sinfonlineb.fqnovel.com\(Self.multiScenePath)"
+        case .multiSceneAlternate: base = "https://api5-normal-sinfonlinea.fqnovel.com\(Self.multiScenePath)"
+        case .multiPlainIOS: base = "https://api5-normal-sinfonlineb.fqnovel.com\(Self.multiPlainPath)"
         }
+        return try AppSource.modelRequest(base: base, payload: multiPayload, identity: identity)
     }
 
     private func extractModel(from entry: JSONValue) -> JSONValue {
