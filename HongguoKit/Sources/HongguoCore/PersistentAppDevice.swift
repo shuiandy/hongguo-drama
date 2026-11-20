@@ -362,13 +362,7 @@ public actor PersistentAppDevice {
 
     // MARK: - Auth Cookie Helper
 
-    private static var isMacTestRunner: Bool {
-        #if os(macOS)
-        return ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-        #else
-        return false
-        #endif
-    }
+    private static var isMacTestRunner: Bool { MacTestRunner.isActive }
 
     /// Returns the saved login Cookie header when signed in, or empty when anonymous.
     static func authHeaders() -> [(String, String)] {
@@ -456,4 +450,23 @@ public actor PersistentAppDevice {
         for (k, v) in attributes { insert[k] = v }
         return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
     }
+}
+
+/// Whether this process runs tests on a Mac. Test processes never touch the Keychain: the items
+/// belong to the Mac app, so reading or updating them from `xctest` brings up an access prompt that
+/// blocks the device actor until someone answers it. `swift test` does not set
+/// `XCTestConfigurationFilePath` (only Xcode does), so the process name and the loaded XCTest
+/// classes count too.
+enum MacTestRunner {
+    static let isActive: Bool = {
+        #if os(macOS)
+        let environment = ProcessInfo.processInfo.environment
+        if environment["XCTestConfigurationFilePath"] != nil || environment["XCTestBundlePath"] != nil
+            || environment["XCTestSessionIdentifier"] != nil { return true }
+        if ProcessInfo.processInfo.processName == "xctest" { return true }
+        return NSClassFromString("XCTestCase") != nil
+        #else
+        return false
+        #endif
+    }()
 }

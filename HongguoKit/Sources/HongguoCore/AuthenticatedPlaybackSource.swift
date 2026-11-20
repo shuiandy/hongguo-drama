@@ -32,13 +32,7 @@ public final class VideoModelDiskCache: @unchecked Sendable {
         self.maxEntries = maxEntries
     }
 
-    private static var isMacTestRunner: Bool {
-        #if os(macOS)
-        return ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-        #else
-        return false
-        #endif
-    }
+    private static var isMacTestRunner: Bool { MacTestRunner.isActive }
 
     public static func defaultFileURL() -> URL? {
         guard !isMacTestRunner else { return nil }
