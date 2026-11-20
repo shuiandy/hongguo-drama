@@ -251,8 +251,16 @@ public enum URLGuard {
         onBlock?(host, reason)
     }
 
+    /// The system resolver can block for a long time when the network or a local proxy's DNS is
+    /// stuck; the lookup gives up after this many seconds (the blocked thread finishes on its own).
+    static let systemDNSTimeout: TimeInterval = 6
+
     static func resolve(_ host: String) async throws -> [String] {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[String], Error>) in
+            let once = ResolveOnce(continuation)
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + systemDNSTimeout) {
+                once.resume(.failure(HongguoError(.timeout, "DNS 解析超时")))
+            }
             DispatchQueue.global(qos: .userInitiated).async {
                 var hints = addrinfo()
                 hints.ai_family = AF_UNSPEC
@@ -260,7 +268,7 @@ public enum URLGuard {
                 var result: UnsafeMutablePointer<addrinfo>?
                 let status = getaddrinfo(host, nil, &hints, &result)
                 guard status == 0, let first = result else {
-                    continuation.resume(throwing: HongguoError(.network, "DNS 解析失败"))
+                    once.resume(.failure(HongguoError(.network, "DNS 解析失败")))
                     return
                 }
                 defer { freeaddrinfo(first) }
@@ -276,9 +284,23 @@ public enum URLGuard {
                     }
                     cursor = node.pointee.ai_next
                 }
-                continuation.resume(returning: out)
+                once.resume(.success(out))
             }
         }
+    }
+}
+
+/// Resumes a DNS lookup's continuation once: with the answer or with the timeout, whichever is first.
+private final class ResolveOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<[String], Error>?
+    init(_ continuation: CheckedContinuation<[String], Error>) { self.continuation = continuation }
+    func resume(_ result: Result<[String], Error>) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume(with: result)
     }
 }
 

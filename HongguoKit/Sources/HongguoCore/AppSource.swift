@@ -116,18 +116,66 @@ struct AppTransport: Sendable {
         throw AppSourceError(.securityBlocked, "App 片源跳转次数过多")
     }
 
-    /// `URLRequest.timeoutInterval` is an idle timeout; this enforces the total budget.
+    /// `URLRequest.timeoutInterval` is an idle timeout; this enforces the total budget. It returns at
+    /// the deadline even when the operation is stuck somewhere that ignores cancellation (a system DNS
+    /// lookup): a task group would wait for that child, so the operation runs in its own task, which
+    /// is cancelled and left to finish on its own.
     func withDeadline<T: Sendable>(_ deadline: Date, _ operation: @escaping @Sendable () async throws -> T) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await operation() }
-            group.addTask {
-                let wait = max(0, deadline.timeIntervalSinceNow)
-                try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
-                throw AppSourceError(.timeout, "App 片源请求超时")
-            }
-            defer { group.cancelAll() }
-            return try await group.next()!
+        let race = DeadlineRace<T>()
+        race.setWork(Task {
+            do { race.finish(.success(try await operation())) } catch { race.finish(.failure(error)) }
+        })
+        let timer = Task {
+            try? await Task.sleep(nanoseconds: UInt64(max(0, deadline.timeIntervalSinceNow) * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            race.finish(.failure(AppSourceError(.timeout, "App 片源请求超时")))
         }
+        defer { timer.cancel() }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { race.attach($0) }
+        } onCancel: {
+            race.finish(.failure(AppSourceError(.cancelled, "已取消 App 片源请求")))
+        }
+    }
+}
+
+/// The first of an operation's result, its deadline and the caller's cancellation, delivered once;
+/// the operation's task is cancelled when it loses.
+final class DeadlineRace<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, Error>?
+    private var outcome: Result<T, Error>?
+    private var work: Task<Void, Never>?
+
+    func setWork(_ task: Task<Void, Never>) {
+        lock.lock()
+        let lost = outcome != nil
+        work = task
+        lock.unlock()
+        if lost { task.cancel() }
+    }
+
+    func attach(_ continuation: CheckedContinuation<T, Error>) {
+        lock.lock()
+        if let outcome {
+            lock.unlock()
+            continuation.resume(with: outcome)
+            return
+        }
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func finish(_ result: Result<T, Error>) {
+        lock.lock()
+        guard outcome == nil else { lock.unlock(); return }
+        outcome = result
+        let waiting = continuation
+        continuation = nil
+        let task = work
+        lock.unlock()
+        waiting?.resume(with: result)
+        task?.cancel()
     }
 }
 
