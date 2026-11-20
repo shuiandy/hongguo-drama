@@ -314,7 +314,7 @@ public actor FastAppPlaybackSource {
               let saved = try? KeychainCredentialStore().load(), !saved.cookie.isEmpty,
               let identity = try? await AppSearchIdentity.shared.get(transport: transport) else { return nil }
         do {
-            let signed = try AppSource.shared.playbackRequest(payload: payload, identity: identity, modern: true)
+            let signed = try await AppSource.shared.playbackRequest(payload: payload, identity: identity, modern: true)
             let response = try await transport.requestJSON(signed.url, method: "POST",
                                                            headers: signed.headers + [("Cookie", saved.cookie)],
                                                            body: signed.body, deadline: deadline)
