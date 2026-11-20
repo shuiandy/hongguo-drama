@@ -4,6 +4,8 @@ import HongguoCore
 struct HistoryView: View {
     @Environment(AppModel.self) private var model
     @State private var confirmClear = false
+    /// Inside 我的: no page title, the page's own tab bar names it.
+    var embedded = false
 
     var body: some View {
         Group {
@@ -11,7 +13,7 @@ struct HistoryView: View {
                 ContentUnavailableView("还没有观看记录", systemImage: "clock", description: Text("播放过的短剧会出现在这里。"))
             } else {
                 ScrollView {
-                    PageHeader(title: "观看记录", subtitle: subtitle) {
+                    PageHeader(title: embedded ? "" : "观看记录", subtitle: subtitle) {
                         if AccountState.shared.profile != nil {
                             Button { Task { await model.syncCloudHistory(force: true, manual: true) } } label: {
                                 Label(model.cloudSyncing ? "同步中…" : "同步云端", systemImage: "arrow.triangle.2.circlepath")
@@ -75,7 +77,7 @@ struct HistoryView: View {
                 }
             }
         }
-        .navigationTitle("观看记录")
+        .navigationTitle(embedded ? "我的" : "观看记录")
         .transparentToolbar()
         .confirmationDialog("清空全部观看记录？", isPresented: $confirmClear) {
             Button("清空", role: .destructive) {

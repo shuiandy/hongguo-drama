@@ -68,12 +68,8 @@ struct ContentView: View {
                     }
                 }
                 Section("我的") {
-                    SidebarRow(title: "观看记录", style: SidebarStyle.of(.history),
-                               badge: model.history.isEmpty ? nil : "\(model.history.count)",
-                               dot: model.history.contains(where: \.hasUpdates)).tag(SidebarItem.history)
-                    SidebarRow(title: "我的剧库", style: SidebarStyle.of(.library),
-                               badge: model.favorites.isEmpty ? nil : "\(model.favorites.count)").tag(SidebarItem.library)
-                    SidebarRow(title: "下载", style: SidebarStyle.of(.downloads), badge: downloadBadge).tag(SidebarItem.downloads)
+                    SidebarRow(title: "我的", style: SidebarStyle.of(.me), badge: downloadBadge,
+                               dot: model.history.contains(where: \.hasUpdates)).tag(SidebarItem.me)
                 }
             }
             .safeAreaInset(edge: .top, spacing: 0) { BrandHeader() }
@@ -99,6 +95,7 @@ struct ContentView: View {
         case .search: SearchView()
         case .feed: FeedView()
         case .calendar: ReleaseCalendarView()
+        case .me: MeView()
         case .history: HistoryView()
         case .library: LibraryView()
         case .downloads: DownloadsView()
@@ -131,6 +128,7 @@ struct SidebarStyle {
         case .feed: return SidebarStyle(symbol: "dice.fill", colors: [Color(red: 1, green: 0.55, blue: 0.35), Color(red: 0.93, green: 0.25, blue: 0.3)])
         case .calendar: return SidebarStyle(symbol: "calendar", colors: [Color(red: 0.4, green: 0.8, blue: 0.75), Color(red: 0.05, green: 0.5, blue: 0.55)])
         case .search: return SidebarStyle(symbol: "magnifyingglass", colors: [Color(red: 0.58, green: 0.64, blue: 0.72), Color(red: 0.28, green: 0.33, blue: 0.41)])
+        case .me: return SidebarStyle(symbol: "person.crop.circle.fill", colors: [Color(red: 1, green: 0.45, blue: 0.55), Color(red: 0.86, green: 0.15, blue: 0.35)])
         case .history: return SidebarStyle(symbol: "clock.fill", colors: [Color(red: 0.2, green: 0.83, blue: 0.6), Color(red: 0.02, green: 0.47, blue: 0.34)])
         case .library: return SidebarStyle(symbol: "heart.fill", colors: [Color(red: 1, green: 0.45, blue: 0.55), Color(red: 0.86, green: 0.15, blue: 0.35)])
         case .downloads: return SidebarStyle(symbol: "arrow.down.circle.fill", colors: [Color(red: 0.35, green: 0.6, blue: 1), Color(red: 0.15, green: 0.35, blue: 0.9)])
@@ -251,7 +249,7 @@ struct PageHeader<Accessory: View>: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 28, weight: .heavy)).lineLimit(1)
+                if !title.isEmpty { Text(title).font(.system(size: 28, weight: .heavy)).lineLimit(1) }
                 if let subtitle {
                     Text(subtitle).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                 }

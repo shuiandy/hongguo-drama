@@ -8,6 +8,8 @@ struct DownloadsView: View {
     @State private var filter: Filter = .all
     @State private var storage: Int64 = 0
     @State private var showStorage = false
+    /// Inside 我的: no page title, the page's own tab bar names it.
+    var embedded = false
 
     enum Filter: Hashable, Sendable { case all, active, completed, failed }
 
@@ -36,7 +38,7 @@ struct DownloadsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                PageHeader(title: "下载", subtitle: subtitle) {
+                PageHeader(title: embedded ? "" : "下载", subtitle: subtitle) {
                     Button { Task { _ = await model.downloads.resumeAll() } } label: { Label("全部继续", systemImage: "play.fill") }
                         .buttonStyle(GlassButtonStyle())
                     Button { Task { _ = await model.downloads.pauseAll() } } label: { Label("全部暂停", systemImage: "pause.fill") }
@@ -68,7 +70,7 @@ struct DownloadsView: View {
             .padding(.top, 6)
             .padding(.bottom, 28)
         }
-        .navigationTitle("下载")
+        .navigationTitle(embedded ? "我的" : "下载")
         .transparentToolbar()
         .sheet(isPresented: $showStorage) { StorageSheet().environment(model) }
         .task(id: model.downloadTasks.filter { $0.status == .completed }.count) {

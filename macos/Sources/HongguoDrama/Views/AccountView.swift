@@ -30,8 +30,11 @@ final class AccountState {
     /// Reads the App profile for the avatar (read only); a failure keeps the initial-letter circle.
     func loadAvatar() async {
         let id = profile?.id
-        guard id != nil, let details = try? await AccountDataAccess.profile(), profile?.id == id else { return }
+        guard let id, let details = try? await AccountDataAccess.profile(), profile?.id == id else { return }
         avatar = details.avatar
+        // The saved nickname is often the placeholder "用户 <number>"; the App profile has the real one.
+        let name = details.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty, name != profile?.nickname { profile = AccountProfile(id: id, nickname: name) }
     }
 }
 

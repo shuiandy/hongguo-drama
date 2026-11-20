@@ -10,6 +10,9 @@ enum SidebarItem: Hashable, Identifiable {
     case feed
     /// 上新日历.
     case calendar
+    /// 我的: history, favourites, likes, reservations and downloads on one page (MeView).
+    case me
+    /// Older pages now inside 我的; selecting one opens 我的 on that tab.
     case history
     case library
     case downloads
@@ -23,6 +26,7 @@ enum SidebarItem: Hashable, Identifiable {
         case .search: return "search"
         case .feed: return "feed"
         case .calendar: return "calendar"
+        case .me: return "me"
         case .history: return "history"
         case .library: return "library"
         case .downloads: return "downloads"
@@ -37,6 +41,7 @@ enum SidebarItem: Hashable, Identifiable {
         case .search: return "搜索"
         case .feed: return "热播推荐"
         case .calendar: return "上新日历"
+        case .me: return "我的"
         case .history: return "观看记录"
         case .library: return "我的剧库"
         case .downloads: return "下载"
@@ -64,6 +69,7 @@ enum SidebarItem: Hashable, Identifiable {
         case "search": self = .search
         case "feed": self = .feed
         case "calendar": self = .calendar
+        case "me": self = .me
         case "history": self = .history
         case "library": self = .library
         case "downloads": self = .downloads
@@ -81,6 +87,7 @@ enum SidebarItem: Hashable, Identifiable {
         case .search: return "magnifyingglass"
         case .feed: return "sparkles.tv"
         case .calendar: return "calendar"
+        case .me: return "person.crop.circle"
         case .history: return "clock.arrow.circlepath"
         case .library: return "heart"
         case .downloads: return "arrow.down.circle"
@@ -103,12 +110,29 @@ final class AppModel {
 
     var selection: SidebarItem? = .category(.realDrama) {
         didSet {
+            if let tab = Self.meTab(for: selection) {
+                meTab = tab
+                selection = .me
+                return
+            }
             if showingSettings, selection != oldValue { showingSettings = false }
             guard let key = selection?.persistKey, key != settings.lastPage else { return }
             settings.lastPage = key
         }
     }
+    /// The tab open on 我的.
+    var meTab: MeTab = .history
     var paths: [SidebarItem: [SeriesSummary]] = [:]
+
+    /// The 我的 tab an older page maps to, or nil for any other page.
+    static func meTab(for item: SidebarItem?) -> MeTab? {
+        switch item {
+        case .history: return .history
+        case .library: return .favorites
+        case .downloads: return .downloads
+        default: return nil
+        }
+    }
     var settings: AppSettings {
         didSet {
             guard settings != oldValue else { return }
@@ -169,7 +193,8 @@ final class AppModel {
         ByteVC2Converter.configure(enabled: settings.byteVC2Conversion, fast: settings.fastConversion)
         // A broken manual proxy falls back to a direct connection so the window can still open.
         do { try NetworkProxy.shared.apply(settings.proxy) } catch { proxyStartupError = describe(error) }
-        selection = Self.startSelection(settings)
+        let start = Self.startSelection(settings)
+        if let tab = Self.meTab(for: start) { meTab = tab; selection = .me } else { selection = start }
         history = LibraryStore.shared.history()
         downloads = DownloadManager(configuration: Self.downloadConfiguration(settings))
         refreshLibrary()

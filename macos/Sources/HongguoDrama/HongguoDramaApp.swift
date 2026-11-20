@@ -72,6 +72,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    /// Coming back to the app (say after watching on the phone) brings the account's progress,
+    /// favourites and likes in; syncCloudHistory itself waits a minute between runs.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Task { @MainActor in await AppModel.shared.syncCloudHistory() }
+    }
+
     /// Settings is a sheet on the main window, and AppKit refuses to quit while a sheet is up
     /// (⌘Q beeps, a quit request from outside is answered "cancelled"). Both the menu command and
     /// the quit Apple event come here: take the sheet down first, then quit.

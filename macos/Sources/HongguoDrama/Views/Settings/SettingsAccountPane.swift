@@ -68,7 +68,15 @@ struct SettingsAccountPane: View {
         let sync = AccountSync.shared
         let extra = model.settings.accountWriteSync && sync.lastPull > .distantPast
             ? " · 账号收藏 \(sync.cloudFavoriteCount) 部 · 点赞 \(sync.cloudLikeCount) 集" : ""
-        return "\(time) · 观看记录 \(model.lastCloudSyncCount) 条\(extra)"
+        var progress = ""
+        if model.settings.accountWriteSync {
+            if !sync.progressError.isEmpty {
+                progress = " · 进度上传失败：\(sync.progressError)"
+            } else if sync.lastProgressUpload > .distantPast {
+                progress = " · 进度 \(sync.lastProgressUpload.formatted(.relative(presentation: .named)))已上传"
+            }
+        }
+        return "\(time) · 观看记录 \(model.lastCloudSyncCount) 条\(extra)\(progress)"
     }
 
     private func openLoginPage() {

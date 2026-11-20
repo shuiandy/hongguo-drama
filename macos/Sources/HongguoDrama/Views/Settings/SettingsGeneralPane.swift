@@ -28,9 +28,9 @@ struct SettingsGeneralPane: View {
                 Picker("打开时显示", selection: $model.settings.startPage) {
                     Text("上次的页面").tag("last")
                     Text("发现").tag("discover")
-                    Text("观看记录").tag("history")
-                    Text("我的剧库").tag("library")
-                    Text("下载").tag("downloads")
+                    Text("我的 · 历史").tag("history")
+                    Text("我的 · 收藏").tag("library")
+                    Text("我的 · 下载").tag("downloads")
                 }
             }
 

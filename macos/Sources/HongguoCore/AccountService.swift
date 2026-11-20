@@ -9,6 +9,7 @@ import Security
 public struct AccountProfile: Codable, Equatable, Sendable {
     public var id: String
     public var nickname: String
+    public init(id: String, nickname: String) { self.id = id; self.nickname = nickname }
 }
 
 /// One row of the account's App watch history.
