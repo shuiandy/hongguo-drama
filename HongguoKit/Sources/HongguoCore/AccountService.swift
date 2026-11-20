@@ -179,7 +179,11 @@ public actor AccountService {
         }
         self.identity = identity ?? { try await PersistentAppDevice.shared.get(transport: transport) }
         // Tests inject the identity and send no device token.
-        self.deviceToken = identity == nil ? { await PersistentAppDevice.shared.dTokenValue() } : { "" }
+        if identity == nil {
+            self.deviceToken = { await PersistentAppDevice.shared.dTokenValue() }
+        } else {
+            self.deviceToken = { "" }
+        }
     }
 
     // MARK: Parsing (pure)
