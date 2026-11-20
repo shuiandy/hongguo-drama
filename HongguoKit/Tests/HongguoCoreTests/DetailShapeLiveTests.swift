@@ -256,6 +256,131 @@ final class DetailShapeLiveTests: XCTestCase {
         print("ROUTES\n" + report.joined(separator: "\n"))
     }
 
+    /// The persistent device and the two signing styles the official-route probes use.
+    private struct OfficialProbe {
+        let transport = AppTransport(http: .shared)
+        let identity: PlaybackIdentity
+        let dToken: [(String, String)]
+        var dTokenValue: String { dToken.first { $0.0.lowercased() == "x-tt-dt" }?.1 ?? "" }
+
+        static func make() async throws -> OfficialProbe {
+            let transport = AppTransport(http: .shared)
+            let identity = try await PersistentAppDevice.shared.get(transport: transport)
+            return OfficialProbe(identity: identity, dToken: await PersistentAppDevice.shared.dTokenHeaders())
+        }
+
+        /// GET on sinfonlineb with the legacy query signature the bookapi reads use.
+        func get(_ path: String, _ values: [(String, String)]) async throws -> JSONValue {
+            let signer = AppLegacySigner.shared
+            let device = AppLegacySigner.merged(AppLegacySigner.versioned("72232", "7.2.2.32"),
+                                                [("iid", identity.iid), ("device_id", identity.deviceId), ("cdid", identity.cdid)])
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            let ts = UInt32(now / 1000)
+            let fields = AppLegacySigner.merged(values, device)
+            for n in 0..<128 {
+                let ticket = String(now + Int64(n))
+                let query = AppCrypto.encodeQuery(fields + [("ts", String(ts)), ("_rticket", ticket)])
+                let url = "https://api5-normal-sinfonlineb.fqnovel.com\(path)?\(query)"
+                guard AppLegacySigner.branch(querySm3: AppCrypto.sm3(Array(query.utf8)), bodyMd5: [UInt8](repeating: 0, count: 16), ts: ts) == 0 else { continue }
+                let headers: [(String, String)] = [
+                    ("User-Agent", AppLegacySigner.searchUA), ("Accept", "application/json; charset=utf-8,application/x-protobuf"),
+                    ("x-ss-req-ticket", ticket), ("x-tt-request-tag", "t=0;n=0"), ("sdk-version", "2"),
+                    ("passport-sdk-version", "50561"), ("x-xs-from-web", "0"), ("x-khronos", String(ts)),
+                    ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
+                    ("x-gorgon", AppLegacySigner.xGorgon(query: query, body: nil, ts: ts, random: signer.random32() >> 16)),
+                    ("x-helios", signer.helios(ts: ts)),
+                    ("x-medusa", try signer.medusa(url: url, body: nil, ts: ts, deviceId: identity.deviceId, versionName: "7.2.2.32", nowMillis: now)),
+                    ("x-tt-dt", dTokenValue),
+                ]
+                return try await transport.requestJSON(url, headers: headers, deadline: Date().addingTimeInterval(10))
+            }
+            throw HongguoError(.format, "no legacy signature branch")
+        }
+
+        /// V5-signed gzipped POST on sinfonlineb with the iOS 7.4.3 profile.
+        func post(_ path: String, _ body: [String: Any]) async throws -> JSONValue {
+            let payload = try AppCrypto.gzip(Array(try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])))
+            let signed = try PlaybackSignerV5.shared.sign(
+                base: "https://api5-normal-sinfonlineb.fqnovel.com\(path)",
+                values: AppSource.iosProfile + [("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId)],
+                body: payload, nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
+            return try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers + [
+                ("User-Agent", AppSource.iosPlayerUA), ("Accept", "application/json"),
+                ("Content-Type", "application/json; charset=utf-8"), ("Content-Encoding", "gzip"),
+                ("x-ss-dp", "8662"), ("sdk-version", "2"),
+            ] + dToken, body: payload, deadline: Date().addingTimeInterval(10))
+        }
+    }
+
+    /// The series id to probe: `HONGGUO_SID`, else the first App search result for `HONGGUO_PROBE`.
+    private func probeSeriesId() async throws -> String {
+        let env = ProcessInfo.processInfo.environment
+        if let sid = env["HONGGUO_SID"], sid.matchesDigits(min: 6, max: 30) { return sid }
+        guard let first = try await AppSearchService().search(env["HONGGUO_PROBE"] ?? "入学第一天").results.first else {
+            throw XCTSkip("set HONGGUO_SID")
+        }
+        return first.seriesId
+    }
+
+    /// A key tree of `value`: names, types and list lengths; scalar values only for count-like keys
+    /// (likes, favourites, episode counts, flags), other strings as their length. Ids are masked.
+    static func tree(_ value: JSONValue, name: String = "", depth: Int = 0, mask: [String: String] = [:], into lines: inout [String]) {
+        let pad = String(repeating: "  ", count: depth)
+        var label = name
+        for (raw, alias) in mask where !raw.isEmpty { label = label.replacingOccurrences(of: raw, with: alias) }
+        let lowered = name.lowercased()
+        let countLike = ["cnt", "count", "digg", "like", "collect", "favor", "num", "score", "status", "type", "has_", "is_", "index", "total", "rank", "heat", "hot"]
+            .contains { lowered.contains($0) } && !lowered.contains("url")
+        guard lines.count < 160 else { return }
+        if let object = value.object {
+            lines.append("\(pad)\(label) {\(object.count)}")
+            guard depth < 6 else { return }
+            for key in object.keys.sorted().prefix(40) { tree(object[key]!, name: key, depth: depth + 1, mask: mask, into: &lines) }
+        } else if let array = value.array {
+            lines.append("\(pad)\(label) [\(array.count)]")
+            if let first = array.first, depth < 6 { tree(first, name: "[0]", depth: depth + 1, mask: mask, into: &lines) }
+        } else if let number = value.number {
+            lines.append("\(pad)\(label) = \(countLike ? String(number) : "<number>")")
+        } else if let text = value.string {
+            let shown = countLike && text.count <= 20 && !mask.keys.contains(text) ? "\"\(text)\"" : "<\(text.count)ch>"
+            lines.append("\(pad)\(label) = \(shown)")
+        } else if let flag = value.bool {
+            lines.append("\(pad)\(label) = \(flag)")
+        } else {
+            lines.append("\(pad)\(label) = null")
+        }
+    }
+
+    /// `--filter DetailShapeLiveTests/testOfficialDetailTrees`: the full key trees of the two
+    /// official routes that answered in `testOfficialFieldNames` (GET video_tab/multi_video_detail and
+    /// POST multi_video_data/get), to see whether they carry the episode list and the like counts.
+    /// One website page for a vid plus two App requests.
+    func testOfficialDetailTrees() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["HONGGUO_LIVE"] == "1", "set HONGGUO_LIVE=1 to run")
+        let seriesId = try await probeSeriesId()
+        let page = try await SitePages.seriesPage(seriesId)
+        let vids = page["seriesDetail"]["vid_list"].array?.compactMap(\.idString) ?? []
+        let probe = try await OfficialProbe.make()
+        var mask = [seriesId: "<sid>"]
+        for (n, vid) in vids.prefix(400).enumerated() { mask[vid] = "<vid\(n + 1)>" }
+        var lines = ["web vid_list=\(vids.count) favorites=\(EpisodeSocialService.integer(page["seriesSocialInfo"]["series_favorite_count"]) ?? -1)"]
+        do {
+            let json = try await probe.get("/reading/bookapi/video_tab/multi_video_detail/v1/",
+                                           [("video_series_id", seriesId), ("vs_id_type", "0"), ("source", "0")])
+            lines.append("== GET video_tab/multi_video_detail")
+            Self.tree(json["data"], name: "data", mask: mask, into: &lines)
+        } catch { lines.append("GET video_tab/multi_video_detail: \(error)") }
+        try await Task.sleep(for: .seconds(1))
+        if let vid = vids.first {
+            do {
+                let json = try await probe.post("/reading/bookapi/multi_video_data/get/v1/", ["vid_series_id": [vid: seriesId]])
+                lines.append("== POST multi_video_data/get (episode 1)")
+                Self.tree(json["data"], name: "data", mask: mask, into: &lines)
+            } catch { lines.append("POST multi_video_data/get: \(error)") }
+        }
+        print("TREES\n" + lines.joined(separator: "\n"))
+    }
+
     /// `--filter DetailShapeLiveTests/testOfficialFieldNames` (optional `HONGGUO_SID` or `HONGGUO_PROBE`):
     /// the series detail, album and video data routes asked with the field names the official 7.4.3
     /// binary's request classes declare (`SSVideoDetailRequest.video_series_id/vs_id_type/source`,
