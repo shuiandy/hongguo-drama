@@ -21,11 +21,15 @@ public struct EpisodeSocial: Sendable, Equatable {
         }
     }
 
-    public struct CastMember: Sendable, Equatable, Identifiable {
+    public struct CastMember: Sendable, Hashable, Identifiable {
         public var id: String
         public var name: String
         public var role: String
         public var avatar: String
+        /// The actor's own introduction, "" when there is none.
+        public var intro: String = ""
+        /// `encrypted_celebrity_id`, the key of the actor works read; "" when the reply has none.
+        public var encryptedId: String = ""
     }
 
     public var seriesId: String
@@ -256,7 +260,9 @@ public enum EpisodeSocialService {
             guard seen.insert(id).inserted else { return nil }
             let subtitle = (person["sub_title"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return .init(id: id, name: name, role: subtitle.isEmpty ? (person["role_name"].string ?? "") : subtitle,
-                         avatar: secure(person["avatar"].string ?? ""))
+                         avatar: secure(person["avatar"].string ?? ""),
+                         intro: String((person["intro"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(2000)),
+                         encryptedId: (person["encrypted_celebrity_id"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
         }
     }
 }

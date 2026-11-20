@@ -101,8 +101,12 @@ public struct PublicDetails: Sendable {
     public var favoriteCount: Int?
     public var reviewTotal: Int?
     public var reviews: [Review]
-    /// Public first-release time, when the page gives one.
+    /// Public first-release time, when the App gives one.
     public var publishedAt: Date? = nil
+    /// The cast, empty for series without one (most comic dramas).
+    public var cast: [EpisodeSocial.CastMember] = []
+    /// Category names from the App detail, e.g. 年代, 家庭伦理.
+    public var tags: [String] = []
 }
 
 public enum PlaySource: String, Sendable { case web, api, app }

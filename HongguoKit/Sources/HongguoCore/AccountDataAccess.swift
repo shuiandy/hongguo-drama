@@ -570,9 +570,10 @@ extension AppLegacySigner {
         return try signedRead(host: Self.accountHost, path: path, values: values, identity: identity, dToken: dToken, nowMillis: nowMillis)
     }
 
-    /// The signed-out series detail read (`OfficialSeriesDetail`), on the host the probe verified.
+    /// The signed-out series detail read (`OfficialSeriesDetail`) and actor works read
+    /// (`CelebrityService`), on the host the probe verified.
     func videoTab(path: String, values: [(String, String)], identity: PlaybackIdentity, dToken: String, nowMillis: Int64) throws -> Signed {
-        guard path == OfficialSeriesDetail.path else { throw HongguoError(.input, "不支持的剧集接口") }
+        guard path == OfficialSeriesDetail.path || path == CelebrityService.path else { throw HongguoError(.input, "不支持的剧集接口") }
         return try signedRead(host: "https://api5-normal-sinfonlineb.fqnovel.com", path: path, values: values,
                               identity: identity, dToken: dToken, nowMillis: nowMillis)
     }

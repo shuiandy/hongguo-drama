@@ -107,7 +107,8 @@ public final class SeriesService: Sendable {
                              episodeLabel: detail.episodeLabel, completionStatus: detail.completion,
                              rating: reviews?.rating, ratingCount: reviews?.ratingCount,
                              likeCount: detail.likeCount, favoriteCount: detail.favoriteCount,
-                             reviewTotal: reviews?.page.total, reviews: list, publishedAt: published)
+                             reviewTotal: reviews?.page.total, reviews: list, publishedAt: published,
+                             cast: detail.cast, tags: detail.tags)
     }
 
     // MARK: Share links
