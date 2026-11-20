@@ -16,18 +16,26 @@ public struct PlatformBehavior: Sendable, Equatable {
     /// `SeriesService.playInfo` tries the website's fallback channel (360p H.264) right after the
     /// fast App source.
     public var websiteFallbackChannel: Bool
+    /// `SeriesService` asks `AuthenticatedPlaybackSource` (the iOS app's source: official iOS 7.4.3
+    /// profile, persistent device with its token, model disk cache) first, for lookups, warm-up and
+    /// prefetch, and keeps its own order after it. Off for the iOS app, whose `EpisodeResolver`
+    /// already asks that source first and uses `SeriesService` only as the fallback.
+    public var authenticatedSourceFirst: Bool
 
     public init(clientProfile: AppClientProfile, proxyPolicy: URLGuard.ProxyPolicy,
-                persistentDataDevice: Bool, websiteFallbackChannel: Bool) {
+                persistentDataDevice: Bool, websiteFallbackChannel: Bool, authenticatedSourceFirst: Bool = false) {
         self.clientProfile = clientProfile
         self.proxyPolicy = proxyPolicy
         self.persistentDataDevice = persistentDataDevice
         self.websiteFallbackChannel = websiteFallbackChannel
+        self.authenticatedSourceFirst = authenticatedSourceFirst
     }
 
-    /// The Mac app (the default).
+    /// The Mac app (the default). Since 2026-11-20 it asks the iOS app's source first: the Mac's own
+    /// order fell back to the 360p website channel after empty replies, about 13 s to the first frame.
     public static let mac = PlatformBehavior(clientProfile: .android, proxyPolicy: .strict,
-                                             persistentDataDevice: false, websiteFallbackChannel: true)
+                                             persistentDataDevice: false, websiteFallbackChannel: true,
+                                             authenticatedSourceFirst: true)
     /// The iOS app as of iOS HEAD 382e2c2 (2026-11-20). The tvOS app starts from this too.
     public static let iOS = PlatformBehavior(clientProfile: .ios, proxyPolicy: .mobileProxy,
                                              persistentDataDevice: true, websiteFallbackChannel: false)

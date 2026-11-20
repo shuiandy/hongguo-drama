@@ -23,6 +23,7 @@ PlatformBehavior.current = .iOS   // iOS 和 tvOS App；Mac 不用设
 | `proxyPolicy` | `.strict`：只有 Fake-IP 算代理地址，都要等 DoH（4 秒），缓存 60 秒 | `.mobileProxy`：ULA 也算；红果自己的 https 域名先放行、后台用 DoH 复核（复核不是公网就从此拦截），其他域名照样等 DoH（2 秒），缓存最长 300 秒 |
 | `persistentDataDevice` | 否：目录、书城、发现、账号、评论用固定或搜索设备 | 是：用 `PersistentAppDevice`（钥匙串，6 小时续期，带 `x-tt-dt`），登录后带 Cookie |
 | `websiteFallbackChannel` | 是：快速 App 源之后试官网备用通道（360p H.264） | 否 |
+| `authenticatedSourceFirst` | 是：`SeriesService` 取源、预热、预取都先走 iOS 的 `AuthenticatedPlaybackSource`（iOS 7.4.3 配置、持久设备、模型磁盘缓存），失败再走 Mac 原来的链 | 否：iOS 的 `EpisodeResolver` 自己先走它，`SeriesService` 只做兜底 |
 
 调用方显式传的参数（例如 `playbackRequest(iosProfile:)`）总是优先。
 

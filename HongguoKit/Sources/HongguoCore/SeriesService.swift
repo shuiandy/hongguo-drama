@@ -125,7 +125,8 @@ public final class SeriesService: Sendable {
 
     // MARK: Play URL
 
-    /// Resolves a playable URL. Order: the fast App source (one anonymous device kept in memory,
+    /// Resolves a playable URL. Order: with `PlatformBehavior.authenticatedSourceFirst` the iOS app's
+    /// source (`AuthenticatedPlaybackSource`) first; then the fast App source (one anonymous device kept in memory,
     /// signed player/v1; an empty reply is asked again at once), then the website's fallback channel, then the queued App source with
     /// its legacy signature, then the legacy preload API, and the official web page last.
     /// The web page comes last because it answers with a preview or 404 for nearly every
@@ -142,6 +143,22 @@ public final class SeriesService: Sendable {
         let key = "\(seriesId ?? ""):\(vid)"
         if !force, let cached = await playCache.get(key) { return cached }
         var failures: [String] = []
+        if PlatformBehavior.current.authenticatedSourceFirst {
+            let started = Date()
+            do {
+                let resolved = try await AuthenticatedPlaybackSource.shared.resolveWithMeta(vid: vid, force: force)
+                AccountDataAccess.onWriteLog?("play via ios source ok route=\(resolved.route) ms=\(Int(Date().timeIntervalSince(started) * 1000))")
+                await playCache.set(key, resolved.info, ttl: 30)
+                return resolved.info
+            } catch is CancellationError {
+                throw HongguoError(.cancelled, "已取消 App 片源请求")
+            } catch let error as HongguoError where error.kind == .cancelled {
+                throw error
+            } catch {
+                AccountDataAccess.onWriteLog?("play via ios source failed ms=\(Int(Date().timeIntervalSince(started) * 1000)): \(Self.describe(error).prefix(60))")
+                failures.append("App（iOS 通道）：\(Self.describe(error))")
+            }
+        }
         var refused = false
         let appPaused = await appPlayPaused.get("app") == true
         var empty = false
@@ -218,14 +235,22 @@ public final class SeriesService: Sendable {
     /// Registers the anonymous playback device ahead of the first episode, so that episode does
     /// not wait for the registration (about half a second).
     public func warmUpPlayback() async {
-        await fastSource.warmUpIdentity()
+        if PlatformBehavior.current.authenticatedSourceFirst {
+            await AuthenticatedPlaybackSource.shared.warmUpIdentity()
+        } else {
+            await fastSource.warmUpIdentity()
+        }
     }
 
     /// Asks for the play models of up to 6 episodes in one request, for episodes the viewer is
     /// likely to pick next. Best effort: it steps aside for a viewer's own lookup and pauses for
     /// 30 seconds after an empty reply.
     public func prefetchPlayInfo(vids: [String]) async {
-        await fastSource.prefetchBatch(vids: vids)
+        if PlatformBehavior.current.authenticatedSourceFirst {
+            await AuthenticatedPlaybackSource.shared.prefetchBatch(vids: vids)
+        } else {
+            await fastSource.prefetchBatch(vids: vids)
+        }
     }
 
     /// One quiet try at an episode's source for prefetching: the fast App source only, no retry
@@ -234,6 +259,11 @@ public final class SeriesService: Sendable {
         guard vid.matchesDigits(min: 1, max: 30) else { return nil }
         let key = "\(seriesId ?? ""):\(vid)"
         if let cached = await playCache.get(key) { return cached }
+        if PlatformBehavior.current.authenticatedSourceFirst {
+            let source = AuthenticatedPlaybackSource.shared
+            if let hit = await source.cachedPlayInfoWithMeta(vid: vid) { return hit.info }
+            return try? await source.resolveWithMeta(vid: vid, allowRecovery: false).info
+        }
         return try? await fastSource.resolve(vid: vid)
     }
 

@@ -39,8 +39,16 @@ public final class VideoModelDiskCache: @unchecked Sendable {
 
     public static func defaultFileURL() -> URL? {
         guard !isMacTestRunner else { return nil }
-        return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("video-model-cache.json")
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
+        #if os(macOS)
+        // Not sandboxed on the Mac: keep it with the app's other caches.
+        let folder = caches.appendingPathComponent("HongguoDrama", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        return folder.appendingPathComponent("video-model-cache.json")
+        #else
+        return caches.appendingPathComponent("video-model-cache.json")
+        #endif
     }
 
     public func load(vid: String, now: Date = Date()) -> PlayInfo? {
