@@ -80,7 +80,8 @@ public enum EpisodeSocialService {
 
     public struct IncompleteEpisodeList: LocalizedError {
         public let expectedCount: Int
-        public var errorDescription: String? { "剧集详情分集列表不完整" }
+        public var receivedCount = 0
+        public var errorDescription: String? { "剧集详情分集列表不完整（\(receivedCount)/\(expectedCount)）" }
     }
 
     /// Returns the series' episode list via the signed App `multi_video_detail/v1/` endpoint
@@ -89,7 +90,7 @@ public enum EpisodeSocialService {
         guard seriesId.matchesDigits(min: 1, max: 30) else { throw HongguoError(.input, "无效的剧集编号") }
         let detail = try await fetchAppSeriesDetail(seriesId: seriesId, http: http)
         guard isCompleteEpisodeList(detail.episodeList.map(\.index), declaredCount: detail.episodeCount) else {
-            throw IncompleteEpisodeList(expectedCount: detail.episodeCount)
+            throw IncompleteEpisodeList(expectedCount: detail.episodeCount, receivedCount: detail.episodeList.count)
         }
         return SeriesEpisodes(
             seriesId: seriesId,

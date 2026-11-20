@@ -16,14 +16,18 @@ final class SourceLiveTests: XCTestCase {
         let series = SeriesService()
         let catalog = try await CatalogService().browse(kind: .hotDrama)
         var picked: SeriesEpisodes?
+        var report: [String] = []
         for summary in catalog.results.prefix(5) {
-            if let list = try? await series.episodes(seriesId: summary.seriesId), list.episodes.count >= 12 {
-                picked = list
-                break
+            let started = Date()
+            do {
+                let list = try await series.episodes(seriesId: summary.seriesId)
+                report.append("episodes: \(list.episodes.count) in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
+                if list.episodes.count >= 12 { picked = list; break }
+            } catch {
+                report.append("episodes: failed \(Int(Date().timeIntervalSince(started) * 1000)) ms, \((error as? LocalizedError)?.errorDescription ?? "\(error)")")
             }
         }
-        let list = try XCTUnwrap(picked, "no ranked series with 12 episodes")
-        var report: [String] = []
+        let list = try XCTUnwrap(picked, "no ranked series with 12 episodes\n" + report.joined(separator: "\n"))
         let warmStart = Date()
         await series.warmUpPlayback()
         report.append("warm-up: \(Int(Date().timeIntervalSince(warmStart) * 1000)) ms")
