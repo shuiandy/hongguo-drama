@@ -423,22 +423,8 @@ final class AppModel {
     /// seconds and keeps this Mac's record (playback does not wait on a slow network).
     func syncCloudPosition(seriesId: String, timeout: Double = 3) async {
         guard settings.cloudHistorySync, SourceRouter.isHongguo(seriesId) else { return }
-        guard let row = await Self.cloudRow(seriesId: seriesId, timeout: timeout) else { return }
+        guard let row = await AccountService.shared.latestHistoryRow(seriesId: seriesId, timeout: timeout) else { return }
         if store.mergeCloudHistory([row]) > 0 { refreshHistory() }
-    }
-
-    private nonisolated static func cloudRow(seriesId: String, timeout: Double) async -> AccountHistoryItem? {
-        let once = ResumeOnce()
-        return await withCheckedContinuation { (continuation: CheckedContinuation<AccountHistoryItem?, Never>) in
-            let lookup = Task {
-                let row = try? await AccountService.shared.latestHistoryRow(seriesId: seriesId)
-                if once.claim() { continuation.resume(returning: row) }
-            }
-            Task {
-                try? await Task.sleep(for: .seconds(timeout))
-                if once.claim() { lookup.cancel(); continuation.resume(returning: nil) }
-            }
-        }
     }
 
     func syncCloudHistory(force: Bool = false, manual: Bool = false) async {
@@ -640,16 +626,4 @@ final class AppModel {
 
 func describe(_ error: Error) -> String {
     (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-}
-
-/// Lets exactly one of several racing tasks resume a continuation.
-final class ResumeOnce: @unchecked Sendable {
-    private let lock = NSLock()
-    private var done = false
-    func claim() -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        if done { return false }
-        done = true
-        return true
-    }
 }

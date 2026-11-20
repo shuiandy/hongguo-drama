@@ -514,6 +514,12 @@ public actor AccountService {
         return cachedHistory?.first { $0.seriesId == seriesId }
     }
 
+    /// `latestHistoryRow` for the moment before playback starts: never throws, and gives up with nil
+    /// after `timeout` seconds so a slow network never holds up the first frame.
+    public nonisolated func latestHistoryRow(seriesId: String, timeout: Double) async -> AccountHistoryItem? {
+        await withDeadline(timeout) { try? await self.latestHistoryRow(seriesId: seriesId) }
+    }
+
     private func historyPage(_ cursor: HistoryCursor, cookie: String, token: Int) async throws -> HistoryPage? {
         let device = try await identity()
         guard token == generation else { return nil }
@@ -530,5 +536,32 @@ public actor AccountService {
     /// The account's history row for one series, from the last fetched history.
     public func historyRow(seriesId: String) -> AccountHistoryItem? {
         cachedHistory?.first { $0.seriesId == seriesId }
+    }
+}
+
+/// Runs `work` and returns its value, or nil once `seconds` pass first. Unlike a task group it does
+/// not wait for a slow request to notice cancellation before returning.
+func withDeadline<T: Sendable>(_ seconds: Double, _ work: @escaping @Sendable () async -> T?) async -> T? {
+    let once = DeadlineOnce()
+    return await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
+        let task = Task {
+            let value = await work()
+            if once.claim() { continuation.resume(returning: value) }
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
+            if once.claim() { task.cancel(); continuation.resume(returning: nil) }
+        }
+    }
+}
+
+private final class DeadlineOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if done { return false }
+        done = true
+        return true
     }
 }

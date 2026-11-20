@@ -36,10 +36,14 @@ final class HistorySyncTests: XCTestCase {
     }
 
     func signedIn(_ history: @escaping @Sendable (String) -> JSONValue) -> AccountService {
+        signedIn(slow: { url in history(url) })
+    }
+
+    func signedIn(slow history: @escaping @Sendable (String) async throws -> JSONValue) -> AccountService {
         let store = MemoryCredentialStore(AccountCredentials(cookie: "sessionid=s3cret", profile: AccountProfile(id: "1234567", nickname: "小红")))
         return AccountService(store: store, webRequest: { url, _ in
             HTTPResponse(data: Data(#"{"message":"success","data":{"user_id_str":"1234567","name":"小红"}}"#.utf8), status: 200, headers: [:], url: url)
-        }, accountRequest: { url, _ in history(url) }, identity: {
+        }, accountRequest: { url, _ in try await history(url) }, identity: {
             PlaybackIdentity(deviceId: "1234567890123456789", iid: "2234567890123456789", cdid: "01234567-89ab-cdef-0123-456789abcdef")
         })
     }
@@ -134,6 +138,21 @@ final class HistorySyncTests: XCTestCase {
         let older = try await account.latestHistoryRow(seriesId: two)
         XCTAssertEqual(older?.seriesId, two, "a series past the first page falls back to the last full refresh")
         XCTAssertEqual(calls.all.count, 3, "one request per lookup, first page only")
+    }
+
+    func testLatestRowBeforePlaybackGivesUpAfterTheTimeout() async throws {
+        let one = Self.id("72000000000000", 1)
+        let slow = signedIn(slow: { _ in
+            try await Task.sleep(nanoseconds: 3_000_000_000)
+            return Self.page([Self.row(1, at: Self.base)], hasMore: false, next: 1)
+        })
+        let started = Date()
+        let none = await slow.latestHistoryRow(seriesId: one, timeout: 0.2)
+        XCTAssertNil(none)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2, "returns at the deadline, not when the request ends")
+        let fast = signedIn { _ in Self.page([Self.row(1, at: Self.base, index: 4)], hasMore: false, next: 1) }
+        let row = await fast.latestHistoryRow(seriesId: one, timeout: 3)
+        XCTAssertEqual(row?.episodeIndex, 4)
     }
 
     func testLatestRowIsNilWhenSignedOut() async throws {
