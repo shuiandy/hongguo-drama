@@ -248,6 +248,9 @@ public actor FastAppPlaybackSource {
             "dr_scene": "player",
         ]
         let payload = Array(try JSONSerialization.data(withJSONObject: payloadObject, options: [.sortedKeys]))
+        if let viaAccount = await requestModelsWithAccount(payload: payload, deadline: deadline) {
+            return viaAccount
+        }
         var obtained = try await getIdentity(forceFresh: false)
         try Task.checkCancellationAsApp()
 
@@ -290,10 +293,43 @@ public actor FastAppPlaybackSource {
             }
         }
 
+        return Self.modelData(response)
+    }
+
+    private static func modelData(_ response: JSONValue) -> JSONValue {
         let data = response["data"]
         if !data["1004"].isNull { return data["1004"] }
         if !data["video_model_data"].isNull { return data["video_model_data"] }
         return data
+    }
+
+    /// After the signed-in path came back empty or refused, use the anonymous device only for a while.
+    private var accountPlaybackPausedUntil = Date.distantPast
+
+    /// When signed in: the same request with the account's registered device (the one account reads
+    /// use) and the login cookie, as the official app sends it. nil when signed out, paused, or the
+    /// reply was not usable; the caller then uses the anonymous playback device.
+    private func requestModelsWithAccount(payload: [UInt8], deadline: Date) async -> JSONValue? {
+        guard Date() >= accountPlaybackPausedUntil,
+              let saved = try? KeychainCredentialStore().load(), !saved.cookie.isEmpty,
+              let identity = try? await AppSearchIdentity.shared.get(transport: transport) else { return nil }
+        do {
+            let signed = try AppSource.shared.playbackRequest(payload: payload, identity: identity, modern: true)
+            let response = try await transport.requestJSON(signed.url, method: "POST",
+                                                           headers: signed.headers + [("Cookie", saved.cookie)],
+                                                           body: signed.body, deadline: deadline)
+            guard (response["Code"].number ?? response["code"].number ?? 0) == 0 else {
+                throw AppSourceError(.businessRejected, "App 接口暂未提供本集播放信息")
+            }
+            AccountDataAccess.onWriteLog?("play via account ok")
+            return Self.modelData(response)
+        } catch let error as AppSourceError where error.code == .cancelled {
+            return nil
+        } catch {
+            AccountDataAccess.onWriteLog?("play via account failed: \((error as? AppSourceError)?.code.rawValue ?? "other")")
+            accountPlaybackPausedUntil = Date().addingTimeInterval(120)
+            return nil
+        }
     }
 
     private func extractModel(from entry: JSONValue) -> JSONValue {
