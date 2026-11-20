@@ -266,18 +266,18 @@ public actor FastAppPlaybackSource {
         for attempt in 0..<2 {
             try Task.checkCancellationAsApp()
             do {
+                // The official iOS 7.4.3 profile on its scene route first (answers since 2026-11-20 where
+                // the Android profile gets empty replies), then the Android profile on the plain route.
                 let signed = try await AppSource.shared.playbackRequest(payload: payload, identity: obtained.identity,
-                                                                        modern: true, alternate: attempt == 1)
+                                                                        modern: true, alternate: attempt == 1, iosProfile: true)
                 do {
                     response = try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers,
                                                                body: signed.body, deadline: deadline)
-                } catch let error as AppSourceError where error.code == .emptyResponse && !obtained.reused && deadline.timeIntervalSinceNow >= 1 {
-                    // Only retry the alternate host with the same identity when the identity is fresh;
-                    // if a reused identity returned empty, skip straight to rotating it below.
-                    let alternate = try await AppSource.shared.playbackRequest(payload: payload, identity: obtained.identity,
-                                                                               modern: true, alternate: attempt == 0)
-                    response = try await transport.requestJSON(alternate.url, method: "POST", headers: alternate.headers,
-                                                               body: alternate.body, deadline: deadline)
+                } catch let error as AppSourceError where error.code == .emptyResponse && deadline.timeIntervalSinceNow >= 1 {
+                    let android = try await AppSource.shared.playbackRequest(payload: payload, identity: obtained.identity,
+                                                                             modern: true, alternate: attempt == 1)
+                    response = try await transport.requestJSON(android.url, method: "POST", headers: android.headers,
+                                                               body: android.body, deadline: deadline)
                 }
                 if (response["Code"].number ?? response["code"].number ?? 0) != 0 {
                     throw AppSourceError(.businessRejected, "App 接口暂未提供本集播放信息")
@@ -328,7 +328,7 @@ public actor FastAppPlaybackSource {
               let saved = try? KeychainCredentialStore().load(), !saved.cookie.isEmpty,
               let identity = try? await AppSearchIdentity.shared.get(transport: transport) else { return nil }
         do {
-            let signed = try await AppSource.shared.playbackRequest(payload: payload, identity: identity, modern: true)
+            let signed = try await AppSource.shared.playbackRequest(payload: payload, identity: identity, modern: true, iosProfile: true)
             let response = try await transport.requestJSON(signed.url, method: "POST",
                                                            headers: signed.headers + [("Cookie", saved.cookie)],
                                                            body: signed.body, deadline: deadline)

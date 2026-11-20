@@ -278,7 +278,7 @@ actor AppSource {
                 } catch let error as AppSourceError {
                     if attempt > 0 || error.code != .emptyResponse || deadline.timeIntervalSinceNow < 1 { throw error }
                     // An empty primary response can recover on the other official host with the same identity.
-                    let alternate = try playbackRequest(payload: payload, identity: identity, modern: true, alternate: true)
+                    let alternate = try playbackRequest(payload: payload, identity: identity, modern: true, alternate: true, iosProfile: true)
                     response = try await transport.requestJSON(alternate.url, method: "POST", headers: alternate.headers,
                                                                body: alternate.body, deadline: deadline)
                 }
