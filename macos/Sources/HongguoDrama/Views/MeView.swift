@@ -127,10 +127,15 @@ enum MeLists {
         let signedIn = AccountState.shared.profile != nil
         let shelf = signedIn ? AccountSync.shared.shelf : []
         let shelfIds = Set(shelf.map(\.seriesId))
+        let records = Dictionary(model.history.map { ($0.seriesId, $0) }, uniquingKeysWith: { first, _ in first })
         var rows = shelf.map { item in
-            let label = item.watchedEpisode > 0 && item.episodeCount > 0
-                ? "看到第 \(min(item.watchedEpisode, item.episodeCount)) 集 / 共 \(item.episodeCount) 集"
-                : (item.episodeCount > 0 ? "全 \(item.episodeCount) 集" : "")
+            // This Mac's history already holds the later of its own and the account's progress;
+            // the shelf's own "watched" field lags behind, so it is only the fallback.
+            let total = max(item.episodeCount, records[item.seriesId]?.total ?? 0)
+            let watched = records[item.seriesId]?.episodeIndex ?? item.watchedEpisode
+            let label = watched > 0 && total > 0
+                ? "看到第 \(min(watched, total)) 集 / 共 \(total) 集"
+                : (total > 0 ? "全 \(total) 集" : "")
             return Favorite(summary: SeriesSummary(seriesId: item.seriesId, title: item.title, cover: item.cover,
                                                    episodeCount: item.episodeCount,
                                                    heat: item.category == "真人剧" ? "" : item.category,

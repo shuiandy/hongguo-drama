@@ -285,8 +285,17 @@ final class AppModel {
     private(set) var libraryRevision = 0
 
     func refreshLibrary() {
-        favorites = library.favorites()
-        recentSeries = library.recent(limit: 60)
+        // A series opened from a sequel link or the account is saved without a cover; the watch
+        // history usually has one.
+        let covers = Dictionary(history.filter { !$0.cover.isEmpty }.map { ($0.seriesId, $0.cover) }, uniquingKeysWith: { first, _ in first })
+        func filled(_ item: LibrarySeries) -> LibrarySeries {
+            guard item.cover.isEmpty, let cover = covers[item.seriesId] else { return item }
+            var copy = item
+            copy.cover = cover
+            return copy
+        }
+        favorites = library.favorites().map(filled)
+        recentSeries = library.recent(limit: 60).map(filled)
         libraryRevision &+= 1
     }
 

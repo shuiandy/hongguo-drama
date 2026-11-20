@@ -403,6 +403,11 @@ struct SeriesDetailView: View {
             self.error = describe(error)
         }
         details = await detailsTask
+        // Opened from a link without a cover: keep the one the page found for the library.
+        if !cover.isEmpty, let kept = model.library.series(seriesId), kept.cover.isEmpty {
+            _ = try? model.library.recordOpened(seriesId: seriesId, title: title, cover: cover)
+            model.refreshLibrary()
+        }
         // Opened from history or search, the summary has no first-release date; the detail page does.
         if summary.publishedAt == nil, let date = details?.publishedAt, let kept = model.library.series(seriesId), kept.publishedAt == nil {
             _ = try? model.library.recordPublishDate(seriesId: seriesId, title: kept.title, publishedAt: date, openedAt: kept.lastOpenedAt)
