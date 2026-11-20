@@ -208,12 +208,16 @@ final class SavedDeviceLiveTests: XCTestCase {
                                                    "use_os_player": false, "need_mp4_align": false],
                                      "mixed_video_id_map": ["1004": [vid]], "dr_scene": "player"]
         let payload = Array(try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))
-        let signed = try await AppSource.shared.playbackRequest(payload: payload, identity: identity, modern: true)
-        var outcome = "ok"
-        do {
-            _ = try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers, body: signed.body,
-                                                deadline: Date().addingTimeInterval(8))
-        } catch let error as AppSourceError { outcome = error.code.rawValue }
-        print("SAVED device (was saved: \(hadSaved)): \(outcome)")
+        var outcomes: [String] = []
+        for ios in [false, true] {
+            let signed = try await AppSource.shared.playbackRequest(payload: payload, identity: identity, modern: true, iosProfile: ios)
+            var outcome = "ok"
+            do {
+                _ = try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers, body: signed.body,
+                                                    deadline: Date().addingTimeInterval(8))
+            } catch let error as AppSourceError { outcome = error.code.rawValue }
+            outcomes.append("\(ios ? "iOS scene path" : "android plain path"): \(outcome)")
+        }
+        print("SAVED device (was saved: \(hadSaved)): " + outcomes.joined(separator: ", "))
     }
 }

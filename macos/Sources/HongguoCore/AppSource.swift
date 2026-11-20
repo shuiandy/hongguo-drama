@@ -205,21 +205,36 @@ actor AppSource {
         }
     }
 
-    func playbackRequest(payload: [UInt8], identity: PlaybackIdentity, modern: Bool, alternate: Bool = false, base override: String? = nil)
+    /// The official iOS 7.4.3 client's `mGetVideoModelV2` route; with the iOS profile below it answers
+    /// where the Android profile gets empty replies (2026-11-20).
+    static let playerSceneAPI = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/player/v1/"
+    static let iosPlayerUA = "Eggplant/7.4.3 (iPhone; iOS 18.3; Scale/3.00)"
+
+    func playbackRequest(payload: [UInt8], identity: PlaybackIdentity, modern: Bool, alternate: Bool = false,
+                         base override: String? = nil, iosProfile: Bool = false, deviceToken: String? = nil)
         throws -> (url: String, headers: [(String, String)], body: [UInt8]) {
         let body = try AppCrypto.gzip(payload)
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         if modern {
-            let base = override ?? (alternate ? Self.playerAPI.replacingOccurrences(of: "sinfonlineb.", with: "sinfonlinea.") : Self.playerAPI)
-            let signed = try PlaybackSignerV5.shared.sign(base: base, values: [
-                ("aid", "8662"), ("app_name", "novelread"), ("version_code", "74332"), ("version_name", "7.4.3.32"),
-                ("channel", "vivo_8662_64"), ("device_platform", "android"), ("device_type", "PGT-AN10"), ("os_version", "12"),
-                ("update_version_code", "74332"), ("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId),
+            let primary = iosProfile ? Self.playerSceneAPI : Self.playerAPI
+            let base = override ?? (alternate ? primary.replacingOccurrences(of: "sinfonlineb.", with: "sinfonlinea.") : primary)
+            let profile: [(String, String)] = iosProfile
+                ? [("aid", "8662"), ("app_name", "novelread"), ("version_code", "74300"), ("version_name", "7.4.3"),
+                   ("channel", "App Store"), ("device_platform", "iphone"), ("device_type", "iPhone17,1"), ("os_version", "18.3"),
+                   ("update_version_code", "74300")]
+                : [("aid", "8662"), ("app_name", "novelread"), ("version_code", "74332"), ("version_name", "7.4.3.32"),
+                   ("channel", "vivo_8662_64"), ("device_platform", "android"), ("device_type", "PGT-AN10"), ("os_version", "12"),
+                   ("update_version_code", "74332")]
+            let signed = try PlaybackSignerV5.shared.sign(base: base, values: profile + [
+                ("iid", identity.iid), ("cdid", identity.cdid), ("device_id", identity.deviceId),
             ], body: body, nowMillis: now)
-            return (signed.url, signed.headers + [
-                ("User-Agent", Self.playerUA), ("Accept", "application/json"),
+            var headers = signed.headers + [
+                ("User-Agent", iosProfile ? Self.iosPlayerUA : Self.playerUA), ("Accept", "application/json"),
                 ("Content-Type", "application/json; charset=utf-8"), ("Content-Encoding", "gzip"),
-            ], body)
+            ]
+            if iosProfile { headers += [("x-ss-dp", "8662"), ("sdk-version", "2")] }
+            if let deviceToken, !deviceToken.isEmpty { headers.append(("x-tt-dt", deviceToken)) }
+            return (signed.url, headers, body)
         }
         let khronos = UInt64(now / 1000)
         var values = Self.playbackDevice
