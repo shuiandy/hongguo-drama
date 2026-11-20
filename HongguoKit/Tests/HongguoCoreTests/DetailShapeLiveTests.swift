@@ -331,7 +331,7 @@ final class DetailShapeLiveTests: XCTestCase {
         let lowered = name.lowercased()
         let countLike = ["cnt", "count", "digg", "like", "collect", "favor", "num", "score", "status", "type", "has_", "is_", "index", "total", "rank", "heat", "hot"]
             .contains { lowered.contains($0) } && !lowered.contains("url")
-        guard lines.count < 160 else { return }
+        guard lines.count < 400 else { return }
         if let object = value.object {
             lines.append("\(pad)\(label) {\(object.count)}")
             guard depth < 6 else { return }
@@ -379,6 +379,70 @@ final class DetailShapeLiveTests: XCTestCase {
             } catch { lines.append("POST multi_video_data/get: \(error)") }
         }
         print("TREES\n" + lines.joined(separator: "\n"))
+    }
+
+    /// `--filter DetailShapeLiveTests/testReviewAndPackRoutes`: the series review list and the
+    /// book_pack_fields read with the values the official 7.4.3 binary sets
+    /// (`-[FQCShortPlayCommentListViewModel configureCommentListRequest:context:]`: group_type 1,
+    /// comment_type 2, comment_source 1, sort 1; `-[SSShortVideoDetailSeriesPublicDataRequest
+    /// performRequestWithCompletion:]`: channel series_detail_info and its six album fields), plus
+    /// one guessed field set for cast and heat. Four App requests. Prints key trees only.
+    func testReviewAndPackRoutes() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["HONGGUO_LIVE"] == "1", "set HONGGUO_LIVE=1 to run")
+        let seriesId = try await probeSeriesId()
+        let probe = try await OfficialProbe.make()
+        let mask = [seriesId: "<sid>"]
+        var lines: [String] = []
+
+        for channel in [0, 18] {
+            do {
+                let stampMs = Int64(Date().timeIntervalSince1970 * 1000)
+                let rawQuery = DanmakuSigner.buildQuery(stampMs: stampMs, deviceId: probe.identity.deviceId, installId: probe.identity.iid)
+                let url = try XCTUnwrap(URL(string: "https://api5-normal-sinfonlineb.fqnovel.com/novel/commentapi/comment/list/\(seriesId)/v1/?\(rawQuery)"))
+                var options = HTTPClient.Options()
+                options.timeout = 8
+                let headers: [(String, String)] = [
+                    ("User-Agent", DanmakuService.userAgent), ("Accept", "application/json"),
+                    ("X-XS-From-Web", "0"), ("Sdk-Version", "2"), ("Content-Type", "application/json; charset=utf-8"),
+                    ("Comment-Source", "1"), ("Server-Channel", String(channel)),
+                ] + (try DanmakuSigner.headers(rawQuery: rawQuery, stamp: stampMs / 1000, nonce: AppCrypto.randomBytes(DanmakuSigner.nonceBytes)))
+                for (key, value) in headers { options.headers[key] = value }
+                let body: [String: Any] = [
+                    "comment_source": 1, "server_channel": channel, "group_id": seriesId, "group_type": 1,
+                    "comment_type": 2, "sort": 1, "count": 10, "cursor": "", "aid": 8662, "compliance_status": 0,
+                    "business_param": ["book_id": seriesId, "need_count": true],
+                ]
+                let response = try await HTTPClient.shared.post(url, json: try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]), options: options)
+                let json = try JSONValue.parse(response.data)
+                lines.append("== POST comment/list series reviews server_channel=\(channel): code=\(json["code"].number.map { String(Int($0)) } ?? "-") msg=\((json["message"].string ?? "").prefix(30))")
+                var data = json["data"]
+                if var list = data["data_list"].array, list.count > 1 { list = [list[0]]; data = Self.replacing(data, key: "data_list", with: .array(list)) }
+                Self.tree(data, name: "data", mask: mask, into: &lines)
+            } catch { lines.append("comment/list server_channel=\(channel): \(error)") }
+            try await Task.sleep(for: .seconds(1))
+        }
+
+        let packs: [(String, [String])] = [
+            ("series_detail_info", ["album_title", "album_secondary_infos", "album_brand_infos", "album_announcement_info", "album_series_item", "album_series_score"]),
+            ("series_detail_info", ["series_title", "celebrities", "hot_score_data", "series_play_cnt", "followed_cnt", "digg_cnt", "comment_count", "rec_tags", "publish_time"]),
+        ]
+        for (channel, fields) in packs {
+            do {
+                let json = try await probe.post("/reading/distribution/book_pack_fields/\(channel)/v1/", [
+                    "book_pack_channel": channel, "req_ids": [Int64(seriesId) ?? 0], "req_fields": fields,
+                ])
+                lines.append("== POST book_pack_fields/\(channel) \(fields.first ?? "")...: code=\(json["code"].number.map { String(Int($0)) } ?? "-") msg=\((json["message"].string ?? "").prefix(30))")
+                Self.tree(json["data"], name: "data", mask: mask, into: &lines)
+            } catch { lines.append("book_pack_fields/\(channel) \(fields.first ?? ""): \(error)") }
+            try await Task.sleep(for: .seconds(1))
+        }
+        print("REVIEWS\n" + lines.joined(separator: "\n"))
+    }
+
+    private static func replacing(_ value: JSONValue, key: String, with replacement: JSONValue) -> JSONValue {
+        guard var object = value.object else { return value }
+        object[key] = replacement
+        return .object(object)
     }
 
     /// `--filter DetailShapeLiveTests/testOfficialFieldNames` (optional `HONGGUO_SID` or `HONGGUO_PROBE`):
