@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Regenerates Tests/HongguoCoreTests/Fixtures/danmaku-signing-vectors.json from the Electron
 // reference src/native/danmaku-sign.js with fixed time, ids and nonces. Synthetic ids only.
-//   node macos/scripts/gen-danmaku-vectors.cjs > macos/Tests/HongguoCoreTests/Fixtures/danmaku-signing-vectors.json
+//   node macos/scripts/gen-danmaku-vectors.cjs > HongguoKit/Tests/HongguoCoreTests/Fixtures/danmaku-signing-vectors.json
 'use strict';
 const path = require('node:path');
 const upstreamNative = require('./upstream-native.cjs');

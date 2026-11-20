@@ -2,7 +2,7 @@
 // Regenerates Tests/HongguoCoreTests/Fixtures/app-search-signing-vectors.json from the Electron
 // reference src/native/app-source.js (signedSearchRequest / signedMetadataRequest) with fixed time,
 // process nonce and random values. Synthetic ids only.
-//   node macos/scripts/gen-app-search-vectors.cjs > macos/Tests/HongguoCoreTests/Fixtures/app-search-signing-vectors.json
+//   node macos/scripts/gen-app-search-vectors.cjs > HongguoKit/Tests/HongguoCoreTests/Fixtures/app-search-signing-vectors.json
 'use strict';
 const path = require('node:path');
 const upstreamNative = require('./upstream-native.cjs');

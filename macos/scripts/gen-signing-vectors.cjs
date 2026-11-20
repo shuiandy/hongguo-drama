@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Regenerates Tests/HongguoCoreTests/Fixtures/app-signing-vectors.json from the Electron
 // reference implementations in src/native with fixed time and randomness. Synthetic ids only.
-//   node macos/scripts/gen-signing-vectors.cjs > macos/Tests/HongguoCoreTests/Fixtures/app-signing-vectors.json
+//   node macos/scripts/gen-signing-vectors.cjs > HongguoKit/Tests/HongguoCoreTests/Fixtures/app-signing-vectors.json
 'use strict';
 const fs = require('node:fs');
 const vm = require('node:vm');
