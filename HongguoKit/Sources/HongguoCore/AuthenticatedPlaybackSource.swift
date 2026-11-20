@@ -6,7 +6,7 @@
 // - targets official iOS 7.4.3 `mGetVideoModelV2` (`/novel/player/multi_video_model/player/v1/`)
 //   primary/alternate plus plain iOS `/multi_video_model/v1/`,
 // - proactively upgrades ByteVC2-only episodes to H.264/HEVC via `CodecFallback` when available,
-// - self-heals on empty replies via BDInstall renewal -> anonymous isolation -> fresh rotation.
+// - self-heals on empty replies with one BDInstall renewal of the persistent device, nothing else.
 // There is no other source: no Android profile, website channel or web page.
 import Foundation
 
@@ -134,7 +134,6 @@ public actor AuthenticatedPlaybackSource {
     private static let maxCachedEntries = 256
     private static let maxBatchSize = 6
     private static let batchCooldownSeconds: TimeInterval = 45
-    private static let cookieCooldownSeconds: TimeInterval = 300
 
     private struct CachedPlayInfo {
         let info: PlayInfo
@@ -166,8 +165,6 @@ public actor AuthenticatedPlaybackSource {
     private var inflightSingle: [String: InflightEntry] = [:]
     private var inflightBatchTask: Task<Void, Never>?
     private var batchCooldownUntil = Date.distantPast
-    /// Set for 5 minutes if playback with Cookie returned empty while anonymous succeeded.
-    private var cookieCooldownUntil = Date.distantPast
 
     public init(http: HTTPClient = .shared, diskCache: VideoModelDiskCache = VideoModelDiskCache()) {
         self.transport = AppTransport(http: http)
@@ -270,8 +267,7 @@ public actor AuthenticatedPlaybackSource {
             do {
                 let identity = try await PersistentAppDevice.shared.get(transport: self.transport)
                 let dToken = await PersistentAppDevice.shared.dTokenHeaders()
-                let useCookie = Date() >= self.cookieCooldownUntil
-                let auth = useCookie ? PersistentAppDevice.authHeaders() : []
+                let auth = PersistentAppDevice.authHeaders()
                 let entries = try await self.requestModels(
                     vids: chunk,
                     channels: [.multiScenePrimary],
@@ -368,10 +364,9 @@ public actor AuthenticatedPlaybackSource {
         var identity = try await PersistentAppDevice.shared.get(transport: transport)
         var dToken = await PersistentAppDevice.shared.dTokenHeaders()
         let savedCookie = PersistentAppDevice.authHeaders()
-        let useCookieInitially = !savedCookie.isEmpty && Date() >= cookieCooldownUntil
 
         var entries: JSONValue?
-        var routeTag = useCookieInitially ? "auth-app" : "auth-anon"
+        var routeTag = "auth-app"
         var lastError: Error?
 
         // Pass 1: fast official iOS 7.4.3 path (mGetVideoModelV2 scene path primary -> alternate,
@@ -381,7 +376,7 @@ public actor AuthenticatedPlaybackSource {
                 vids: [vid],
                 channels: [.multiScenePrimary, .multiSceneAlternate, .multiPlainIOS],
                 identity: identity,
-                extraHeaders: dToken + (useCookieInitially ? savedCookie : []),
+                extraHeaders: dToken + savedCookie,
                 deadline: deadline
             )
         } catch let error as AppSourceError {
@@ -397,7 +392,7 @@ public actor AuthenticatedPlaybackSource {
             lastError = error
         }
 
-        // Prefetches never trigger device renewal/rotation so they cannot consume the viewer's
+        // Prefetches never trigger device renewal so they cannot consume the viewer's
         // recovery rate limits or race with an active viewer lookup.
         if entries == nil, allowRecovery {
             // A) Renew persisted device_id + refresh device_token + activate (app_alert_check).
@@ -411,55 +406,10 @@ public actor AuthenticatedPlaybackSource {
                         vids: [vid],
                         channels: [.multiScenePrimary],
                         identity: identity,
-                        extraHeaders: dToken + (useCookieInitially ? savedCookie : []),
+                        extraHeaders: dToken + savedCookie,
                         deadline: deadline
                     )
                     routeTag = "auth-renew"
-                } catch let error as AppSourceError {
-                    if error.code == .cancelled { throw error }
-                    lastError = error
-                } catch {
-                    lastError = error
-                }
-            }
-
-            // B) Isolate Cookie & x-tt-dt: retry anonymous without Cookie or x-tt-dt on the
-            // renewed device. If that succeeds while signed in, pause Cookie on playback for 5 min.
-            if entries == nil, (useCookieInitially || !dToken.isEmpty), deadline.timeIntervalSinceNow >= 2 {
-                do {
-                    entries = try await requestModels(
-                        vids: [vid],
-                        channels: [.multiScenePrimary, .multiPlainIOS],
-                        identity: identity,
-                        extraHeaders: [],
-                        deadline: deadline
-                    )
-                    if useCookieInitially {
-                        cookieCooldownUntil = Date().addingTimeInterval(Self.cookieCooldownSeconds)
-                    }
-                    routeTag = "auth-anon"
-                } catch let error as AppSourceError {
-                    if error.code == .cancelled { throw error }
-                    lastError = error
-                } catch {
-                    lastError = error
-                }
-            }
-
-            // C) Genuine fresh device rotation (never coalesced onto an old renewal).
-            if entries == nil, deadline.timeIntervalSinceNow >= 2,
-               let rotated = try? await PersistentAppDevice.shared.rotateIfAllowed(transport: transport),
-               rotated.rotated {
-                identity = rotated.identity
-                do {
-                    entries = try await requestModels(
-                        vids: [vid],
-                        channels: [.multiScenePrimary, .multiPlainIOS],
-                        identity: identity,
-                        extraHeaders: [],
-                        deadline: deadline
-                    )
-                    routeTag = "auth-rotate"
                 } catch let error as AppSourceError {
                     if error.code == .cancelled { throw error }
                     lastError = error
@@ -500,7 +450,7 @@ public actor AuthenticatedPlaybackSource {
             if resolved.isByteVC2,
                let fallback = AppSource.parseFallback(model["fallback_api"]), !fallback.isEmpty,
                deadline.timeIntervalSinceNow >= 2 {
-                let extra = dToken + (Date() >= cookieCooldownUntil ? savedCookie : [])
+                let extra = dToken + savedCookie
                 if let hw = await CodecFallback.tryHardwareCodecFallback(
                     fallbackURL: fallback,
                     expectedVideoId: model["video_id"].string,
@@ -536,8 +486,7 @@ public actor AuthenticatedPlaybackSource {
 
     private func resolveFallback(_ pending: PendingFallback, vid: String, deadline: Date) async throws -> (info: PlayInfo, upgraded: Bool) {
         let dToken = await PersistentAppDevice.shared.dTokenHeaders()
-        let auth = Date() >= cookieCooldownUntil ? PersistentAppDevice.authHeaders() : []
-        let extra = dToken + auth
+        let extra = dToken + PersistentAppDevice.authHeaders()
         let outer = try await transport.requestJSON(
             pending.fallbackURL,
             headers: [("User-Agent", AppSource.iosPlayerUA)] + extra,

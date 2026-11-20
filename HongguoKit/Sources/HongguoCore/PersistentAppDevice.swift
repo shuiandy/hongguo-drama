@@ -25,8 +25,6 @@ public actor PersistentAppDevice {
     public static let renewalInterval: TimeInterval = 21_600
     /// Minimum spacing between on-demand recovery renewals triggered by empty replies.
     private static let minRefreshInterval: TimeInterval = 30
-    /// Minimum spacing between full device rotations when a device appears burned.
-    private static let minRotateInterval: TimeInterval = 15
 
     private static let keychainService = "io.github.shuiandy.hongguo-drama.device"
     private static let keychainAccount = "primary"
@@ -102,7 +100,6 @@ public actor PersistentAppDevice {
     private var inflightIsFresh = false
     private var backgroundRenewTask: Task<Void, Never>?
     private var lastRefreshAt = Date.distantPast
-    private var lastRotateAt = Date.distantPast
     private var loadedFromStore = false
 
     /// Returns the persistent device identity immediately if stored (kicking off a non-blocking
@@ -132,7 +129,7 @@ public actor PersistentAppDevice {
 
     /// Synchronously refreshes the persisted device via `device_register` (passing existing
     /// `device_id`) + `app_alert_check` when a playback request encounters an empty reply.
-    /// Rate-limited to `minRefreshInterval` (60 s). Returns `true` if a renewal actually ran.
+    /// Rate-limited to `minRefreshInterval` (30 s). Returns `true` if a renewal actually ran.
     @discardableResult
     func refreshForRecovery(transport: AppTransport) async throws -> (identity: PlaybackIdentity, refreshed: Bool) {
         let existing = currentRecord()
@@ -145,26 +142,6 @@ public actor PersistentAppDevice {
         lastRefreshAt = now
         let updated = try await registerOrRenew(existing: existing, transport: transport)
         return (updated.playbackIdentity, true)
-    }
-
-    /// Re-registers a brand-new device identity only if at least `minRotateInterval` has elapsed
-    /// since the last rotation, preventing retry storms from spamming `device_register`.
-    /// Never coalesces onto an in-flight renewal of the old device.
-    func rotateIfAllowed(transport: AppTransport) async throws -> (identity: PlaybackIdentity, rotated: Bool) {
-        let now = Date()
-        guard now.timeIntervalSince(lastRotateAt) >= Self.minRotateInterval else {
-            return (try await get(transport: transport), false)
-        }
-        lastRotateAt = now
-        backgroundRenewTask?.cancel()
-        backgroundRenewTask = nil
-        if !inflightIsFresh {
-            inflight?.cancel()
-            inflight = nil
-        }
-        record = nil
-        let fresh = try await registerOrRenew(existing: nil, transport: transport, actionLabel: "rotate")
-        return (fresh.playbackIdentity, true)
     }
 
     /// Returns `[("x-tt-dt", deviceToken)]` when a `device_token` is available, matching
@@ -206,12 +183,12 @@ public actor PersistentAppDevice {
         backgroundRenewTask = nil
     }
 
-    private func registerOrRenew(existing: StoredRecord?, transport: AppTransport, actionLabel: String? = nil) async throws -> StoredRecord {
+    private func registerOrRenew(existing: StoredRecord?, transport: AppTransport) async throws -> StoredRecord {
         let wantsFresh = existing == nil
         if let inflight, (!wantsFresh || inflightIsFresh) {
             return try await inflight.value
         }
-        let label = actionLabel ?? (wantsFresh ? "register" : "renew")
+        let label = wantsFresh ? "register" : "renew"
         let task = Task<StoredRecord, Error> {
             var updated = try await Self.performRegister(existing: existing, transport: transport)
             let activated = await Self.performActivate(record: updated, transport: transport)
