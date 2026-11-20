@@ -14,7 +14,7 @@ struct HistoryView: View {
             } else {
                 ScrollView {
                     PageHeader(title: embedded ? "" : "观看记录", subtitle: subtitle) {
-                        if AccountState.shared.profile != nil {
+                        if !embedded, AccountState.shared.profile != nil {
                             Button { Task { await model.syncCloudHistory(force: true, manual: true) } } label: {
                                 Label(model.cloudSyncing ? "同步中…" : "同步云端", systemImage: "arrow.triangle.2.circlepath")
                             }

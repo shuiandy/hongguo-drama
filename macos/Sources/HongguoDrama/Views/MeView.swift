@@ -90,11 +90,7 @@ struct MeView: View {
             Spacer(minLength: 12)
             HeaderSearchField()
             if account.profile != nil {
-                Button { Task { await model.syncCloudHistory(force: true, manual: true) } } label: {
-                    Label(model.cloudSyncing ? "同步中…" : "同步账号", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .buttonStyle(GlassButtonStyle())
-                .disabled(model.cloudSyncing)
+                if model.cloudSyncing { ProgressView().controlSize(.small).help("正在和账号同步") }
             } else if !account.restoring {
                 Button("登录…") { model.selection = .account }
                     .buttonStyle(GlassButtonStyle(prominent: true))

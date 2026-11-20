@@ -464,6 +464,13 @@ final class AppModel {
                 try? await Task.sleep(for: .seconds(5 * 60))
             }
         }
+        // Account sync runs by itself: at launch, when the app comes forward, and every 3 minutes.
+        Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3 * 60))
+                await syncCloudHistory()
+            }
+        }
         Task {
             try? await Task.sleep(for: .seconds(20))
             while !Task.isCancelled {
