@@ -7,7 +7,9 @@ import Foundation
 /// name, picture and introduction come from the series detail's `celebrities`.
 ///
 /// The server ignores `offset` (a second page repeats the first), and the official panel does not
-/// page either: it shows one batch and the total. So there is one read per actor.
+/// page either: it shows one batch and the total. `count` is honoured (50 returned all 45 works of
+/// one actor; the panel's 10 returns 11), so there is one read per actor with `count` 50. A read
+/// for three actors keys each one correctly; one for twenty returned totals of 0.
 public struct CelebrityWorks: Sendable, Equatable {
     public var items: [SeriesSummary]
     /// `total_count`: all of the actor's works, often more than `items`.
@@ -66,26 +68,45 @@ public enum CelebrityService {
         return result
     }
 
-    /// An `SSVideoData` card.
+    /// A work card. Live cards (2026-11-20) carry `series_id`, `title`, `cover`, `sub_title` (genre
+    /// and episode count, e.g. 时空之旅·102集), `play_cnt` and `score`; their `episode_cnt` is 0 and
+    /// they have no heat text, `video_detail`, `sub_title_list` or completion state. So the episode
+    /// count and genre are read from `sub_title` and the play count stands in for heat.
     static func summary(_ video: JSONValue, seen: inout Set<String>) -> SeriesSummary? {
-        let detail = video["video_detail"]
-        let id = (video["series_id"].idString ?? detail["series_id_str"].idString ?? detail["series_id"].idString ?? "")
-            .trimmingCharacters(in: .whitespaces)
-        let title = AccountService.cleanText(video["title"].string ?? video["series_title"].string ?? detail["series_title"].string)
+        let id = (video["series_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
+        let title = AccountService.cleanText(video["title"].string)
         guard id.matchesDigits(min: 6, max: 30), !title.isEmpty, seen.insert(id).inserted else { return nil }
-        let subs = video["sub_title_list"].array ?? []
-        let heat = AccountService.cleanText(
-            subs.first(where: { Int($0["data_type"].number ?? 0) == 27 })?["content"].string
-            ?? subs.first(where: { ($0["content"].string ?? "").contains("热度") })?["content"].string)
-        let count = EpisodeSocialService.integer(video["episode_cnt"]) ?? EpisodeSocialService.integer(detail["episode_cnt"]) ?? 0
-        let label = String((video["episode_right_text"].string ?? detail["episode_right_text"].string ?? "")
-            .trimmingCharacters(in: .whitespaces).prefix(40))
-        let rawCover = video["cover"].string ?? detail["series_cover"].string ?? ""
+        let (genre, episodes) = subtitle(video["sub_title"].string)
+        let rawCover = video["cover"].string ?? ""
         let cleanedCover = AccountService.cleanCover(rawCover)
         return SeriesSummary(
             seriesId: id, title: title,
             cover: AccountDataAccess.normalizeHTTPSURL(cleanedCover.isEmpty ? rawCover : cleanedCover),
-            episodeCount: count, heat: heat, episodeLabel: label,
-            completionStatus: CatalogService.metadata(video).status)
+            episodeCount: EpisodeSocialService.integer(video["episode_cnt"]).flatMap { $0 > 0 ? $0 : nil } ?? episodes ?? 0,
+            tags: genre.isEmpty ? [] : [genre],
+            heat: plays(EpisodeSocialService.integer(video["play_cnt"])))
+    }
+
+    /// `时空之旅·102集` → ("时空之旅", 102); a part that is not an episode count is the genre.
+    static func subtitle(_ text: String?) -> (genre: String, episodes: Int?) {
+        let parts = AccountService.cleanText(text).split(separator: "·").map { $0.trimmingCharacters(in: .whitespaces) }
+        var genre = ""
+        var episodes: Int?
+        for part in parts where !part.isEmpty {
+            if episodes == nil, part.hasSuffix("集"), let n = Int(part.dropLast().filter(\.isNumber)), n > 0 {
+                episodes = n
+            } else if genre.isEmpty, part.count <= 12 {
+                genre = part
+            }
+        }
+        return (genre, episodes)
+    }
+
+    /// 60814291 → 6081万播放; nil or 0 → "".
+    static func plays(_ count: Int?) -> String {
+        guard let count, count > 0 else { return "" }
+        if count >= 100_000_000 { return String(format: "%.1f亿播放", Double(count) / 100_000_000) }
+        if count >= 10_000 { return "\(count / 10_000)万播放" }
+        return "\(count)播放"
     }
 }

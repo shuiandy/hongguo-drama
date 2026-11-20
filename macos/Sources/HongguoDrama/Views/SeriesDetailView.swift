@@ -238,7 +238,7 @@ struct SeriesDetailView: View {
                     }
                     if let likes = details?.likeCount { GlassTag(text: formatCount(likes), systemImage: "heart.fill", iconColor: .hongguoRed) }
                     if !summary.heat.isEmpty { GlassTag(text: summary.heat, systemImage: "flame.fill", iconColor: .orange) }
-                    ForEach((summary.tags.isEmpty ? details?.tags ?? [] : summary.tags).prefix(3), id: \.self) { GlassTag(text: $0) }
+                    ForEach((details?.tags.isEmpty == false ? details?.tags ?? [] : summary.tags).prefix(3), id: \.self) { GlassTag(text: $0) }
                 }
                 let description = details?.description.isEmpty == false ? details!.description : summary.description
                 if !description.isEmpty {

@@ -3,11 +3,9 @@ import XCTest
 @testable import HongguoCore
 
 /// `HONGGUO_LIVE=1 swift test --filter CelebrityLiveTests` (optional `HONGGUO_PROBE=剧名`, a
-/// live-action drama): the cast from the App detail, then the actor works read once for three actors
-/// together (the reply's keys against ours) and twice for the first actor (count 50 and 10, to see
-/// whether count is honoured, plus the first card's keys), then `works(of:)` as the apps call it
-/// (served from the count-50 read's cache when it matches). One App search and four or five App reads. Each step logs to stderr as it starts
-/// and ends and gives up after 25 s, so a stalled step names itself. Prints names, titles and counts.
+/// live-action drama): the cast from the App detail, then `works(of:)` for the first actor as the
+/// apps call it. One App search and two App reads. Each step logs to stderr as it starts and ends and
+/// gives up after 25 s, so a stalled step names itself. Prints names, titles and counts.
 final class CelebrityLiveTests: XCTestCase {
     struct StepTimeout: Error, CustomStringConvertible {
         let name: String
@@ -69,48 +67,13 @@ final class CelebrityLiveTests: XCTestCase {
         try XCTSkipIf(cast.isEmpty, "this series has no cast with encrypted ids")
         try await Task.sleep(for: .seconds(1))
 
-        do {
-            let ids = Array(cast.prefix(3).map(\.encryptedId))
-            let reply = try await Self.step("panel read") { try await CelebrityService.request(encryptedIds: ids, offset: 0, count: 10) }
-            let works = reply["data"]["works"].object ?? [:]
-            let matching = works.keys.filter { ids.contains($0) }.count
-            lines.append("panel read (3 ids): code=\(Int(reply["code"].number ?? -1)) keys=\(works.count) matchingOurIds=\(matching) keyLengths=\(works.keys.map(\.count).sorted()) idLengths=\(ids.map(\.count).sorted())")
-            for (n, value) in works.values.prefix(3).enumerated() {
-                lines.append("  entry \(n + 1): total=\(value["total_count"].number ?? -1) list=\(value["video_list"].array?.count ?? -1) keys=\(value.object?.keys.sorted().joined(separator: ",") ?? "-")")
-            }
-        } catch { lines.append("panel read: \(error)") }
-        try await Task.sleep(for: .seconds(1))
-
-        if let first = cast.first {
-            for count in [50, 10] {
-                do {
-                    let id = first.encryptedId
-                    let reply = try await Self.step("actor count \(count)") { try await CelebrityService.request(encryptedIds: [id], offset: 0, count: count) }
-                    let info = reply["data"]["works"][id]
-                    let list = info["video_list"].array ?? []
-                    lines.append("\(first.name) count=\(count): list=\(list.count) total=\(info["total_count"].number ?? -1) has_more=\(info["has_more"].bool ?? false) parsed=\((try? CelebrityService.parse(reply)[id]?.items.count) ?? -1)")
-                    if count == 50, let card = list.first {
-                        lines.append("  card keys: " + (card.object?.keys.sorted().joined(separator: ",") ?? "-"))
-                        lines.append("  video_detail keys: " + (card["video_detail"].object?.keys.sorted().joined(separator: ",") ?? "-"))
-                        let numbers = (card.object ?? [:]).filter { $0.value.number != nil && ($0.key.contains("cnt") || $0.key.contains("count") || $0.key.contains("episode") || $0.key.contains("type") || $0.key.contains("status")) }
-                        lines.append("  card numbers: " + numbers.keys.sorted().map { "\($0)=\(numbers[$0]!.number!)" }.joined(separator: " "))
-                        let detailNumbers = (card["video_detail"].object ?? [:]).filter { $0.value.number != nil && ($0.key.contains("cnt") || $0.key.contains("count") || $0.key.contains("episode") || $0.key.contains("status")) }
-                        lines.append("  detail numbers: " + detailNumbers.keys.sorted().map { "\($0)=\(detailNumbers[$0]!.number!)" }.joined(separator: " "))
-                        let texts = ["sub_title", "episode_right_text", "play_cnt_desc", "score"].map { "\($0)=\(card[$0].string ?? card[$0].number.map { String($0) } ?? "-")" }
-                        lines.append("  card texts: " + texts.joined(separator: " "))
-                        lines.append("  sub_title_list: " + (card["sub_title_list"].array ?? []).map { "\($0["content"].string ?? $0.string ?? "?")[\($0["data_type"].number.map { String(Int($0)) } ?? "-")]" }.joined(separator: " | "))
-                        lines.append("  detail texts: episode_right_text=\(card["video_detail"]["episode_right_text"].string ?? "-")")
-                    }
-                } catch { lines.append("count \(count): \(error)") }
-                try await Task.sleep(for: .seconds(1))
-            }
-        }
         if let first = cast.first {
             do {
                 let works = try await Self.step("works(of:)") { try await CelebrityService.works(of: first) }
                 lines.append("\(first.name) works(of:): \(works.items.count) total=\(works.total ?? -1) includesThisSeries=\(works.items.contains { $0.seriesId == sid })")
-                if let card = works.items.first {
-                    lines.append("  first card: label=\(card.episodeLabel) count=\(card.episodeCount) heat=\(card.heat) status=\(card.completionStatus) https=\(card.cover.hasPrefix("https://"))")
+                lines.append("  cards with episodes=\(works.items.filter { $0.episodeCount > 0 }.count) genre=\(works.items.filter { !$0.tags.isEmpty }.count) plays=\(works.items.filter { !$0.heat.isEmpty }.count) https=\(works.items.filter { $0.cover.hasPrefix("https://") }.count)")
+                for card in works.items.prefix(3) {
+                    lines.append("  \(card.title): \(card.episodeCount) 集 \(card.tags.joined(separator: "/")) \(card.heat)")
                 }
             } catch { lines.append("works(of:): \(error)") }
         }
