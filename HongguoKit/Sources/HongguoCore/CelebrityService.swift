@@ -82,9 +82,11 @@ public enum CelebrityService {
         let count = EpisodeSocialService.integer(video["episode_cnt"]) ?? EpisodeSocialService.integer(detail["episode_cnt"]) ?? 0
         let label = String((video["episode_right_text"].string ?? detail["episode_right_text"].string ?? "")
             .trimmingCharacters(in: .whitespaces).prefix(40))
+        let rawCover = video["cover"].string ?? detail["series_cover"].string ?? ""
+        let cleanedCover = AccountService.cleanCover(rawCover)
         return SeriesSummary(
             seriesId: id, title: title,
-            cover: DiscoveryAccess.normalizedCover(video["cover"].string ?? detail["series_cover"].string ?? ""),
+            cover: AccountDataAccess.normalizeHTTPSURL(cleanedCover.isEmpty ? rawCover : cleanedCover),
             episodeCount: count, heat: heat, episodeLabel: label,
             completionStatus: CatalogService.metadata(video).status)
     }
