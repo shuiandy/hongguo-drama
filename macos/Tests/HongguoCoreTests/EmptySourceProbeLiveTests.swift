@@ -83,3 +83,35 @@ final class WebFallbackParseTests: XCTestCase {
         XCTAssertThrowsError(try SeriesService.parseWebFallback(Data(), status: 200, vid: "1"))
     }
 }
+
+import AVFoundation
+
+/// `HONGGUO_LIVE=1 swift test --filter WebFallbackLiveTests`: website fallback channel for a few
+/// episodes of a searched series, then AVFoundation loads each address (Referer set) and reports
+/// whether it is playable and how long it is. Read-only; prints no addresses.
+final class WebFallbackLiveTests: XCTestCase {
+    func testFallbackPlays() async throws {
+        let env = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(env["HONGGUO_LIVE"] == "1", "set HONGGUO_LIVE=1 to run")
+        let keyword = env["HONGGUO_PROBE"] ?? "女剑仙追我到地球了第三季"
+        let series = SeriesService()
+        let found = try await HongguoSearch().search(keyword)
+        let summary = try XCTUnwrap(found.results.first)
+        let list = try await series.episodes(seriesId: summary.seriesId)
+        var report = ["\(summary.title): \(list.episodes.count) eps"]
+        for index in Array(Set([1, list.episodes.count / 2, list.episodes.count])).sorted() where index >= 1 {
+            let ep = list.episodes[index - 1]
+            do {
+                let info = try await series.playInfoFromWebFallback(vid: ep.vid)
+                let asset = AVURLAsset(url: info.url, options: ["AVURLAssetHTTPHeaderFieldsKey": ["Referer": Site.referer, "User-Agent": info.userAgent]])
+                let (playable, duration) = try await asset.load(.isPlayable, .duration)
+                let tracks = try await asset.loadTracks(withMediaType: .video)
+                let size = try await tracks.first?.load(.naturalSize)
+                report.append("ep\(index): playable=\(playable) \(Int(duration.seconds))s \(size.map { "\(Int($0.width))x\(Int($0.height))" } ?? "?")")
+            } catch {
+                report.append("ep\(index): failed \((error as? LocalizedError)?.errorDescription ?? "\(error)")")
+            }
+        }
+        print("FALLBACK\n" + report.joined(separator: "\n"))
+    }
+}
