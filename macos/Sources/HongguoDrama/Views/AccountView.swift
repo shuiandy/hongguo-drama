@@ -275,8 +275,7 @@ struct AccountView: View {
 
     private func resume(_ item: AccountHistoryItem) {
         Task {
-            await PlayerController.shared.open(seriesId: item.seriesId, title: item.seriesTitle, cover: item.cover,
-                                               index: max(1, item.episodeIndex), startAt: item.position)
+            await PlayerController.shared.resume(seriesId: item.seriesId, title: item.seriesTitle, cover: item.cover)
         }
     }
 }

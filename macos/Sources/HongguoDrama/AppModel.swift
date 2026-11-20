@@ -409,6 +409,7 @@ final class AppModel {
     }
 
     private(set) var lastCloudSync = Date.distantPast
+    @ObservationIgnored private var lastFullCloudSync = Date.distantPast
     private(set) var lastCloudSyncCount = 0
     private(set) var cloudSyncing = false
     var cloudSyncMessage = ""
@@ -417,6 +418,29 @@ final class AppModel {
     /// then, with 双向同步 on, the account's favourites and likes (`AccountSync`). Local progress
     /// goes up as it is saved. `force` skips the one-minute throttle; `manual` (a button) also
     /// runs when 显示云端观看记录 is off.
+    /// Reads the account's current row for one series and merges it when it is newer, so continuing
+    /// never starts from a position another device has already moved past. Gives up after `timeout`
+    /// seconds and keeps this Mac's record (playback does not wait on a slow network).
+    func syncCloudPosition(seriesId: String, timeout: Double = 3) async {
+        guard settings.cloudHistorySync, SourceRouter.isHongguo(seriesId) else { return }
+        guard let row = await Self.cloudRow(seriesId: seriesId, timeout: timeout) else { return }
+        if store.mergeCloudHistory([row]) > 0 { refreshHistory() }
+    }
+
+    private nonisolated static func cloudRow(seriesId: String, timeout: Double) async -> AccountHistoryItem? {
+        let once = ResumeOnce()
+        return await withCheckedContinuation { (continuation: CheckedContinuation<AccountHistoryItem?, Never>) in
+            let lookup = Task {
+                let row = try? await AccountService.shared.latestHistoryRow(seriesId: seriesId)
+                if once.claim() { continuation.resume(returning: row) }
+            }
+            Task {
+                try? await Task.sleep(for: .seconds(timeout))
+                if once.claim() { lookup.cancel(); continuation.resume(returning: nil) }
+            }
+        }
+    }
+
     func syncCloudHistory(force: Bool = false, manual: Bool = false) async {
         guard !cloudSyncing, force || Date().timeIntervalSince(lastCloudSync) > 60 else { return }
         guard await AccountService.shared.status().profile != nil else { return }
@@ -426,7 +450,10 @@ final class AppModel {
         if AccountState.shared.avatar.isEmpty { await AccountState.shared.loadAvatar() }
         guard manual || settings.cloudHistorySync else { lastCloudSync = Date(); return }
         do {
-            let items = try await AccountService.shared.history(refresh: true)
+            // Every page at launch, on demand and every 30 minutes; the 3-minute checks read the newest page.
+            let full = force || manual || Date().timeIntervalSince(lastFullCloudSync) > 30 * 60
+            let items = try await AccountService.shared.history(refresh: true, firstPageOnly: !full)
+            if full { lastFullCloudSync = Date() }
             lastCloudSync = Date()
             lastCloudSyncCount = items.count
             store.mergeCloudHistory(items)
@@ -613,4 +640,16 @@ final class AppModel {
 
 func describe(_ error: Error) -> String {
     (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+}
+
+/// Lets exactly one of several racing tasks resume a continuation.
+final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if done { return false }
+        done = true
+        return true
+    }
 }

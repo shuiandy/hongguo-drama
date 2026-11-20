@@ -111,8 +111,7 @@ struct HistoryView: View {
     private func resume(_ record: WatchRecord) {
         model.acknowledgeUpdates(record.seriesId)
         Task {
-            await PlayerController.shared.open(seriesId: record.seriesId, title: record.title, cover: record.cover,
-                                               index: record.episodeIndex, startAt: record.position)
+            await PlayerController.shared.resume(seriesId: record.seriesId, title: record.title, cover: record.cover)
         }
     }
 

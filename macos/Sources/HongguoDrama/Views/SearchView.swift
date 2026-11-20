@@ -337,7 +337,7 @@ struct SearchResultCard: View {
                     }
                     Spacer(minLength: 0)
                     Button {
-                        Task { await PlayerController.shared.open(seriesId: item.seriesId, title: item.title, cover: item.cover) }
+                        Task { await PlayerController.shared.resume(seriesId: item.seriesId, title: item.title, cover: item.cover) }
                     } label: { Label("播放", systemImage: "play.fill") }
                         .buttonStyle(GlassButtonStyle(prominent: true, size: .small))
                 }

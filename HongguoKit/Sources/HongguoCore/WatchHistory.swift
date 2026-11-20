@@ -35,6 +35,32 @@ public struct ResumePoint: Equatable, Sendable {
     }
 }
 
+/// Whether an opened episode has really been watched, so saving its position may claim
+/// "watched last" over other devices. Opening and closing without watching must not.
+public struct WatchProgress: Equatable, Sendable {
+    /// Playback needed before an opened episode counts as watched.
+    public static let minimumSeconds: Double = 3
+    /// Seconds played forward since the episode was opened.
+    public private(set) var watched: Double = 0
+    /// The user moved the playhead (seek, skip).
+    public private(set) var moved = false
+    private var last: Double?
+
+    public init() {}
+
+    /// A playhead sample. Counts smooth forward playback only: seeks, the resume seek included,
+    /// jump further than 2 s, and samples while paused or buffering do not count.
+    public mutating func sample(_ position: Double, playing: Bool) {
+        guard position.isFinite else { return }
+        if playing, let last, position > last, position - last < 2 { watched += position - last }
+        last = position
+    }
+
+    public mutating func userMoved() { moved = true }
+
+    public var shouldSave: Bool { moved || watched >= Self.minimumSeconds }
+}
+
 /// Season and sequel detection for the watch history. Port of src/native/watch-history.js.
 public enum WatchHistory {
     public struct ParsedTitle: Equatable, Sendable {
