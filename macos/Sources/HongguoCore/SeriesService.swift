@@ -255,6 +255,7 @@ public final class SeriesService: Sendable {
         options.acceptStatus = 200...499
         options.headers["Accept"] = "application/json"
         options.headers["Origin"] = Site.origin
+        options.headers["Content-Type"] = "application/json"
         let body = try JSONSerialization.data(withJSONObject: ["item_id": vid])
         let response: HTTPResponse
         do {
