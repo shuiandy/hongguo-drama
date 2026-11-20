@@ -182,10 +182,16 @@ struct PlayerScreen: View {
     @State private var chromeVisible = true
     @State private var hoveringBar = false
     @State private var hideTask: Task<Void, Never>?
+    /// Whether the pointer is over the video area.
+    @State private var pointerInside = false
+    /// The next episode started while the pointer was elsewhere (autoplay): keep the controls
+    /// hidden through the switch so playback feels continuous, until the pointer comes back.
+    @State private var quietTransition = false
 
     /// Controls stay up while paused, loading, buffering, failed, or while the pointer is on them.
     private var showChrome: Bool {
-        chromeVisible || hoveringBar || !controller.isPlaying || controller.isLoading || controller.isBuffering
+        if quietTransition, controller.errorMessage == nil { return hoveringBar }
+        return chromeVisible || hoveringBar || !controller.isPlaying || controller.isLoading || controller.isBuffering
             || controller.errorMessage != nil || !controller.hasItem
     }
 
@@ -245,16 +251,33 @@ struct PlayerScreen: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onContinuousHover { phase in
             switch phase {
-            case .active: revealChrome()
-            case .ended: hideChrome(after: 0.6)
+            case .active: pointerInside = true; revealChrome()
+            case .ended: pointerInside = false; hideChrome(after: 0.6)
             }
         }
         // Playback starting (or the next episode) shows the controls, then hides them after 5 s
         // even if the pointer never moves.
         .onChange(of: controller.isPlaying) { _, playing in
-            if playing { chromeVisible = true; hideChrome(after: 5) }
+            guard playing else { return }
+            if quietTransition {
+                quietTransition = false
+                chromeVisible = false
+            } else {
+                chromeVisible = true
+                hideChrome(after: 5)
+            }
         }
-        .onChange(of: controller.index) { _, _ in chromeVisible = true; hideChrome(after: 5) }
+        .onChange(of: controller.index) { _, _ in
+            if pointerInside, NSApp.isActive {
+                quietTransition = false
+                chromeVisible = true
+                hideChrome(after: 5)
+            } else {
+                hideTask?.cancel()
+                chromeVisible = false
+                quietTransition = true
+            }
+        }
         .onAppear { hideChrome(after: 5) }
     }
 
@@ -288,6 +311,7 @@ struct PlayerScreen: View {
     }
 
     private func revealChrome() {
+        quietTransition = false
         chromeVisible = true
         hideChrome(after: 3)
     }
