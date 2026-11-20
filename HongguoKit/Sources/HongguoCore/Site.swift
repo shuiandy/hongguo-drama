@@ -35,3 +35,4 @@ actor TTLCache<Value: Sendable> {
     }
 
     func clear() { entries.removeAll(); order.removeAll() }
+}
