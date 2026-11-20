@@ -115,3 +115,42 @@ final class WebFallbackLiveTests: XCTestCase {
         print("FALLBACK\n" + report.joined(separator: "\n"))
     }
 }
+
+/// `HONGGUO_LIVE=1 swift test --filter PlayShapeLiveTests`: a handful of read-only play-model
+/// requests that differ only in request shape (trailing slash, official iOS biz_param fields),
+/// one registered device. Prints outcome only.
+final class PlayShapeLiveTests: XCTestCase {
+    func testShapes() async throws {
+        let env = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(env["HONGGUO_LIVE"] == "1", "set HONGGUO_LIVE=1 to run")
+        let vid = env["HONGGUO_VID"] ?? "7694243705045126169"
+        let transport = AppTransport(http: .shared)
+        let identity = try await AppSearchIdentity.shared.get(transport: transport)
+        let base: [String: Any] = ["detail_page_version": 0, "device_level": 3, "disable_digg_stat": false,
+                                   "disable_video_relate_book": false, "need_all_video_definition": true, "need_mp4_align": false,
+                                   "use_os_player": false, "use_server_dns": false, "video_platform": 1024]
+        var ios = base
+        ios["video_id_type"] = 0
+        ios["screen_width_px"] = 1290
+        ios["device_level"] = 4
+        let variants: [(String, [String: Any], Bool)] = [
+            ("current", base, false), ("trailing slash", base, true), ("iOS biz fields + slash", ios, true),
+        ]
+        var report: [String] = []
+        for (name, biz, slash) in variants {
+            let object: [String: Any] = ["biz_param": biz, "mixed_video_id_map": ["1004": [vid]], "dr_scene": "player"]
+            let payload = Array(try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))
+            var signed = try await AppSource.shared.playbackRequest(payload: payload, identity: identity, modern: true)
+            if slash { signed.url = signed.url.replacingOccurrences(of: "/player/v1?", with: "/player/v1/?") }
+            do {
+                let json = try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers, body: signed.body,
+                                                           deadline: Date().addingTimeInterval(10))
+                report.append("\(name): code=\(json["code"].number.map { String($0) } ?? "-") data keys=\(json["data"].object?.keys.sorted().prefix(4).joined(separator: ",") ?? "-")")
+            } catch let error as AppSourceError {
+                report.append("\(name): \(error.code.rawValue)")
+            }
+            try await Task.sleep(for: .seconds(2))
+        }
+        print("SHAPES\n" + report.joined(separator: "\n"))
+    }
+}
