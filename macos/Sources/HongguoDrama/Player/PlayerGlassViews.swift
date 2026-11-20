@@ -457,7 +457,7 @@ struct PlayerControlBar: View {
                 .help(controller.autoNext ? "自动连播：开（A）" : "自动连播：关（A）")
             Button { windows.togglePin() } label: { Image(systemName: windows.isPinned ? "pin.fill" : "pin") }
                 .buttonStyle(BarIconButtonStyle(size: 32, active: windows.isPinned))
-                .help(windows.isPinned ? "取消置顶（M）" : "置顶播放器，所有控制都在（M）
+                .help(windows.isPinned ? "取消置顶（M）" : "置顶播放器，所有控制都在（M）")
             Button { windows.toggleFullScreen() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
                 .buttonStyle(BarIconButtonStyle(size: 32))
                 .help("全屏（F）")
