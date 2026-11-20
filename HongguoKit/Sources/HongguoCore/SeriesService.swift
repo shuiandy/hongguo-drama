@@ -4,8 +4,8 @@ import Foundation
 /// One source for each, no fallbacks: play URLs come only from the official iOS client's play
 /// request (`AuthenticatedPlaybackSource`); the episode list and the series facts only from the
 /// official app's series detail read (`OfficialSeriesDetail`, GET video_tab/multi_video_detail);
-/// the score and written reviews only from the App comment list (`OfficialSeriesReviews`); the like
-/// count and first-shown date only from the App's book_pack_fields read (`OfficialSeriesStats`).
+/// the score and written reviews only from the App comment list (`OfficialSeriesReviews`); the
+/// first-shown date only from the App's book_pack_fields read (`OfficialSeriesStats`).
 /// No website pages: the website is only the target of share links and "open the source page".
 public final class SeriesService: Sendable {
     private let http: HTTPClient
@@ -85,8 +85,8 @@ public final class SeriesService: Sendable {
     public func publicDetails(seriesId: String) async throws -> PublicDetails {
         guard seriesId.matchesDigits(min: 6, max: 30) else { throw HongguoError(.input, "仅支持有效的红果剧集编号") }
         if let cached = await detailsCache.get(seriesId) { return cached }
-        // Synopsis, cover, episode label, completion and collect count from the App detail (required);
-        // score and reviews from the App comment list, like count and first-shown date from the App's
+        // Synopsis, cover, episode label, completion, collect and like counts from the App detail
+        // (required); score and reviews from the App comment list, the first-shown date from the App's
         // book_pack_fields read, each left empty when it did not answer.
         async let stats = try? OfficialSeriesStats.load(seriesId, http: http)
         async let reviews = try? OfficialSeriesReviews.load(seriesId, http: http)
@@ -106,7 +106,7 @@ public final class SeriesService: Sendable {
         return PublicDetails(seriesId: detail.seriesId, description: detail.intro, cover: detail.cover,
                              episodeLabel: detail.episodeLabel, completionStatus: detail.completion,
                              rating: reviews?.rating, ratingCount: reviews?.ratingCount,
-                             likeCount: stats?.likeCount, favoriteCount: detail.favoriteCount ?? stats?.favoriteCount,
+                             likeCount: detail.likeCount, favoriteCount: detail.favoriteCount,
                              reviewTotal: reviews?.page.total, reviews: list, publishedAt: published)
     }
 

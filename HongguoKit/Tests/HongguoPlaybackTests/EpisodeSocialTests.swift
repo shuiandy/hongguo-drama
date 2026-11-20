@@ -61,18 +61,17 @@ final class EpisodeSocialTests: XCTestCase {
 
         let rejected = try JSONValue.parse(#"{"code":103001,"message":"参数错误"}"#)
         XCTAssertThrowsError(try OfficialSeriesReviews.parse(rejected))
-        let unrated = try OfficialSeriesReviews.parse(try JSONValue.parse(#"{"code":0,"data":{"extra":{"credibility_score":0},"data_list":[]}}"#))
-        XCTAssertNil(unrated.rating, "a zero score means not rated yet")
+        let unrated = try OfficialSeriesReviews.parse(try JSONValue.parse(#"{"code":0,"data":{"extra":{"credibility_score":-1,"credibility_score_count":-1},"data_list":[]}}"#))
+        XCTAssertNil(unrated.rating, "-1 means not rated yet")
+        XCTAssertNil(unrated.ratingCount)
         XCTAssertFalse(unrated.page.hasMore)
     }
 
-    func testPackReadGivesHeatFirstShownAndLikes() throws {
+    func testPackReadGivesHeatAndFirstShown() throws {
         let stats = try OfficialSeriesStats.parse(try JSONValue.parse(Self.packReply), seriesId: Self.sid)
         XCTAssertEqual(stats.heatText, "5263万热度", "the heat keys are capitalised")
         XCTAssertEqual(stats.heatScore, 52_630_687)
         XCTAssertEqual(stats.publishedAt, Date(timeIntervalSince1970: 1_786_809_814))
-        XCTAssertEqual(stats.likeCount, 88_000)
-        XCTAssertEqual(stats.favoriteCount, 24_010)
 
         XCTAssertThrowsError(try OfficialSeriesStats.parse(try JSONValue.parse(Self.packReply), seriesId: "7000000000000000002"),
                              "no entry for the asked series")

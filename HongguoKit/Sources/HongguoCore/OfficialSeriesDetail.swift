@@ -117,4 +117,11 @@ struct OfficialSeriesDetail: Sendable, Equatable {
     }
 
     func likes(vid: String) -> Int? { episodes.first { $0.vid == vid }?.likes }
+
+    /// The series' like count: the sum of its episodes' (what the website shows, to within its
+    /// rounding); nil when no episode carries one.
+    var likeCount: Int? {
+        let counts = episodes.compactMap(\.likes)
+        return counts.isEmpty ? nil : counts.reduce(0, +)
+    }
 }

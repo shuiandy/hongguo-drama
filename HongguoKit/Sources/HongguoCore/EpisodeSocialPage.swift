@@ -104,7 +104,7 @@ public enum EpisodeSocialService {
             rating: list.rating,
             ratingCount: list.ratingCount,
             heatText: stats?.heatText ?? "",
-            favoriteCount: detail?.favoriteCount ?? stats?.favoriteCount,
+            favoriteCount: detail?.favoriteCount,
             reviews: list.page.comments,
             reviewTotal: list.page.total)
         result.recordNumber = detail?.recordNumber ?? ""

@@ -2,22 +2,6 @@ import XCTest
 @testable import HongguoCore
 
 final class ParsingTests: XCTestCase {
-    private func page(_ router: Any, extra: String = "") -> String {
-        let json = String(data: try! JSONSerialization.data(withJSONObject: router), encoding: .utf8)!
-        return "<html><head><script>window._ROUTER_DATA = \(json);</script>\(extra)</head><body></body></html>"
-    }
-
-    func testRouterDataHandlesBracesInsideStrings() throws {
-        let html = #"<script>_ROUTER_DATA={"a":"}{\"x","b":{"c":1}};var later={}</script>"#
-        let value = try HTMLData.routerData(html)
-        XCTAssertEqual(value["a"].string, "}{\"x")
-        XCTAssertEqual(value["b"]["c"].number, 1)
-    }
-
-    func testRouterDataMissing() {
-        XCTAssertThrowsError(try HTMLData.routerData("<html></html>"))
-    }
-
     /// The shape of GET video_tab/multi_video_detail as the official app gets it, cut down to the
     /// fields the parser reads. Ids, names and numbers are made up.
     static let officialDetail = #"""
@@ -81,11 +65,11 @@ final class ParsingTests: XCTestCase {
         XCTAssertEqual(details.reviewTotal, 7)
         XCTAssertEqual(details.reviews.map(\.content), ["好看"])
         XCTAssertEqual(details.reviews.first?.rating, 8)
-        XCTAssertEqual(details.likeCount, 5_100)
+        XCTAssertEqual(details.likeCount, 56_805, "the sum of the episodes' likes")
         XCTAssertEqual(details.publishedAt, Date(timeIntervalSince1970: 1_786_809_814))
         let offline = SeriesService.publicDetails(detail: detail, stats: nil, reviews: nil)
         XCTAssertNil(offline.rating)
-        XCTAssertNil(offline.likeCount)
+        XCTAssertEqual(offline.likeCount, 56_805)
         XCTAssertNil(offline.publishedAt)
         XCTAssertEqual(offline.description, "简介")
         var future = stats

@@ -27,22 +27,20 @@ enum AppCommentClient {
     }
 }
 
-/// A series' heat, first-shown time and like count as the official app reads them with POST
+/// A series' heat and first-shown time as the official app reads them with POST
 /// `/reading/distribution/book_pack_fields/inner_feed_detail/v1/` (`req_ids` as numbers, only fields
-/// this channel packs). Signed out.
+/// this channel packs). Signed out. Its `digg_cnt` comes back 0 and its `followed_cnt` does not
+/// match the detail's for some series, so neither is read: the like and collect counts are the
+/// series detail's.
 struct OfficialSeriesStats: Sendable, Equatable {
     /// `stat_info.hot_score_data.Text`, e.g. 5263万热度; "" when there is none.
     var heatText: String
     var heatScore: Int?
     /// `base_info.publish_time`.
     var publishedAt: Date?
-    /// `action_info.digg_cnt`.
-    var likeCount: Int?
-    /// `action_info.followed_cnt`.
-    var favoriteCount: Int?
 
     static let path = "/reading/distribution/book_pack_fields/inner_feed_detail/v1/"
-    static let fields = ["hot_score_data", "publish_time", "digg_cnt", "followed_cnt"]
+    static let fields = ["hot_score_data", "publish_time"]
     private static let cache = TTLCache<OfficialSeriesStats>(limit: 64)
 
     static func load(_ seriesId: String, http: HTTPClient = .shared) async throws -> OfficialSeriesStats {
@@ -70,9 +68,7 @@ struct OfficialSeriesStats: Sendable, Equatable {
         return OfficialSeriesStats(
             heatText: text.count <= 40 ? text : "",
             heatScore: EpisodeSocialService.integer(heat["Score"]).flatMap { $0 > 0 ? $0 : nil },
-            publishedAt: published,
-            likeCount: EpisodeSocialService.integer(entry["action_info"]["digg_cnt"]),
-            favoriteCount: EpisodeSocialService.integer(entry["action_info"]["followed_cnt"]))
+            publishedAt: published)
     }
 }
 
@@ -81,7 +77,7 @@ struct OfficialSeriesStats: Sendable, Equatable {
 /// (`FQCShortPlayCommentListViewModel`: comment_source 1, server_channel 3003, group_type 1,
 /// comment_type 2). Signed out; pages with the reply's cursor.
 struct OfficialSeriesReviews: Sendable, Equatable {
-    /// `extra.credibility_score`, out of 10.
+    /// `extra.credibility_score`, out of 10; nil when not rated yet (the reply gives -1).
     var rating: Double?
     /// `extra.credibility_score_count`.
     var ratingCount: Int?
