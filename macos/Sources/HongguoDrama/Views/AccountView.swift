@@ -137,6 +137,7 @@ struct AccountView: View {
                         account.profile = profile
                         account.message = warning
                         await loadHistory(refresh: true)
+                        await AccountSync.shared.pull()
                         return
                     }
                 }
@@ -159,6 +160,7 @@ struct AccountView: View {
         cancelLogin()
         Task {
             let warning = await AccountService.shared.logout()
+            AccountSync.shared.signedOut()
             account.profile = nil
             account.message = warning
             history = []

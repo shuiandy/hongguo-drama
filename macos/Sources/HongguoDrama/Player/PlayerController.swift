@@ -656,10 +656,11 @@ final class PlayerController {
                 if end.isFinite { bufferedTime = end }
             }
         }
-        if Date().timeIntervalSince(lastSaved) >= 5, isPlaying { persistPosition() }
+        if Date().timeIntervalSince(lastSaved) >= 5, isPlaying { persistPosition(periodic: true) }
     }
 
-    func persistPosition(finished: Bool = false) {
+    /// `periodic` for the 5-second save while playing; the account gets those at most every 15 s.
+    func persistPosition(finished: Bool = false, periodic: Bool = false) {
         guard let list = episodes, let episode = currentEpisode, player.currentItem != nil else { return }
         lastSaved = Date()
         let position = finished ? 0 : player.currentTime().seconds
@@ -669,6 +670,9 @@ final class PlayerController {
                                            position: position.isFinite ? position : 0,
                                            duration: duration.isFinite ? duration : 0, finished: finished)
         AppModel.shared.refreshHistory()
+        AccountSync.shared.progressSaved(seriesId: list.seriesId, vid: episode.vid, episodeIndex: episode.index,
+                                         position: position.isFinite ? position : 0, duration: duration.isFinite ? duration : 0,
+                                         finished: finished, force: !periodic)
     }
 }
 

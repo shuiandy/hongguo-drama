@@ -53,6 +53,7 @@ struct HistoryView: View {
                                     }
                                     Divider()
                                     Button("删除记录", role: .destructive) {
+                                        AccountSync.shared.historyRemoved(record)
                                         model.store.removeHistory(record.seriesId)
                                         model.refreshHistory()
                                     }

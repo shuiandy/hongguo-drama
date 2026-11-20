@@ -47,6 +47,9 @@ struct SettingsAccountPane: View {
                 Toggle(isOn: $model.settings.cloudHistorySync) {
                     SettingLabel("显示云端观看记录", note: "在“观看记录”里合并手机上看过的剧，较新的进度为准。")
                 }
+                Toggle(isOn: $model.settings.accountWriteSync) {
+                    SettingLabel("双向同步到账号", note: "在这台 Mac 上的收藏、点赞、观看进度和删除的记录也会写到红果账号；账号里的收藏和点赞同步到这里。清空全部记录只清本机。")
+                }
                 LabeledContent {
                     Button(model.cloudSyncing ? "同步中…" : "立即同步") {
                         Task { await model.syncCloudHistory(force: true, manual: true) }
@@ -68,9 +71,13 @@ struct SettingsAccountPane: View {
 
     private var syncNote: String {
         if !model.cloudSyncMessage.isEmpty { return model.cloudSyncMessage }
+        if !AccountSync.shared.message.isEmpty { return AccountSync.shared.message }
         guard model.lastCloudSync > .distantPast else { return "本次打开后还没有同步" }
         let time = model.lastCloudSync.formatted(.relative(presentation: .named))
-        return "\(time) · 共 \(model.lastCloudSyncCount) 条"
+        let sync = AccountSync.shared
+        let extra = model.settings.accountWriteSync && sync.lastPull > .distantPast
+            ? " · 账号收藏 \(sync.cloudFavoriteCount) 部 · 点赞 \(sync.cloudLikeCount) 集" : ""
+        return "\(time) · 观看记录 \(model.lastCloudSyncCount) 条\(extra)"
     }
 
     private func openLoginPage() {
@@ -81,6 +88,7 @@ struct SettingsAccountPane: View {
     private func logout() {
         Task {
             let warning = await AccountService.shared.logout()
+            AccountSync.shared.signedOut()
             account.profile = nil
             account.message = warning
         }

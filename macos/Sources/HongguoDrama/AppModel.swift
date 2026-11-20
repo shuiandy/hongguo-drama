@@ -276,6 +276,7 @@ final class AppModel {
         do {
             let liked = try library.toggleEpisodeLike(seriesId: seriesId, title: title, vid: vid)
             refreshLibrary()
+            AccountSync.shared.likeChanged(seriesId: seriesId, vid: vid, liked: liked)
             return liked
         } catch {
             PlayerController.shared.show(toast: describe(error))
@@ -287,8 +288,10 @@ final class AppModel {
 
     @discardableResult
     func toggleFavorite(seriesId: String, title: String, cover: String) -> Bool {
-        let value = (try? library.toggleFavorite(seriesId: seriesId, title: title, cover: cover)) ?? false
+        let before = library.isFavorite(seriesId)
+        let value = (try? library.toggleFavorite(seriesId: seriesId, title: title, cover: cover)) ?? before
         refreshLibrary()
+        if value != before { AccountSync.shared.favoriteChanged(seriesId: seriesId, title: title, collected: value) }
         return value
     }
 
@@ -345,15 +348,17 @@ final class AppModel {
     private(set) var cloudSyncing = false
     var cloudSyncMessage = ""
 
-    /// Pulls the signed-in account's cloud watch history into the local history (newer side wins).
-    /// The website only exposes reading the cloud history, so local progress is not uploaded.
-    /// `force` skips the one-minute throttle; `manual` (a button) also runs when 显示云端观看记录 is off.
+    /// Pulls the signed-in account's cloud watch history into the local history (newer side wins),
+    /// then, with 双向同步 on, the account's favourites and likes (`AccountSync`). Local progress
+    /// goes up as it is saved. `force` skips the one-minute throttle; `manual` (a button) also
+    /// runs when 显示云端观看记录 is off.
     func syncCloudHistory(force: Bool = false, manual: Bool = false) async {
-        guard manual || settings.cloudHistorySync else { return }
         guard !cloudSyncing, force || Date().timeIntervalSince(lastCloudSync) > 60 else { return }
         guard await AccountService.shared.status().profile != nil else { return }
         cloudSyncing = true
         defer { cloudSyncing = false }
+        await AccountSync.shared.pull()
+        guard manual || settings.cloudHistorySync else { lastCloudSync = Date(); return }
         do {
             let items = try await AccountService.shared.history(refresh: true)
             lastCloudSync = Date()

@@ -89,6 +89,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var autoExportText: Bool = false
     /// Merge the signed-in account's cloud watch history into 观看记录.
     public var cloudHistorySync: Bool = true
+    /// 双向同步: favourites, episode likes, watch progress and removed history rows are also
+    /// written to the signed-in account, and the account's favourites and likes come back here.
+    public var accountWriteSync: Bool = true
     /// App 搜索优先: try the Hongguo App search before the website (falls back automatically).
     public var searchAppFirst: Bool = false
     /// 同时保存整剧资料: cover, intro and NFO files next to downloaded episodes.
@@ -205,6 +208,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         checkUpdatesAtLaunch = (try? c.decodeIfPresent(Bool.self, forKey: .checkUpdatesAtLaunch)) ?? d.checkUpdatesAtLaunch
         autoExportText = (try? c.decodeIfPresent(Bool.self, forKey: .autoExportText)) ?? d.autoExportText
         cloudHistorySync = (try? c.decodeIfPresent(Bool.self, forKey: .cloudHistorySync)) ?? d.cloudHistorySync
+        accountWriteSync = (try? c.decodeIfPresent(Bool.self, forKey: .accountWriteSync)) ?? d.accountWriteSync
         searchAppFirst = (try? c.decodeIfPresent(Bool.self, forKey: .searchAppFirst)) ?? d.searchAppFirst
         downloadMetadata = (try? c.decodeIfPresent(Bool.self, forKey: .downloadMetadata)) ?? d.downloadMetadata
         byteVC2Conversion = (try? c.decodeIfPresent(Bool.self, forKey: .byteVC2Conversion)) ?? d.byteVC2Conversion

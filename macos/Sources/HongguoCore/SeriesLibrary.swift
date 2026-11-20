@@ -138,6 +138,17 @@ public final class SeriesLibrary: @unchecked Sendable {
         return liked
     }
 
+    /// Sets the heart on one episode to `liked` (account sync). Returns the series record.
+    @discardableResult
+    public func setEpisodeLike(_ liked: Bool, seriesId: String, title: String, vid: String) throws -> LibrarySeries {
+        let id = vid.trimmingCharacters(in: .whitespaces)
+        guard !id.isEmpty else { throw HongguoError(.input, "分集编号无效") }
+        return try mutate(seriesId: seriesId, title: title, now: Date()) { item in
+            item.likedEpisodeIds.removeAll { $0 == id }
+            if liked { item.likedEpisodeIds.append(id) }
+        }
+    }
+
     /// Removes the local record only; downloaded videos are untouched.
     public func remove(_ seriesId: String) throws {
         try lock.withLock {
