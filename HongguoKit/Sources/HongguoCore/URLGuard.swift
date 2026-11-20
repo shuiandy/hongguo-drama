@@ -175,7 +175,7 @@ public enum URLGuard {
     /// private network. Results are cached per host (up to 60 or 300 seconds, see `ProxyPolicy`).
     public static func check(_ url: URL) async throws {
         let policy = ProxyPolicy.current
-        try await check(url, policy: policy, cache: cache, resolveHost: resolve,
+        try await check(url, policy: policy, cache: cache, resolveHost: { try await resolve($0) },
                         resolveDoH: { try await DoHResolver.resolveA($0, timeout: policy.dohTimeout) })
     }
 
