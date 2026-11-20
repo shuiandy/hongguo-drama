@@ -11,6 +11,9 @@ public final class SeriesService: Sendable {
     private let playCache = TTLCache<PlayInfo>(limit: 128)
     private let detailsCache = TTLCache<PublicDetails>(limit: 64)
     private let failedWeb = TTLCache<Bool>(limit: 128)
+    /// Set for a while after the App play endpoints answered empty, so later episodes go straight
+    /// to the website's fallback channel instead of waiting on App retries first.
+    private let appPlayPaused = TTLCache<Bool>(limit: 1)
 
     public init(http: HTTPClient = .shared) {
         self.http = http
@@ -123,7 +126,7 @@ public final class SeriesService: Sendable {
     // MARK: Play URL
 
     /// Resolves a playable URL. Order: the fast App source (one anonymous device kept in memory,
-    /// signed player/v1; an empty reply is asked again at once, then after 1.5 s and 4 s), then the queued App source with
+    /// signed player/v1; an empty reply is asked again at once), then the website's fallback channel, then the queued App source with
     /// its legacy signature, then the legacy preload API, and the official web page last.
     /// The web page comes last because it answers with a preview or 404 for nearly every
     /// episode and costs about two seconds each time; a web address that just failed to play
@@ -140,34 +143,43 @@ public final class SeriesService: Sendable {
         if !force, let cached = await playCache.get(key) { return cached }
         var failures: [String] = []
         var refused = false
-        // Empty replies come in short bursts: ask again at once, then after 1.5 s and 4 s (the
-        // source drops its device after an empty reply, so the later tries use a fresh one).
-        let emptyBackoff: [Double] = [0, 1.5, 4]
-        for attempt in 0..<emptyBackoff.count {
-            if emptyBackoff[attempt] > 0 {
-                do { try await Task.sleep(for: .seconds(emptyBackoff[attempt])) } catch {
+        let appPaused = await appPlayPaused.get("app") == true
+        var empty = false
+        if !appPaused {
+            for attempt in 0..<2 {
+                do {
+                    let info = try await fastSource.resolve(vid: vid, force: force || attempt > 0)
+                    await playCache.set(key, info, ttl: 30)
+                    return info
+                } catch let error as AppSourceError {
+                    if error.code == .cancelled { throw error.hongguoError }
+                    refused = error.isHardRejection
+                    empty = error.code == .emptyResponse
+                    if attempt == 0, empty { continue }
+                    failures.append("App：\(Self.describe(error))")
+                    break
+                } catch is CancellationError {
                     throw HongguoError(.cancelled, "已取消 App 片源请求")
+                } catch {
+                    failures.append("App：\(Self.describe(error))")
+                    break
                 }
             }
-            do {
-                let info = try await fastSource.resolve(vid: vid, force: force || attempt > 0)
-                await playCache.set(key, info, ttl: 30)
-                return info
-            } catch let error as AppSourceError {
-                if error.code == .cancelled { throw error.hongguoError }
-                refused = error.isHardRejection
-                if attempt < emptyBackoff.count - 1, error.code == .emptyResponse { continue }
-                failures.append("App：\(Self.describe(error))")
-                break
-            } catch is CancellationError {
-                throw HongguoError(.cancelled, "已取消 App 片源请求")
-            } catch {
-                failures.append("App：\(Self.describe(error))")
-                break
-            }
+            if empty || refused { await appPlayPaused.set("app", true, ttl: 300) }
         }
-        // After an explicit refusal the same request through the queue would only be refused again.
-        if !refused {
+        // The website's fallback channel: plain H.264 MP4 (360p), no App signing or device. Since
+        // November 2026 the App play endpoints often answer empty for every client but the official app.
+        do {
+            let info = try await playInfoFromWebFallback(vid: vid)
+            await playCache.set(key, info, ttl: 30)
+            return info
+        } catch let error as HongguoError where error.kind == .cancelled {
+            throw error
+        } catch {
+            failures.append("官网备用通道：\(Self.describe(error))")
+        }
+        // After an explicit refusal or an empty reply the same request through the queue would fail too.
+        if !refused, !appPaused, !empty {
             do {
                 let info = try await appSource.playInfo(vid: vid)
                 await playCache.set(key, info, ttl: 30)
@@ -230,6 +242,44 @@ public final class SeriesService: Sendable {
 
     static func describe(_ error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+
+    static let webFallbackEndpoint = URL(string: "\(Site.origin)/api/video/protected/fallback-play-info")!
+
+    /// `POST /api/video/protected/fallback-play-info` with `{"item_id": vid}` answers
+    /// `{"main_url", "url_expire", "base_resp": {"StatusCode": 0}}`: a full-length H.264 MP4.
+    func playInfoFromWebFallback(vid: String) async throws -> PlayInfo {
+        var options = pageOptions
+        options.timeout = 8
+        options.maxBytes = 64 * 1024
+        options.acceptStatus = 200...499
+        options.headers["Accept"] = "application/json"
+        options.headers["Origin"] = Site.origin
+        let body = try JSONSerialization.data(withJSONObject: ["item_id": vid])
+        let response: HTTPResponse
+        do {
+            response = try await http.post(Self.webFallbackEndpoint, json: body, options: options)
+        } catch is CancellationError {
+            throw HongguoError(.cancelled, "已取消官网片源请求")
+        }
+        return try Self.parseWebFallback(response.data, status: response.status, vid: vid)
+    }
+
+    static func parseWebFallback(_ data: Data, status: Int, vid: String, now: Date = Date()) throws -> PlayInfo {
+        guard let json = try? JSONValue.parse(String(decoding: data, as: UTF8.self)) else {
+            throw HongguoError(.format, data.isEmpty ? "官网备用通道返回空响应（HTTP \(status)）" : "官网备用通道返回无法解析")
+        }
+        if let error = json["error"].string { throw HongguoError(.unavailable, "官网备用通道不可用（\(error.prefix(40))）") }
+        guard status == 200, (json["base_resp"]["StatusCode"].number ?? 0) == 0,
+              let raw = json["main_url"].string, let url = URL(string: raw), url.scheme == "https",
+              URLGuard.isPublicURL(url) else {
+            throw HongguoError(.unavailable, "官网备用通道未返回片源（HTTP \(status)）")
+        }
+        if let expire = json["url_expire"].number, expire > 0, Date(timeIntervalSince1970: expire) < now.addingTimeInterval(30) {
+            throw HongguoError(.unavailable, "官网备用通道返回的地址已过期")
+        }
+        return PlayInfo(url: url, spadeA: nil, codec: "h264", source: .web, vid: vid,
+                        userAgent: UserAgents.web, referer: Site.referer)
     }
 
     func playInfoFromWeb(vid: String, seriesId: String?) async throws -> PlayInfo {

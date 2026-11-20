@@ -66,3 +66,20 @@ final class EmptySourceProbeLiveTests: XCTestCase {
         print("PROBE\n" + report.joined(separator: "\n"))
     }
 }
+
+final class WebFallbackParseTests: XCTestCase {
+    func testParsesMainURL() throws {
+        let body = #"{"main_url":"https://v3-hgweb.qznovelvod.com/abc/video.mp4?x=1","url_expire":4102444800,"base_resp":{"StatusCode":0,"StatusMessage":""}}"#
+        let info = try SeriesService.parseWebFallback(Data(body.utf8), status: 200, vid: "123")
+        XCTAssertEqual(info.url.host, "v3-hgweb.qznovelvod.com")
+        XCTAssertEqual(info.source, .web)
+        XCTAssertEqual(info.vid, "123")
+    }
+
+    func testRejectsErrorAndExpired() {
+        XCTAssertThrowsError(try SeriesService.parseWebFallback(Data(#"{"error":"public_fallback_unavailable"}"#.utf8), status: 403, vid: "1"))
+        let expired = #"{"main_url":"https://v3-hgweb.qznovelvod.com/a.mp4","url_expire":1000,"base_resp":{"StatusCode":0}}"#
+        XCTAssertThrowsError(try SeriesService.parseWebFallback(Data(expired.utf8), status: 200, vid: "1"))
+        XCTAssertThrowsError(try SeriesService.parseWebFallback(Data(), status: 200, vid: "1"))
+    }
+}
