@@ -239,7 +239,7 @@ public actor FastAppPlaybackSource {
                                             minimumPixels: pending.minimumPixels)
     }
 
-    private func requestModels(vids: [String], deadline: Date) async throws -> JSONValue {
+    func requestModels(vids: [String], deadline: Date) async throws -> JSONValue {
         let payloadObject: [String: Any] = [
             "biz_param": ["detail_page_version": 0, "device_level": 3, "disable_digg_stat": false,
                           "disable_video_relate_book": false, "need_all_video_definition": true, "need_mp4_align": false,

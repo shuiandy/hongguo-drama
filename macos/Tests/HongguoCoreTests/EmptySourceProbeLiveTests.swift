@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: GPL-3.0-only
+import XCTest
+@testable import HongguoCore
+
+/// Opt-in probe for series whose episodes come back empty from every source:
+/// `HONGGUO_LIVE=1 HONGGUO_PROBE="关键词" swift test --filter EmptySourceProbeLiveTests`.
+/// Read-only. Prints outcomes, key names and short scalar values only (no signed addresses,
+/// no device identity).
+final class EmptySourceProbeLiveTests: XCTestCase {
+    private func shape(_ value: JSONValue, depth: Int = 0) -> String {
+        if let object = value.object {
+            guard depth < 2 else { return "{\(object.count) keys}" }
+            let parts = object.keys.sorted().prefix(25).map { key -> String in
+                let lowered = key.lowercased()
+                if lowered.contains("url") || lowered.contains("api") || lowered.contains("token") || lowered.contains("key") {
+                    return "\(key):<\(object[key]!.string?.count ?? -1)ch>"
+                }
+                return "\(key):\(shape(object[key]!, depth: depth + 1))"
+            }
+            return "{" + parts.joined(separator: ", ") + "}"
+        }
+        if let text = value.string { return text.count > 40 ? "\"<\(text.count)ch>\"" : "\"\(text)\"" }
+        if let number = value.number { return String(number) }
+        if value.isNull { return "null" }
+        return "\(value)".prefix(40).description
+    }
+
+    func testProbeSeries() async throws {
+        let env = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(env["HONGGUO_LIVE"] == "1", "set HONGGUO_LIVE=1 to run")
+        let keyword = env["HONGGUO_PROBE"] ?? "女剑仙追我到地球"
+        let search = try await HongguoSearch().search(keyword)
+        let series = SeriesService()
+        let fast = FastAppPlaybackSource()
+        var report: [String] = ["search channel \(search.channel.rawValue), \(search.results.count) results"]
+        for summary in search.results.prefix(5) where summary.title.contains(keyword.prefix(4)) {
+            report.append("== \(summary.title) id=\(summary.seriesId) eps=\(summary.episodeCount)")
+            guard let list = try? await series.episodes(seriesId: summary.seriesId) else {
+                report.append("   episodes: failed"); continue
+            }
+            report.append("   list \(list.episodes.count) eps, web lists \(list.webAccessibleEpisodes.map(String.init) ?? "?")")
+            let picks = Array(Set([1, 2, list.episodes.count / 2, list.episodes.count - 1, list.episodes.count])).sorted().filter { $0 >= 1 && $0 <= list.episodes.count }
+            for index in picks {
+                let ep = list.episodes[index - 1]
+                var line = "   ep\(index) vid(\(ep.vid.count)ch) webAvail=\(ep.webAvailable.map(String.init) ?? "?"): "
+                do {
+                    let info = try await fast.resolve(vid: ep.vid, force: true)
+                    line += "fast ok \(info.source)"
+                } catch let error as AppSourceError {
+                    line += "fast \(error.code.rawValue) \(error.message)"
+                    do {
+                        let raw = try await fast.requestModels(vids: [ep.vid], deadline: Date().addingTimeInterval(10))
+                        line += "\n      raw: \(shape(raw))"
+                    } catch let error as AppSourceError {
+                        line += "\n      raw: \(error.code.rawValue) status=\(error.status.map(String.init) ?? "-") \(error.message)"
+                    }
+                    do { _ = try await AppSource.shared.playInfo(vid: ep.vid); line += "\n      queue ok" }
+                    catch { line += "\n      queue: \((error as? LocalizedError)?.errorDescription ?? "\(error)")" }
+                } catch {
+                    line += "fast other \(error)"
+                }
+                report.append(line)
+                try await Task.sleep(for: .milliseconds(600))
+            }
+        }
+        print("PROBE\n" + report.joined(separator: "\n"))
+    }
+}
