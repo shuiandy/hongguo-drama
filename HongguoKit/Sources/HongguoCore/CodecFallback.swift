@@ -64,7 +64,7 @@ public enum CodecFallback {
         let payload = try AppSource.modelPayload(vids: [vid])
         let identity = try await PersistentAppDevice.shared.get(transport: transport)
         let dToken = await PersistentAppDevice.shared.dTokenHeaders()
-        let signed = try AppSource.modelRequest(base: AppSource.playerSceneAPI, payload: payload, identity: identity)
+        let signed = try AppSource.modelRequest(base: AppSource.playerAPI, payload: payload, identity: identity)
         let response = try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers + dToken, body: signed.body,
                                                        deadline: Date().addingTimeInterval(12))
         guard (response["Code"].number ?? response["code"].number ?? 0) == 0 else {

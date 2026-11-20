@@ -2,9 +2,11 @@
 // The play source of every app (Mac, iOS, tvOS): the official iOS 7.4.3 client's logic.
 // Mirrors official iOS 7.4.3 `BDInstall` + `FQVPlayerApiService` + `FQVShortVideoVideoModelCacheManager`:
 // - uses the Keychain-persisted, 6-hour-renewed & activated `PersistentAppDevice` with `x-tt-dt`,
+//   and never the website login Cookie: since 2026-11-20 a play request carrying it comes back
+//   empty on every path (the account's own requests still use it),
 // - caches resolved `PlayInfo` on disk respecting server `expire_time`,
 // - targets official iOS 7.4.3 `mGetVideoModelV2` (`/novel/player/multi_video_model/player/v1/`)
-//   primary/alternate plus plain iOS `/multi_video_model/v1/`,
+//   on both hosts, with the plain iOS `/multi_video_model/v1/` (`mGetVideoModel`) asked first,
 // - proactively upgrades ByteVC2-only episodes to H.264/HEVC via `CodecFallback` when available,
 // - self-heals on empty replies with one BDInstall renewal of the persistent device, nothing else.
 // There is no other source: no Android profile, website channel or web page.
@@ -267,12 +269,11 @@ public actor AuthenticatedPlaybackSource {
             do {
                 let identity = try await PersistentAppDevice.shared.get(transport: self.transport)
                 let dToken = await PersistentAppDevice.shared.dTokenHeaders()
-                let auth = PersistentAppDevice.authHeaders()
                 let entries = try await self.requestModels(
                     vids: chunk,
-                    channels: [.multiScenePrimary],
+                    channels: [.multiPlainIOS],
                     identity: identity,
-                    extraHeaders: dToken + auth,
+                    extraHeaders: dToken,
                     deadline: Date().addingTimeInterval(8)
                 )
                 guard !Task.isCancelled else { return }
@@ -363,20 +364,20 @@ public actor AuthenticatedPlaybackSource {
 
         var identity = try await PersistentAppDevice.shared.get(transport: transport)
         var dToken = await PersistentAppDevice.shared.dTokenHeaders()
-        let savedCookie = PersistentAppDevice.authHeaders()
 
         var entries: JSONValue?
         var routeTag = "auth-app"
         var lastError: Error?
 
-        // Pass 1: fast official iOS 7.4.3 path (mGetVideoModelV2 scene path primary -> alternate,
-        // then plain iOS v1 path so flipping either server-side route stays transparent; ~400 ms on happy path).
+        // Pass 1: the official iOS 7.4.3 RPC table, plain `mGetVideoModel` first (it answered in every
+        // probe on 2026-11-20 while the scene path went empty twice), then `mGetVideoModelV2`'s scene
+        // path on both hosts so a server-side flip of either route stays transparent.
         do {
             entries = try await requestModels(
                 vids: [vid],
-                channels: [.multiScenePrimary, .multiSceneAlternate, .multiPlainIOS],
+                channels: [.multiPlainIOS, .multiScenePrimary, .multiSceneAlternate],
                 identity: identity,
-                extraHeaders: dToken + savedCookie,
+                extraHeaders: dToken,
                 deadline: deadline
             )
         } catch let error as AppSourceError {
@@ -404,9 +405,9 @@ public actor AuthenticatedPlaybackSource {
                 do {
                     entries = try await requestModels(
                         vids: [vid],
-                        channels: [.multiScenePrimary],
+                        channels: [.multiPlainIOS],
                         identity: identity,
-                        extraHeaders: dToken + savedCookie,
+                        extraHeaders: dToken,
                         deadline: deadline
                     )
                     routeTag = "auth-renew"
@@ -450,7 +451,7 @@ public actor AuthenticatedPlaybackSource {
             if resolved.isByteVC2,
                let fallback = AppSource.parseFallback(model["fallback_api"]), !fallback.isEmpty,
                deadline.timeIntervalSinceNow >= 2 {
-                let extra = dToken + savedCookie
+                let extra = dToken
                 if let hw = await CodecFallback.tryHardwareCodecFallback(
                     fallbackURL: fallback,
                     expectedVideoId: model["video_id"].string,
@@ -486,7 +487,7 @@ public actor AuthenticatedPlaybackSource {
 
     private func resolveFallback(_ pending: PendingFallback, vid: String, deadline: Date) async throws -> (info: PlayInfo, upgraded: Bool) {
         let dToken = await PersistentAppDevice.shared.dTokenHeaders()
-        let extra = dToken + PersistentAppDevice.authHeaders()
+        let extra = dToken
         let outer = try await transport.requestJSON(
             pending.fallbackURL,
             headers: [("User-Agent", AppSource.iosPlayerUA)] + extra,

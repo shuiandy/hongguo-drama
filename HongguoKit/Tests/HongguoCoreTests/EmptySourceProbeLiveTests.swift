@@ -36,8 +36,11 @@ final class EmptySourceProbeLiveTests: XCTestCase {
         var report: [String] = ["search channel \(search.channel.rawValue), \(search.results.count) results"]
         for summary in search.results.prefix(5) where summary.title.contains(keyword.prefix(4)) {
             report.append("== \(summary.title) id=\(summary.seriesId) eps=\(summary.episodeCount)")
-            guard let list = try? await series.episodes(seriesId: summary.seriesId) else {
-                report.append("   episodes: failed"); continue
+            let list: SeriesEpisodes
+            do {
+                list = try await series.episodes(seriesId: summary.seriesId)
+            } catch {
+                report.append("   episodes: failed \((error as? LocalizedError)?.errorDescription ?? "\(error)")"); continue
             }
             report.append("   list \(list.episodes.count) eps")
             let picks = Array(Set([1, 2, list.episodes.count / 2, list.episodes.count - 1, list.episodes.count])).sorted().filter { $0 >= 1 && $0 <= list.episodes.count }
@@ -53,7 +56,7 @@ final class EmptySourceProbeLiveTests: XCTestCase {
                     do {
                         let identity = try await PersistentAppDevice.shared.get(transport: transport)
                         let dToken = await PersistentAppDevice.shared.dTokenHeaders()
-                        let request = try AppSource.modelRequest(base: AppSource.playerSceneAPI,
+                        let request = try AppSource.modelRequest(base: AppSource.playerAPI,
                                                                  payload: try AppSource.modelPayload(vids: [ep.vid]), identity: identity)
                         let raw = try await transport.requestJSON(request.url, method: "POST", headers: request.headers + dToken,
                                                                   body: request.body, deadline: Date().addingTimeInterval(10))
@@ -99,6 +102,24 @@ final class PlayShapeLiveTests: XCTestCase {
                 }
                 try await Task.sleep(for: .seconds(1))
             }
+        }
+        // Whether the device token matters: the first route once more without it.
+        let bare = try AppSource.modelRequest(base: AppSource.playerAPI, payload: payload, identity: identity)
+        do {
+            let json = try await transport.requestJSON(bare.url, method: "POST", headers: bare.headers, body: bare.body,
+                                                       deadline: Date().addingTimeInterval(10))
+            report.append("plain path without x-tt-dt: code=\(json["code"].number.map { String($0) } ?? "-")")
+        } catch let error as AppSourceError {
+            report.append("plain path without x-tt-dt: \(error.code.rawValue)")
+        }
+        // The play source itself, end to end, no cache.
+        let source = AuthenticatedPlaybackSource(diskCache: VideoModelDiskCache(fileURL: nil))
+        let started = Date()
+        do {
+            let resolved = try await source.resolveWithMeta(vid: vid, force: true)
+            report.append("source: ok route=\(resolved.route) \(resolved.info.codec) \(resolved.info.quality?.shortSide ?? 0)p \(Int(Date().timeIntervalSince(started) * 1000)) ms")
+        } catch {
+            report.append("source: failed \((error as? LocalizedError)?.errorDescription ?? "\(error)")")
         }
         print("SHAPES\n" + report.joined(separator: "\n"))
     }

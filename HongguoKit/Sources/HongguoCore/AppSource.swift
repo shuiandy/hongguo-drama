@@ -145,6 +145,8 @@ extension Task where Success == Never, Failure == Never {
 enum AppSource {
     /// `FQVPlayerApiService.mGetVideoModelV2` of the official iOS 7.4.3 client (`/multi_video_model/:dr_scene/v1/`).
     static let playerSceneAPI = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/player/v1/"
+    /// `FQVPlayerApiService.mGetVideoModel` (`/multi_video_model/v1/`), the route asked first.
+    static let playerAPI = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/"
     /// The official iOS 7.4.3 client's User-Agent, sent on model, `fallback_api` and media requests.
     static let iosPlayerUA = "Eggplant/7.4.3 (iPhone; iOS 18.3; Scale/3.00)"
     static let mediaDomains = ["qznovelvod.com", "fqnovelvod.com", "douyinvod.com"]
