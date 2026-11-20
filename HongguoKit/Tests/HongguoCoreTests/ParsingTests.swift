@@ -18,57 +18,43 @@ final class ParsingTests: XCTestCase {
         XCTAssertThrowsError(try HTMLData.routerData("<html></html>"))
     }
 
-    func testSearchParsing() throws {
-        let payload: [String: Any] = [
-            "searchList": [
-                ["video_data": ["series_id": "7400000000000000001", "series_name": "霸总 &amp; 我", "series_cover": "https:\\/\\/p.example\\/a.jpg",
-                                "episode_right_text": "全80集", "tags": ["甜宠", ["name": "都市"]]]],
-                ["video_data": [:], "keyword": "7400000000000000002", "name": "仅关键字"],
-                ["video_data": ["series_id": "7400000000000000001", "series_name": "重复"]],
-                ["video_data": ["series_id": "12", "series_name": "太短的编号"]],
-            ],
-            "totalCount": 2, "totalPages": 1, "pageNum": 1, "hasMore": false,
-        ]
-        let page = try SearchService.parse(JSONSerialization.data(withJSONObject: payload))
-        XCTAssertEqual(page.results.map(\.seriesId), ["7400000000000000001", "7400000000000000002"])
-        XCTAssertEqual(page.results[0].title, "霸总 & 我")
-        XCTAssertEqual(page.results[0].episodeCount, 80)
-        XCTAssertEqual(page.results[0].tags, ["甜宠", "都市"])
-        XCTAssertEqual(page.results[0].cover, "https://p.example/a.jpg")
-    }
-
-    func testSearchUpstreamError() {
-        XCTAssertThrowsError(try SearchService.parse(Data(#"{"code":"rate_limited","message":"busy"}"#.utf8)))
-        XCTAssertThrowsError(try SearchService.parse(Data("<html>".utf8)))
-    }
-
-    func testCatalogParsing() throws {
-        let html = page(["loaderData": ["category_page": [
-            "categoryRoute": ["contentType": "real-drama"],
-            "recommendList": [
-                ["series_id": "7400000000000000001", "series_name": "剧一", "episode_cnt": 60, "episode_right_text": "全60集", "tags": ["逆袭"]],
-                ["series_id": "bad", "series_name": "无效"],
-            ],
-            "selectorList": [["items": [["selector_item_id": "romance", "show_name": "恋爱"], ["selector_item_id": "BAD SLUG", "show_name": "x"]]]],
-            "pagination": ["pageNum": 1, "total": 100, "totalPages": 5],
+    func testEpisodeListFromPlayerPage() throws {
+        let html = page(["loaderData": ["player_(series_id)/page": [
+            "series_id": "7400000000000000001",
+            "seriesDetail": ["series_id": "7400000000000000001", "series_name": "测试剧", "series_cover": "https://p.example/c.jpg",
+                             "vid_list": ["7400000000000000011", "7400000000000000012", 7400000000000000013], "accessible_episode_cnt": 2],
         ]]])
-        let result = try CatalogService.parseCatalog(html, kind: .realDrama, page: 1, sourceURL: CatalogService.url(kind: .realDrama, genre: nil, page: 1))
-        XCTAssertEqual(result.results.count, 1)
-        XCTAssertEqual(result.results[0].completionStatus, .completed)
-        XCTAssertEqual(result.genres, [Genre(slug: "romance", label: "恋爱")])
-        XCTAssertEqual(result.totalPages, 5)
+        let result = try SeriesService.parseEpisodeList(html, seriesId: "7400000000000000001")
+        XCTAssertEqual(result.title, "测试剧")
+        XCTAssertEqual(result.source, .web)
+        XCTAssertEqual(result.episodes.map(\.index), [1, 2, 3])
+        XCTAssertEqual(result.episodes.last?.vid, "7400000000000000013")
+        // Every episode plays through the App source, whatever the website lets anonymous viewers see.
+        XCTAssertEqual(result.episodes.map(\.webAvailable), [nil, nil, nil])
+        XCTAssertNil(result.webAccessibleEpisodes)
     }
 
-    func testRankingFallbackFromArticles() throws {
-        let html = """
-        <title>热播榜</title>
-        <article><span>1</span><h2 id="rank-title-7400000000000000001">榜首剧</h2>
-        <a href="/detail?series_id=7400000000000000001">看</a><p>1.2万热度</p></article>
-        """
-        let result = try CatalogService.parseRanking(html, kind: .hotDrama, page: 1, sourceURL: CatalogService.url(kind: .hotDrama, genre: nil, page: 1))
-        XCTAssertEqual(result.results.first?.title, "榜首剧")
-        XCTAssertEqual(result.results.first?.rank, 1)
-        XCTAssertEqual(result.results.first?.heat, "1.2万热度")
+    func testEpisodeListFromDetailPage() throws {
+        let html = page(["loaderData": ["detail_page": [
+            "isSuccess": true,
+            "seriesDetail": ["series_id": "123456", "series_name": "详情页", "vid_list": ["11", "12"]],
+        ]]])
+        let result = try SeriesService.parseEpisodeList(html, seriesId: "123456")
+        XCTAssertEqual(result.episodes.map(\.vid), ["11", "12"])
+    }
+
+    func testEpisodeListRejectsOtherSeries() {
+        let html = page(["loaderData": ["detail_page": [
+            "seriesDetail": ["series_id": "999999", "vid_list": ["1"]],
+        ]]])
+        XCTAssertThrowsError(try SeriesService.parseEpisodeList(html, seriesId: "123456"))
+    }
+
+    func testEpisodeListRejectsDuplicateVids() {
+        let html = page(["loaderData": ["detail_page": [
+            "seriesDetail": ["series_id": "123456", "vid_list": ["1", "1"]],
+        ]]])
+        XCTAssertThrowsError(try SeriesService.parseEpisodeList(html, seriesId: "123456"))
     }
 
     func testSeriesIdFromShareURLs() {

@@ -19,8 +19,6 @@ final class AppSearchLiveTests: XCTestCase {
             let next = try await AppSearchService().search(keyword, page: 2, cursor: app.cursor)
             report.append("app search page 2: \(next.results.count)")
         }
-        let combined = try await HongguoSearch().search(keyword)
-        report.append("combined: channel=\(combined.channel.rawValue) results=\(combined.results.count) newRelease=\(combined.newReleaseIds.count) notice=\(combined.notice)")
         print("APP-SEARCH-LIVE\n" + report.joined(separator: "\n"))
         XCTAssertFalse(releases.items.isEmpty, report.joined(separator: "\n"))
         XCTAssertFalse(app.results.isEmpty, report.joined(separator: "\n"))

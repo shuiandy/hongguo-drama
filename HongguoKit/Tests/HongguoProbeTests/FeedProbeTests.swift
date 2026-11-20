@@ -182,7 +182,7 @@ final class FindProbeTests: XCTestCase {
             throw XCTSkip("set HONGGUO_PROBE=find, HONGGUO_TITLE and HONGGUO_VID")
         }
         let service = SeriesService()
-        let found = try await HongguoSearch().search(title).results
+        let found = try await AppSearchService().search(title).results
         for series in found.prefix(5) {
             let list = try await service.episodes(seriesId: series.seriesId)
             if let episode = list.episodes.first(where: { $0.vid == vid }) {
@@ -203,7 +203,7 @@ final class SeriesTabProbeTests: XCTestCase {
             throw XCTSkip("set HONGGUO_PROBE=series")
         }
         let query = ProcessInfo.processInfo.environment["HONGGUO_TITLE"] ?? "直男上恋综气哭前女友"
-        let found = try await HongguoSearch().search(query, appFirst: true).results
+        let found = try await AppSearchService().search(query).results
         guard let first = found.first else {
             print("PROBE series: no search result for \(query)")
             return
@@ -235,12 +235,12 @@ final class SeriesTabProbeTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["HONGGUO_PROBE"] == "catalog" else {
             throw XCTSkip("set HONGGUO_PROBE=catalog")
         }
-        // 1. Episodes + Synopsis (App API first)
-        let eps = try await EpisodeSocialService.episodes(seriesId: "7675312158082616345")
-        let intro = await EpisodeSocialService.synopsis(seriesId: "7675312158082616345")
+        // 1. Episodes + synopsis (the website's series pages)
+        let eps = try await SeriesService().episodes(seriesId: "7675312158082616345")
+        let intro = try await SeriesService().publicDetails(seriesId: "7675312158082616345").description
         print("PROBE episodes: count=\(eps.episodes.count) source=\(eps.source) title=\(eps.title) introLen=\(intro.count)")
         XCTAssertGreaterThan(eps.episodes.count, 50)
-        XCTAssertEqual(eps.source, .api)
+        XCTAssertEqual(eps.source, .web)
         XCTAssertFalse(intro.isEmpty)
 
         // 2. Reviews on website-404 drama (S3 7692377412511730713) falls back to App detail
@@ -249,8 +249,8 @@ final class SeriesTabProbeTests: XCTestCase {
         XCTAssertFalse(rev.heatText.isEmpty)
         XCTAssertNotNil(rev.favoriteCount)
 
-        // 3. Search (App first, preserving HEIC covers for iOS)
-        let searchResults = try await DiscoveryAccess.search("收租精神小妹")
+        // 3. Search (the App search, HEIC covers kept)
+        let searchResults = try await AppSearchService().search("收租精神小妹").results
         let withCovers = searchResults.filter { !$0.cover.isEmpty }.count
         print("PROBE search: count=\(searchResults.count) withCovers=\(withCovers) first=\(searchResults.first?.title ?? "-") cover=\(searchResults.first?.cover.prefix(60) ?? "-")")
         XCTAssertFalse(searchResults.isEmpty)

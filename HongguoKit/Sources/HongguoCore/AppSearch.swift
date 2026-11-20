@@ -1,62 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Ports of src/native/hongguo-app-search.js (signed App search), src/native/hongguo-app-new.js
-// (App "近期上新" catalogue) and the hongguo branch of `searchAtSourcePage` in main.js, which
-// combines the website search with both.
+// The App search (`/reading/bookapi/search/tab/v`), the only search every app uses, and the
+// App "近期上新" catalogue (a list of its own, not a search fallback). Ports of
+// src/native/hongguo-app-search.js and src/native/hongguo-app-new.js. No website search.
 import Foundation
 
 // MARK: - Title helpers
 
 public enum SearchText {
-    /// NFKC, lower case, without spaces, punctuation and symbols (`normalizeTitle`).
-    public static func normalize(_ value: String) -> String {
-        let folded = value.precomposedStringWithCompatibilityMapping.lowercased()
-        return String(String.UnicodeScalarView(folded.unicodeScalars.filter { scalar in
-            let p = scalar.properties
-            if p.isWhitespace { return false }
-            switch p.generalCategory {
-            case .connectorPunctuation, .dashPunctuation, .openPunctuation, .closePunctuation, .initialPunctuation,
-                 .finalPunctuation, .otherPunctuation, .mathSymbol, .currencySymbol, .modifierSymbol, .otherSymbol:
-                return false
-            default: return true
-            }
-        }))
-    }
-
-    /// Up to two looser queries: the title without punctuation, then its first clause.
-    public static func relaxedQueries(_ keyword: String) -> [String] {
-        let text = keyword.precomposedStringWithCompatibilityMapping.trimmingCharacters(in: .whitespacesAndNewlines)
-        let stripped = normalizeKeepingCase(text)
-        var out: [String] = []
-        if !stripped.isEmpty, stripped != text { out.append(stripped) }
-        let clauses = splitClauses(text)
-        if let first = clauses.first(where: { $0.count >= 2 }), first != text, !out.contains(first) { out.append(first) }
-        return Array(out.prefix(2))
-    }
-
-    static func isSeparator(_ scalar: Unicode.Scalar) -> Bool {
-        if scalar.properties.isWhitespace { return true }
-        switch scalar.properties.generalCategory {
-        case .connectorPunctuation, .dashPunctuation, .openPunctuation, .closePunctuation, .initialPunctuation,
-             .finalPunctuation, .otherPunctuation, .mathSymbol, .currencySymbol, .modifierSymbol, .otherSymbol:
-            return true
-        default: return false
-        }
-    }
-
-    static func normalizeKeepingCase(_ text: String) -> String {
-        String(String.UnicodeScalarView(text.unicodeScalars.filter { !isSeparator($0) }))
-    }
-
-    static func splitClauses(_ text: String) -> [String] {
-        var parts: [String] = [], current = String.UnicodeScalarView()
-        for scalar in text.unicodeScalars {
-            if isSeparator(scalar) { if !current.isEmpty { parts.append(String(current)); current = .init() } }
-            else { current.append(scalar) }
-        }
-        if !current.isEmpty { parts.append(String(current)) }
-        return parts
-    }
-
     /// Strips tags and the common entities, collapses whitespace (`cleanTitle`).
     public static func clean(_ value: String?) -> String {
         var text = (value ?? "").replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression)
@@ -66,16 +16,13 @@ public enum SearchText {
         return text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
     }
 
-    /// App covers; HEIC variants are dropped, as AppKit may not show every one of them.
-    public static func appCover(_ value: String?) -> String {
-        let url = (value ?? "").trimmingCharacters(in: .whitespaces)
-        guard url.range(of: "^https?://", options: [.regularExpression, .caseInsensitive]) != nil else { return "" }
-        return url.range(of: "\\.heic(\\?|$)", options: [.regularExpression, .caseInsensitive]) != nil ? "" : url
-    }
-
-    /// Catalogue covers: a HEIC object on the novel picture CDN maps to its public JPEG variant.
+    /// Catalogue covers: a HEIC object on the novel picture CDN maps to its public JPEG variant;
+    /// other HEIC covers are dropped.
     public static func catalogCover(_ value: String?) -> String {
-        let compatible = appCover(value)
+        let text = (value ?? "").trimmingCharacters(in: .whitespaces)
+        let isHTTP = text.range(of: "^https?://", options: [.regularExpression, .caseInsensitive]) != nil
+        let isHEIC = text.range(of: "\\.heic(\\?|$)", options: [.regularExpression, .caseInsensitive]) != nil
+        let compatible = isHTTP && !isHEIC ? text : ""
         guard let value, let url = URL(string: value), url.path.lowercased().hasSuffix(".heic") else { return compatible }
         guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
               let host = url.host?.lowercased(), host.range(of: "(^|\\.)(fqnovelpic\\.com|byteimg\\.com)$", options: .regularExpression) != nil,
@@ -140,7 +87,8 @@ public final class AppSearchService: Sendable {
                                          identity: identity, nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
         let payload: JSONValue
         do {
-            payload = try await transport.requestJSON(signed.url, headers: signed.headers, deadline: deadline)
+            payload = try await transport.requestJSON(signed.url, headers: signed.headers + PersistentAppDevice.authHeaders(),
+                                                      deadline: deadline)
         } catch let error as AppSourceError {
             if error.code == .timeout { throw HongguoError(.timeout, "App 搜索超时") }
             throw HongguoError(.unavailable, "App 搜索暂不可用")
@@ -149,6 +97,7 @@ public final class AppSearchService: Sendable {
     }
 
     /// Port of `parseSearchPayload`: the short-drama tab only, de-duplicated, no ad or suggestion cells.
+    /// Covers are kept as the App sends them (HEIC included), with heat and tags from `sub_title_list`.
     public static func parse(_ payload: JSONValue, page: Int) throws -> AppSearchPage {
         guard (1...50).contains(page) else { throw HongguoError(.input, "App 搜索页码需为 1 至 50 的整数") }
         guard payload.object != nil else { throw HongguoError(.upstream, "App 搜索返回空响应") }
@@ -167,9 +116,19 @@ public final class AppSearchService: Sendable {
             let title = SearchText.clean(cell["search_high_light"]["title"]["text"].string ?? video["title"].string ?? cell["cell_name"].string)
             guard !title.isEmpty, seen.insert(seriesId).inserted else { continue }
             let count = SearchText.integer(video["episode_cnt"]) ?? SearchText.integer(video["episode_count"]) ?? 0
-            results.append(SeriesSummary(seriesId: seriesId, title: title, cover: SearchText.appCover(video["cover"].string),
-                                         episodeCount: count,
-                                         description: SearchText.clean(video["series_intro"].string ?? video["video_desc"].string ?? cell["series_intro"].string)))
+            let rawCover = video["cover"].string ?? video["series_cover"].string ?? video["video_detail"]["series_cover"].string ?? ""
+            let subs = video["sub_title_list"].array ?? []
+            let rawHeat = AccountService.cleanText(
+                subs.first(where: { Int($0["data_type"].number ?? 0) == 27 })?["content"].string
+                ?? subs.first(where: { ($0["content"].string ?? "").contains("热度") })?["content"].string
+            )
+            let heat = (!rawHeat.isEmpty && !rawHeat.contains("热度")) ? "\(rawHeat)热度" : rawHeat
+            let tags = subs.filter { Int($0["data_type"].number ?? 0) == 3 }
+                .map { AccountService.cleanText($0["content"].string) }.filter { !$0.isEmpty }
+            results.append(SeriesSummary(seriesId: seriesId, title: title, cover: DiscoveryAccess.normalizedCover(rawCover),
+                                         episodeCount: count, tags: tags,
+                                         description: SearchText.clean(video["series_intro"].string ?? video["video_desc"].string ?? cell["series_intro"].string),
+                                         heat: heat, episodeLabel: count > 0 ? "全\(count)集" : ""))
         }
         let hasMore = tab["has_more"].bool == true && page < 50
         return AppSearchPage(results: results, page: page, hasMore: hasMore,
@@ -187,10 +146,8 @@ public struct NewRelease: Equatable, Sendable {
 
 public actor NewReleaseService {
     public static let shared = NewReleaseService()
-    static let categoryPath = "/reading/distribution/category/landpage/v/"
     static let pageLimit = 50
     static let cacheTTL: TimeInterval = 60
-    static let maxResults = 20
     /// Live-action and AI dramas: same endpoint, different filter.
     static let genres = [("default", "short_play"), ("ai_series", "ai_series")]
 
@@ -204,17 +161,9 @@ public actor NewReleaseService {
     private var inflight: (pages: Int, task: Task<Listing, Error>)?
 
     public init(fetch: Fetch? = nil, now: @escaping @Sendable () -> Date = { Date() }) {
-        let transport = AppTransport(http: .shared)
+        // The category list with the persistent device, like every other catalogue request.
         self.fetch = fetch ?? { body, deadline in
-            let signed = try AppLegacySigner.shared.metadata(path: NewReleaseService.categoryPath, values: [], payload: body,
-                                                             nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
-            do {
-                return try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers, body: body, deadline: deadline)
-            } catch let error as AppSourceError where error.code == .timeout {
-                throw HongguoError(.timeout, "App 上新请求超时")
-            } catch let error as AppSourceError {
-                throw HongguoError(.unavailable, error.message)
-            }
+            try await AppCatalogueAccess.landpage(body: Data(body), timeout: max(1, deadline.timeIntervalSinceNow))
         }
         self.now = now
     }
@@ -260,21 +209,6 @@ public actor NewReleaseService {
             byId[item.series.seriesId] = existing
         }
         return order.compactMap { byId[$0] }
-    }
-
-    /// Exact title first, then titles containing the query, then the query containing the title.
-    public static func match(_ items: [NewRelease], keyword: String) -> [NewRelease] {
-        let query = SearchText.normalize(keyword)
-        guard query.count >= 2 else { return [] }
-        var scored: [(NewRelease, Int, Int)] = []
-        for (index, item) in items.enumerated() {
-            let title = SearchText.normalize(item.series.title)
-            guard !title.isEmpty else { continue }
-            let score = title == query ? 0 : title.contains(query) ? 1 : (title.count >= 2 && query.contains(title)) ? 2 : -1
-            if score >= 0 { scored.append((item, score, index)) }
-        }
-        return scored.sorted { ($0.1, $0.0.releasedToday ? 0 : 1, $0.2) < ($1.1, $1.0.releasedToday ? 0 : 1, $1.2) }
-            .map(\.0).prefix(maxResults).map { $0 }
     }
 
     private func fetchGenre(scene: String, genre: String, pages: Int, deadline: Date) async throws -> [JSONValue] {
@@ -328,196 +262,5 @@ public actor NewReleaseService {
         return result
     }
 
-    public func search(_ keyword: String, timeout: TimeInterval = 8) async throws -> (results: [NewRelease], partial: Bool) {
-        let listing = try await list(timeout: timeout)
-        return (Self.match(listing.items, keyword: keyword), listing.partial)
-    }
-
     public func clearCache() { cache = nil; inflight = nil }
-}
-
-// MARK: - Combined search
-
-public struct HongguoSearchResult: Sendable {
-    public enum Channel: String, Sendable { case web, app, appNew }
-    public var results: [SeriesSummary]
-    public var channel: Channel
-    public var page: Int
-    public var hasMore: Bool
-    /// Needed to load page 2+ on the App channel.
-    public var appCursor: AppSearchCursor? = nil
-    /// Series found through the App new-release list.
-    public var newReleaseIds: Set<String> = []
-    public var releasedTodayIds: Set<String> = []
-    /// Loose queries that were used because the original found no title match.
-    public var relaxedQueries: [String] = []
-    /// A supplementary search or the primary source did not finish; results may be incomplete.
-    public var notice: String = ""
-}
-
-/// The hongguo search flow of the Electron app: optional App search first, the website with
-/// looser queries, then the App new-release list when no title matches exactly, and App fallbacks
-/// when the website fails. Page 2+ stays on the channel page 1 used.
-public actor HongguoSearch {
-    public static let shared = HongguoSearch()
-    static let appCooldown: TimeInterval = 120
-    static let newReleaseCooldown: TimeInterval = 30
-
-    public typealias WebSearch = @Sendable (_ keyword: String, _ page: Int) async throws -> SearchPage
-    public typealias AppSearch = @Sendable (_ keyword: String, _ page: Int, _ cursor: AppSearchCursor?) async throws -> AppSearchPage
-    public typealias NewReleases = @Sendable (_ keyword: String, _ timeout: TimeInterval) async throws -> (results: [NewRelease], partial: Bool)
-
-    private let web: WebSearch
-    private let app: AppSearch
-    private let newReleases: NewReleases
-    private var appCooldownUntil = Date.distantPast
-    private var newReleaseCooldownUntil = Date.distantPast
-
-    public init(web: WebSearch? = nil, app: AppSearch? = nil, newReleases: NewReleases? = nil) {
-        let webService = SearchService(), appService = AppSearchService()
-        self.web = web ?? { try await webService.search($0, page: $1) }
-        self.app = app ?? { try await appService.search($0, page: $1, cursor: $2) }
-        self.newReleases = newReleases ?? { try await NewReleaseService.shared.search($0, timeout: $1) }
-    }
-
-    static func hasTitleMatch(_ items: [SeriesSummary], _ query: String) -> Bool {
-        !query.isEmpty && items.contains { SearchText.normalize($0.title).contains(query) }
-    }
-
-    static func hasExactMatch(_ items: [SeriesSummary], _ query: String) -> Bool {
-        !query.isEmpty && items.contains { SearchText.normalize($0.title) == query }
-    }
-
-    private func supplement(_ keyword: String, timeout: TimeInterval) async -> (results: [NewRelease], partial: Bool, checked: Bool, error: String) {
-        guard SearchText.normalize(keyword).count >= 2 else { return ([], false, false, "") }
-        guard Date() >= newReleaseCooldownUntil else { return ([], false, false, "App 上新补搜暂时不可用，请稍后重试") }
-        guard timeout >= 0.9 else { return ([], false, false, "") }
-        do {
-            let found = try await newReleases(keyword, min(8, timeout))
-            newReleaseCooldownUntil = found.partial && found.results.isEmpty ? Date().addingTimeInterval(Self.newReleaseCooldown) : .distantPast
-            return (found.results, found.partial, true, found.partial ? "App 上新目录只读取到部分分类" : "")
-        } catch {
-            newReleaseCooldownUntil = Date().addingTimeInterval(Self.newReleaseCooldown)
-            return ([], false, true, (error as? HongguoError)?.message ?? "App 上新补搜失败")
-        }
-    }
-
-    private func appResult(_ page: AppSearchPage, notice: String = "") -> HongguoSearchResult {
-        HongguoSearchResult(results: page.results, channel: .app, page: page.page, hasMore: page.hasMore, appCursor: page.cursor, notice: notice)
-    }
-
-    /// - Parameters:
-    ///   - appFirst: ask the App search first (default); the website only when it finds nothing.
-    ///   - channel/appCursor: from page 1's result when loading more.
-    public func search(_ keyword: String, page: Int = 1, appFirst: Bool = true, fuzzy: Bool = true,
-                       channel: HongguoSearchResult.Channel? = nil, appCursor: AppSearchCursor? = nil) async throws -> HongguoSearchResult {
-        guard (1...50).contains(page) else { throw HongguoError(.input, "搜索页码必须是 1 至 50 的整数") }
-        let query = SearchText.normalize(keyword)
-        if page > 1 {
-            switch channel {
-            case .app:
-                do {
-                    let result = try await app(keyword, page, appCursor)
-                    appCooldownUntil = .distantPast
-                    return appResult(result)
-                } catch {
-                    appCooldownUntil = Date().addingTimeInterval(Self.appCooldown)
-                    throw error
-                }
-            case .web:
-                let response = try await web(keyword, page)
-                return HongguoSearchResult(results: response.results, channel: .web, page: page, hasMore: response.hasMore)
-            default:
-                throw HongguoError(.input, "该搜索通道不支持加载更多，请重新搜索")
-            }
-        }
-        let appEnabled = appFirst && Date() >= appCooldownUntil
-        if appEnabled {
-            do {
-                let result = try await app(keyword, 1, nil)
-                appCooldownUntil = .distantPast
-                // Any App result is used; the website search only runs when the App finds nothing.
-                if !result.results.isEmpty { return appResult(result) }
-            } catch {
-                appCooldownUntil = Date().addingTimeInterval(Self.appCooldown)
-            }
-        }
-        do {
-            let response = try await web(keyword, 1)
-            var results = response.results
-            var attempted: [String] = [], errors: [String] = []
-            if fuzzy, !Self.hasTitleMatch(results, query) {
-                for relaxed in SearchText.relaxedQueries(keyword) {
-                    do {
-                        let extra = try await web(relaxed, 1)
-                        let known = Set(results.map(\.seriesId))
-                        results += extra.results.filter { !known.contains($0.seriesId) }
-                        attempted.append(relaxed)
-                        if Self.hasTitleMatch(results, query) { break }
-                    } catch {
-                        errors.append((error as? HongguoError)?.message ?? "补搜失败")
-                    }
-                }
-            }
-            var out = HongguoSearchResult(results: results, channel: .web, page: 1, hasMore: response.hasMore, relaxedQueries: attempted)
-            if fuzzy, query.count >= 2, !Self.hasExactMatch(results, query) {
-                // With usable website results the supplement only gets a short extra budget.
-                let found = await supplement(keyword, timeout: results.isEmpty ? 8 : 2.5)
-                merge(found.results, into: &out)
-                if !found.error.isEmpty { errors.append(found.error) }
-            }
-            if !errors.isEmpty {
-                let unique = errors.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }.joined(separator: "；")
-                // No results at all plus a failure must not read as "nothing found".
-                if out.results.isEmpty { throw HongguoError(.upstream, "搜索未完成：\(unique)") }
-                out.notice = "补充搜索未完成：\(unique)"
-            }
-            return out
-        } catch let error as HongguoError where error.message.hasPrefix("搜索未完成") {
-            throw error
-        } catch {
-            let message = (error as? HongguoError)?.message ?? "搜索失败"
-            if (error as? HongguoError)?.kind == .input { throw error }
-            if !appEnabled, Date() >= appCooldownUntil {
-                do {
-                    let result = try await app(keyword, 1, nil)
-                    appCooldownUntil = .distantPast
-                    if !result.results.isEmpty { return appResult(result, notice: "官网搜索未完成：\(message)；已自动切换 App 搜索") }
-                } catch {
-                    appCooldownUntil = Date().addingTimeInterval(Self.appCooldown)
-                }
-            }
-            if fuzzy, query.count >= 2 {
-                let found = await supplement(keyword, timeout: 8)
-                if !found.results.isEmpty {
-                    var out = HongguoSearchResult(results: [], channel: .appNew, page: 1, hasMore: false)
-                    merge(found.results, into: &out)
-                    out.notice = "官网搜索未完成：\(message)；已显示 App 上新补搜结果" + (found.error.isEmpty ? "" : "；App 上新补搜未完成：\(found.error)")
-                    return out
-                }
-                if found.checked, !found.error.isEmpty {
-                    throw HongguoError(.upstream, "官网搜索未完成：\(message)；App 上新补搜未完成：\(found.error)")
-                }
-            }
-            throw error
-        }
-    }
-
-    private func merge(_ releases: [NewRelease], into out: inout HongguoSearchResult) {
-        for release in releases {
-            let id = release.series.seriesId
-            out.newReleaseIds.insert(id)
-            if release.releasedToday { out.releasedTodayIds.insert(id) }
-            if let at = out.results.firstIndex(where: { $0.seriesId == id }) {
-                // The website entry wins field by field; empty ones are filled from the App.
-                var existing = out.results[at]
-                if existing.cover.isEmpty { existing.cover = release.series.cover }
-                if existing.description.isEmpty { existing.description = release.series.description }
-                if existing.episodeCount == 0 { existing.episodeCount = release.series.episodeCount }
-                out.results[at] = existing
-            } else {
-                out.results.append(release.series)
-            }
-        }
-    }
 }

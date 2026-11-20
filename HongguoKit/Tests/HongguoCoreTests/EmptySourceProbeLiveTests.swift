@@ -29,11 +29,11 @@ final class EmptySourceProbeLiveTests: XCTestCase {
         let env = ProcessInfo.processInfo.environment
         try XCTSkipUnless(env["HONGGUO_LIVE"] == "1", "set HONGGUO_LIVE=1 to run")
         let keyword = env["HONGGUO_PROBE"] ?? "女剑仙追我到地球"
-        let search = try await HongguoSearch().search(keyword)
+        let search = try await AppSearchService().search(keyword)
         let series = SeriesService()
         let source = AuthenticatedPlaybackSource(diskCache: VideoModelDiskCache(fileURL: nil))
         let transport = AppTransport(http: .shared)
-        var report: [String] = ["search channel \(search.channel.rawValue), \(search.results.count) results"]
+        var report: [String] = ["App search: \(search.results.count) results"]
         for summary in search.results.prefix(5) where summary.title.contains(keyword.prefix(4)) {
             report.append("== \(summary.title) id=\(summary.seriesId) eps=\(summary.episodeCount)")
             let list: SeriesEpisodes

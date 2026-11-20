@@ -1,8 +1,11 @@
 import Foundation
 
 /// Episode lists, play URLs, public details and share-link resolution for Hongguo series.
-/// Episode lists and play URLs come only from the official iOS client's requests
-/// (`EpisodeSocialService`, `AuthenticatedPlaybackSource`); there is no website or legacy fallback.
+/// One source for each, no fallbacks: play URLs come only from the official iOS client's play
+/// request (`AuthenticatedPlaybackSource`); the episode list and the series facts come only from the
+/// public website's series pages, because the App detail request (`multi_video_detail`, every
+/// route in the official 7.4.3 RPC table) has answered empty for every client but the official
+/// app since 2026-11-20.
 public final class SeriesService: Sendable {
     private let http: HTTPClient
     private let episodeCache = TTLCache<SeriesEpisodes>(limit: 64)
@@ -28,10 +31,66 @@ public final class SeriesService: Sendable {
     public func episodes(seriesId: String, force: Bool = false) async throws -> SeriesEpisodes {
         guard seriesId.matchesDigits(min: 1, max: 30) else { throw HongguoError(.input, "无效的剧集编号") }
         if !force, let cached = await episodeCache.get(seriesId) { return cached }
-        // The signed App detail request, as the official client asks for it.
-        let result = try await EpisodeSocialService.episodes(seriesId: seriesId, http: http)
+        let result = try await episodesFromWeb(seriesId)
         await episodeCache.set(seriesId, result, ttl: 60)
         return result
+    }
+
+    /// Races the website's player page and series page for the same `vid_list`; some CDN edges
+    /// hang on one of them.
+    func episodesFromWeb(_ seriesId: String) async throws -> SeriesEpisodes {
+        let urls = [Site.playerURL(seriesId), Site.detailURL(seriesId)]
+        var options = pageOptions
+        options.timeout = 6
+        return try await withThrowingTaskGroup(of: SeriesEpisodes.self) { group in
+            for url in urls {
+                group.addTask { [http] in
+                    let response = try await http.get(url, options: options)
+                    return try Self.parseEpisodeList(response.text, seriesId: seriesId)
+                }
+            }
+            var firstError: Error?
+            while let next = await group.nextResult() {
+                switch next {
+                case .success(let value):
+                    group.cancelAll()
+                    return value
+                case .failure(let error):
+                    if (error as? HongguoError)?.kind == .cancelled || error is CancellationError { throw error }
+                    if firstError == nil { firstError = error }
+                }
+            }
+            throw firstError ?? HongguoError(.upstream, "官网分集列表加载失败")
+        }
+    }
+
+    /// The episode list in the website's router data (`seriesDetail.vid_list`, in episode order).
+    /// Every episode plays through the App source, so `webAvailable` stays unset.
+    public static func parseEpisodeList(_ html: String, seriesId: String) throws -> SeriesEpisodes {
+        let router = try HTMLData.routerData(html)
+        let loader = router["loaderData"]
+        var data = loader["player_(series_id)/page"]
+        if data.isNull { data = loader["player_(series_id)/(vid)/page"] }
+        if data.isNull { data = loader["detail_page"] }
+        let detail = data["seriesDetail"]
+        let detailId = detail["series_id"].idString ?? ""
+        guard !data.isNull, data["isSuccess"].bool != false, detailId.matchesDigits(min: 1, max: 30), detailId == seriesId,
+              data["series_id"].isNull || data["series_id"].idString == seriesId else {
+            throw HongguoError(.format, "官网返回的剧集与请求不一致或缺少剧集身份")
+        }
+        guard let list = detail["vid_list"].array else { throw HongguoError(.format, "官网页面未找到分集数据（vid_list）") }
+        let vids = list.compactMap(\.idString)
+        guard vids.count == list.count, vids.allSatisfy({ $0.matchesDigits(min: 1, max: 30) }), Set(vids).count == vids.count else {
+            throw HongguoError(.format, "官网分集数据异常")
+        }
+        guard !vids.isEmpty else { throw HongguoError(.format, "官网分集列表为空") }
+        let title = detail["series_name"].string ?? "未命名短剧"
+        let cover = HTMLData.safeCover(detail["series_cover"].string)
+        let episodes = vids.enumerated().map { i, vid in
+            Episode(vid: vid, index: i + 1, title: "", seriesId: seriesId, webAvailable: nil)
+        }
+        return SeriesEpisodes(seriesId: seriesId, title: title, cover: cover, episodes: episodes,
+                              webAccessibleEpisodes: nil, source: .web)
     }
 
     // MARK: Play URL
@@ -86,35 +145,10 @@ public final class SeriesService: Sendable {
     public func publicDetails(seriesId: String) async throws -> PublicDetails {
         guard seriesId.matchesDigits(min: 6, max: 30) else { throw HongguoError(.input, "仅支持有效的红果剧集编号") }
         if let cached = await detailsCache.get(seriesId) { return cached }
-        // Synopsis, cover, episode count, collect count and first-shown date come from the App
-        // detail request. Only the score and the written reviews still come from the public
-        // series page (the App has no anonymous request for them); without it they stay empty.
-        async let appTask: Result<EpisodeSocialService.AppSeriesFacts, Error> = {
-            do { return .success(try await EpisodeSocialService.facts(seriesId: seriesId, http: http)) } catch { return .failure(error) }
-        }()
-        async let webTask: Result<PublicDetails, Error> = {
-            do { return .success(try await publicDetailsFromWeb(seriesId: seriesId)) } catch { return .failure(error) }
-        }()
-        let app = await appTask, web = await webTask
-        let details: PublicDetails
-        switch (app, web) {
-        case (.success(let facts), let web):
-            let page = try? web.get()
-            let label = facts.episodeCount > 0 ? "全\(facts.episodeCount)集" : (page?.episodeLabel ?? "")
-            details = PublicDetails(seriesId: seriesId,
-                                    description: facts.intro.isEmpty ? (page?.description ?? "") : facts.intro,
-                                    cover: facts.cover.isEmpty ? (page?.cover ?? "") : facts.cover,
-                                    episodeLabel: page?.episodeLabel.isEmpty == false ? page!.episodeLabel : label,
-                                    completionStatus: page?.completionStatus ?? .unknown,
-                                    rating: page?.rating, ratingCount: page?.ratingCount, likeCount: page?.likeCount,
-                                    favoriteCount: facts.favoriteCount ?? page?.favoriteCount,
-                                    reviewTotal: page?.reviewTotal, reviews: page?.reviews ?? [],
-                                    publishedAt: facts.firstShown.flatMap { $0 <= Date() ? $0 : nil } ?? page?.publishedAt)
-        case (.failure, .success(let page)):
-            details = page
-        case (.failure(let error), .failure):
-            throw error
-        }
+        // Everything from the public series page: synopsis, cover, episode label, completion,
+        // score, reviews, counts and first-shown date.
+        var details = try await publicDetailsFromWeb(seriesId: seriesId)
+        if let published = details.publishedAt, published > Date() { details.publishedAt = nil }
         await detailsCache.set(seriesId, details, ttl: 30)
         return details
     }

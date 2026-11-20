@@ -18,19 +18,10 @@ struct AppLegacySigner {
     var processStarted: Int64
     /// Unsigned 32-bit random source standing in for `Math.floor(Math.random() * 2^32)`.
     var random32: () -> UInt32
-    /// Device ids used for catalogue requests (random per process in the JS).
-    var metadataDeviceId: String
-    var metadataInstallId: String
-
-    static func localId() -> String {
-        let random = AppCrypto.randomBytes(6).reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
-        return String(1_000_000_000_000_000 + random)
-    }
-
     static let shared = AppLegacySigner(
         processNonce: AppCrypto.base64(AppCrypto.randomBytes(18)).base64URL,
         processStarted: Int64(Date().timeIntervalSince1970 * 1000),
-        random32: AppCrypto.random32, metadataDeviceId: localId(), metadataInstallId: localId())
+        random32: AppCrypto.random32)
 
     static let searchAPI = "https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/search/tab/v"
     static let metadataHost = "https://api5-normal-sinfonlineb.fqnovel.com"
@@ -481,14 +472,13 @@ struct AppLegacySigner {
 
     static let metadataPaths = ["/reading/distribution/category/landpage/v/", "/reading/bookapi/bookmall/cell/change/v"]
 
-    /// Port of `signedMetadataRequest` (catalogue lists; one anonymous identity per process).
-    /// `identity` and `dToken` (the persistent device) replace the fixed metadata device.
-    func metadata(path: String, values: [(String, String)], payload: [UInt8]?, identity: PlaybackIdentity? = nil,
+    /// Port of `signedMetadataRequest` (catalogue lists), signed for the persistent device.
+    func metadata(path: String, values: [(String, String)], payload: [UInt8]?, identity: PlaybackIdentity,
                   dToken: String = "", nowMillis: Int64) throws -> Signed {
         guard Self.metadataPaths.contains(path) else { throw HongguoError(.input, "不支持的 App 目录接口") }
-        let devId = identity?.deviceId ?? metadataDeviceId
-        var devicePairs: [(String, String)] = [("iid", identity?.iid ?? metadataInstallId), ("device_id", devId)]
-        if let cdid = identity?.cdid, !cdid.isEmpty { devicePairs.append(("cdid", cdid)) }
+        let devId = identity.deviceId
+        var devicePairs: [(String, String)] = [("iid", identity.iid), ("device_id", devId)]
+        if !identity.cdid.isEmpty { devicePairs.append(("cdid", identity.cdid)) }
         let device = Self.merged(Self.versioned("73532", "7.3.5.32"), devicePairs)
         let ts = UInt32(nowMillis / 1000)
         let bodyMd5 = payload.map(AppCrypto.md5) ?? [UInt8](repeating: 0, count: 16)

@@ -28,7 +28,7 @@ final class TextExportTests: XCTestCase {
             calls.add("comments:\(vid)")
             if locked.contains(vid) { throw HongguoError(.unavailable, "该集在官网需要解锁，暂无公开评论") }
             return EpisodeComments(seriesId: sid, vid: vid, items: [.init(id: "a", content: "不错")], total: 9, likeCount: 1,
-                                   notice: EpisodeComments.limitedNotice)
+                                   notice: "")
         }, details: { sid in
             calls.add("details")
             return PublicDetails(seriesId: sid, description: "", cover: "", episodeLabel: "", completionStatus: .completed,

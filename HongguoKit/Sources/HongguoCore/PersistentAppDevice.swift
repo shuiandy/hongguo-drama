@@ -383,17 +383,10 @@ public actor PersistentAppDevice {
         !authHeaders().isEmpty
     }
 
-    /// The identity and `device_token` for data requests (search, account, discovery).
+    /// The identity and `device_token` for every data request (search, account, catalogue, book
+    /// mall, comments, danmaku). There is no other device.
     static func dataIdentity(transport: AppTransport) async throws -> (identity: PlaybackIdentity, dToken: String) {
         let identity = try await shared.get(transport: transport)
-        let token = await shared.dTokenValue()
-        return (identity, token)
-    }
-
-    /// Like `dataIdentity`, for requests that can go out with the signer's fixed device when the
-    /// persistent one is not reachable (catalogue, book mall, comments): nil and "" then.
-    static func optionalDataIdentity(transport: AppTransport) async -> (identity: PlaybackIdentity?, dToken: String) {
-        let identity = try? await shared.get(transport: transport)
         let token = await shared.dTokenValue()
         return (identity, token)
     }

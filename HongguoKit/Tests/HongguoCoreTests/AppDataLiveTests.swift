@@ -35,12 +35,9 @@ final class AppDataLiveTests: XCTestCase {
 
         let series = try XCTUnwrap(ranking.items.first(where: { $0.episodeCount >= 10 }) ?? ranking.items.first)
         t = Date()
-        let app = try await EpisodeSocialService.episodes(seriesId: series.seriesId)
-        report.append("App episodes: \(app.episodes.count) of \(app.total), \(ms(t)) ms")
-        t = Date()
-        let viaService = try await SeriesService().episodes(seriesId: series.seriesId, force: true)
-        report.append("SeriesService episodes: \(viaService.episodes.count), \(ms(t)) ms")
-        XCTAssertEqual(viaService.episodes.count, app.episodes.count)
+        let app = try await SeriesService().episodes(seriesId: series.seriesId, force: true)
+        report.append("SeriesService episodes (website): \(app.episodes.count) of \(series.episodeCount), \(ms(t)) ms")
+        XCTAssertFalse(app.episodes.isEmpty)
 
         t = Date()
         let details = try await SeriesService().publicDetails(seriesId: series.seriesId)
@@ -53,13 +50,13 @@ final class AppDataLiveTests: XCTestCase {
         report.append("App comments: \(page.comments.count) of \(page.total.map(String.init) ?? "?"), more \(page.hasMore), \(ms(t)) ms")
         t = Date()
         let comments = try await EpisodeCommentService().comments(seriesId: series.seriesId, vid: vid)
-        report.append("EpisodeCommentService: \(comments.items.count) items, App \(comments.notice.isEmpty), \(ms(t)) ms")
+        report.append("EpisodeCommentService: \(comments.items.count) items, \(ms(t)) ms")
 
         let keyword = String(series.title.prefix(4))
         t = Date()
-        let found = try await HongguoSearch().search(keyword)
-        report.append("search: channel \(found.channel.rawValue), \(found.results.count) results, \(ms(t)) ms")
-        XCTAssertEqual(found.channel, .app)
+        let found = try await AppSearchService().search(keyword)
+        report.append("search: \(found.results.count) results, \(ms(t)) ms")
+        XCTAssertFalse(found.results.isEmpty)
         print("APP-DATA-LIVE\n" + report.joined(separator: "\n"))
     }
 }

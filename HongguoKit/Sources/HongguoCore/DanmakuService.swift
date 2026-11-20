@@ -75,38 +75,16 @@ public struct HTTPDanmakuTransport: DanmakuTransport {
     }
 }
 
-/// The anonymous client identity. Upstream assigns danmaku subsets per identity, so it must
-/// survive restarts. Stored next to the library with 0600 permissions.
+/// The client identity danmaku requests are signed for: the persistent device's ids (Keychain,
+/// survives restarts, which matters because upstream assigns danmaku subsets per identity).
 public struct DanmakuIdentity: Codable, Equatable, Sendable {
     public var deviceId: String
     public var installId: String
 
-    var isValid: Bool {
-        [deviceId, installId].allSatisfy { $0.count == 19 && $0.allSatisfy(\.isASCIIDigitChar) }
+    public init(deviceId: String, installId: String) {
+        self.deviceId = deviceId
+        self.installId = installId
     }
-
-    public static func loadOrCreate(at file: URL) throws -> DanmakuIdentity {
-        if let data = try? Data(contentsOf: file) {
-            guard let saved = try? JSONDecoder().decode(DanmakuIdentity.self, from: data), saved.isValid else {
-                throw HongguoError(.input, "弹幕本机配置读取或保存失败，请检查资料目录权限后重试")
-            }
-            return saved
-        }
-        let created = DanmakuIdentity(deviceId: DanmakuSigner.newDeviceId(), installId: DanmakuSigner.newDeviceId())
-        do {
-            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
-                                                    attributes: [.posixPermissions: 0o700])
-            try JSONEncoder().encode(created).write(to: file, options: [.atomic])
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-        } catch {
-            throw HongguoError(.input, "弹幕本机配置读取或保存失败，请检查资料目录权限后重试")
-        }
-        return created
-    }
-}
-
-private extension Character {
-    var isASCIIDigitChar: Bool { isASCII && isNumber }
 }
 
 public actor DanmakuService {
@@ -130,8 +108,7 @@ public actor DanmakuService {
     static let cacheLimit = 64
 
     private let transport: DanmakuTransport
-    private let identityFile: URL?
-    private var identity: DanmakuIdentity?
+    private let identity: DanmakuIdentity?
     private let now: @Sendable () -> Date
     private let nonce: @Sendable () -> [UInt8]
     private let pageGap: Duration
@@ -139,15 +116,13 @@ public actor DanmakuService {
     private var cacheOrder: [String] = []
     private var pending: [String: Task<DanmakuResult, Never>] = [:]
 
+    /// `identity` is for tests; the app signs with the persistent device.
     public init(transport: DanmakuTransport = HTTPDanmakuTransport(),
-                identityFile: URL? = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                    .appendingPathComponent("HongguoDrama/danmaku-client.json"),
                 identity: DanmakuIdentity? = nil,
                 now: @escaping @Sendable () -> Date = { Date() },
                 nonce: (@Sendable () -> [UInt8])? = nil,
                 pageGap: Duration = .milliseconds(120)) {
         self.transport = transport
-        self.identityFile = identityFile
         self.identity = identity
         self.now = now
         self.nonce = nonce ?? { AppCrypto.randomBytes(DanmakuSigner.nonceBytes) }
@@ -246,7 +221,6 @@ public actor DanmakuService {
     }
 
     static func describeFailure(_ error: Error, hasItems: Bool) -> String {
-        if let error = error as? HongguoError, error.message.hasPrefix("弹幕本机配置") { return error.message }
         if hasItems { return "后续弹幕加载中断，已保留已获取的部分" }
         if let error = error as? HongguoError, error.kind == .timeout || error.kind == .cancelled {
             return "弹幕接口响应超时（已用官方签名请求），可稍后再试"
@@ -258,12 +232,10 @@ public actor DanmakuService {
         return "弹幕接口暂不可用（已尝试官方签名请求），请稍后重试"
     }
 
-    private func currentIdentity() throws -> DanmakuIdentity {
+    private func currentIdentity() async throws -> DanmakuIdentity {
         if let identity { return identity }
-        let loaded = try identityFile.map(DanmakuIdentity.loadOrCreate(at:))
-            ?? DanmakuIdentity(deviceId: DanmakuSigner.newDeviceId(), installId: DanmakuSigner.newDeviceId())
-        identity = loaded
-        return loaded
+        let device = try await PersistentAppDevice.dataIdentity(transport: AppTransport(http: .shared)).identity
+        return DanmakuIdentity(deviceId: device.deviceId, installId: device.iid)
     }
 
     /// The stamp (seconds), `_rticket` (milliseconds) and nonce come from one clock read; a
@@ -271,7 +243,7 @@ public actor DanmakuService {
     func requestWindow(vid: String, bookId: String, start: Int64, duration: Int64) async throws -> JSONValue {
         let stampMs = Int64((now().timeIntervalSince1970 * 1000).rounded(.down))
         let stamp = stampMs / 1000
-        let who = try currentIdentity()
+        let who = try await currentIdentity()
         let rawQuery = DanmakuSigner.buildQuery(stampMs: stampMs, deviceId: who.deviceId, installId: who.installId)
         guard let url = URL(string: "\(Self.baseURL)/novel/commentapi/comment/list/\(vid)/v1/?\(rawQuery)") else {
             throw HongguoError(.input, "弹幕请求地址无效")

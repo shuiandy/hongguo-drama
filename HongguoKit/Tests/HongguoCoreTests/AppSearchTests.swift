@@ -17,12 +17,12 @@ final class AppSearchSigningTests: XCTestCase {
         func next() -> UInt32 { values.removeFirst() }
     }
 
-    func signer(_ randoms: [UInt32], deviceId: String = "1", installId: String = "1") -> (AppLegacySigner, Queue) {
+    func signer(_ randoms: [UInt32]) -> (AppLegacySigner, Queue) {
         let queue = Queue(randoms)
         let nonce = AppCrypto.fromHex(Self.fixture["processNonceHex"].string!)!
         let signer = AppLegacySigner(processNonce: AppCrypto.base64(nonce).base64URL,
                                      processStarted: Int64(Self.fixture["processStarted"].number!),
-                                     random32: { queue.next() }, metadataDeviceId: deviceId, metadataInstallId: installId)
+                                     random32: { queue.next() })
         return (signer, queue)
     }
 
@@ -57,13 +57,15 @@ final class AppSearchSigningTests: XCTestCase {
         for item in Self.fixture["metadata"].array ?? [] {
             let url = try XCTUnwrap(item["url"].string)
             let query = String(url.split(separator: "?")[1])
-            let (signer, _) = signer(randoms(item), deviceId: AppCrypto.queryParam(query, "device_id")!, installId: AppCrypto.queryParam(query, "iid")!)
+            let (signer, _) = signer(randoms(item))
+            // The reference signs without a cdid, so none is passed here.
+            let device = PlaybackIdentity(deviceId: AppCrypto.queryParam(query, "device_id")!, iid: AppCrypto.queryParam(query, "iid")!, cdid: "")
             // JS object order of the fixture values.
             let raw = try XCTUnwrap(item["values"].object)
             let order = ["offset", "limit", "genre", "a"].filter { raw[$0] != nil }
             let body = item["body"].string.map { Array($0.utf8) }
             let signed = try signer.metadata(path: item["apiPath"].string!, values: order.map { ($0, raw[$0]!.string!) },
-                                             payload: body, nowMillis: Int64(item["now"].number!))
+                                             payload: body, identity: device, nowMillis: Int64(item["now"].number!))
             XCTAssertEqual(signed.url, url)
             assertHeaders(signed, item)
         }
@@ -86,7 +88,8 @@ final class AppSearchSigningTests: XCTestCase {
         let gorgon = AppLegacySigner.xGorgon(query: "a=1", body: nil, ts: 1_700_000_000, random: 0xabcd)
         XCTAssertTrue(gorgon.hasPrefix("8404cdab4001"))
         XCTAssertEqual(gorgon.count, 52)
-        XCTAssertThrowsError(try AppLegacySigner.shared.metadata(path: "/other", values: [], payload: nil, nowMillis: 0))
+        XCTAssertThrowsError(try AppLegacySigner.shared.metadata(path: "/other", values: [], payload: nil,
+                                                                 identity: PlaybackIdentity(deviceId: "1", iid: "1", cdid: ""), nowMillis: 0))
     }
 }
 
@@ -97,14 +100,17 @@ final class AppSearchParsingTests: XCTestCase {
           {"cell_name":"广告"},
           {"search_high_light":{"title":{"text":"<em>霸总</em>归来 &amp; 重生"}},"video_data":[{"series_id":"7200000000000000001","cover":"https://p3.example.com/a.jpg","episode_cnt":"80","series_intro":" 简介 "}]},
           {"video_data":[{"series_id":"7200000000000000001","title":"重复"}]},
-          {"video_data":[{"series_id":"7200000000000000002","title":"第二部","cover":"https://p3.example.com/b.heic?x=1"}]}
+          {"video_data":[{"series_id":"7200000000000000002","title":"第二部","cover":"http://p3.example.com/b.heic?x=1","sub_title_list":[{"data_type":27,"content":"99万"},{"data_type":3,"content":"甜宠"}]}]}
         ]}]}
         """)
         let page = try AppSearchService.parse(payload, page: 1)
         XCTAssertEqual(page.results.map(\.title), ["霸总归来 & 重生", "第二部"])
         XCTAssertEqual(page.results[0].episodeCount, 80)
         XCTAssertEqual(page.results[0].description, "简介")
-        XCTAssertEqual(page.results[1].cover, "", "HEIC covers are dropped")
+        XCTAssertEqual(page.results[0].episodeLabel, "全80集")
+        XCTAssertEqual(page.results[1].cover, "https://p3.example.com/b.heic?x=1", "HEIC covers are kept, forced to https")
+        XCTAssertEqual(page.results[1].heat, "99万热度")
+        XCTAssertEqual(page.results[1].tags, ["甜宠"])
         XCTAssertTrue(page.hasMore)
         XCTAssertEqual(page.cursor, AppSearchCursor(searchId: "s9", passback: "pb", nextOffset: 20))
         XCTAssertThrowsError(try AppSearchService.parse(try JSONValue.parse(#"{"code":1}"#), page: 1))
@@ -112,9 +118,6 @@ final class AppSearchParsingTests: XCTestCase {
     }
 
     func testTitleHelpers() {
-        XCTAssertEqual(SearchText.normalize("《霸总，归来》 Ⅱ!"), "霸总归来ii")
-        XCTAssertEqual(SearchText.relaxedQueries("霸总，归来"), ["霸总归来", "霸总"])
-        XCTAssertEqual(SearchText.relaxedQueries("霸总归来"), [])
         XCTAssertEqual(SearchText.catalogCover("https://p6-novel.byteimg.com/novel-pic/abc~tplv-x.heic"),
                        "https://p3-novel.byteimg.com/novel-pic/abc~tplv-shrink:640:0.image")
         XCTAssertEqual(SearchText.catalogCover("https://evil.example.com/novel-pic/abc~x.heic"), "")
@@ -133,7 +136,7 @@ final class NewReleaseTests: XCTestCase {
         return try! JSONValue.parse(data)
     }
 
-    func testListsBothGenresMergesAndMatches() async throws {
+    func testListsBothGenresAndMerges() async throws {
         final class Bodies: @unchecked Sendable { let lock = NSLock(); var all: [[String: Any]] = []
             func add(_ b: [String: Any]) { lock.lock(); all.append(b); lock.unlock() } }
         let bodies = Bodies()
@@ -154,9 +157,6 @@ final class NewReleaseTests: XCTestCase {
         XCTAssertEqual(merged.series.tags, ["都市"])
         XCTAssertEqual(bodies.all.count, 3)
         XCTAssertTrue(bodies.all.contains { ($0["req_type"] as? String) == "only_content" && ($0["offset"] as? Int) == 50 })
-        let matches = NewReleaseService.match(listing.items, keyword: "接班")
-        XCTAssertEqual(matches.map(\.series.title), ["接班", "接班人", "接班人的考题"], "exact, then today, then the rest")
-        XCTAssertEqual(NewReleaseService.match(listing.items, keyword: "接"), [])
         let cached = try await service.list()
         XCTAssertTrue(cached.cached)
         XCTAssertEqual(bodies.all.count, 3)
@@ -172,63 +172,5 @@ final class NewReleaseTests: XCTestCase {
         XCTAssertTrue(first.partial)
         let second = try await service.list()
         XCTAssertFalse(second.cached)
-    }
-}
-
-final class HongguoSearchFlowTests: XCTestCase {
-    func summary(_ id: String, _ title: String) -> SeriesSummary { SeriesSummary(seriesId: id, title: title) }
-    func webPage(_ items: [SeriesSummary], more: Bool = false) -> SearchPage {
-        SearchPage(keyword: "", results: items, total: items.count, totalPages: 1, page: 1, hasMore: more)
-    }
-
-    func testWebWithRelaxedQueryAndNewReleaseSupplement() async throws {
-        let search = HongguoSearch(web: { keyword, _ in
-            if keyword == "霸总，归来" { return self.webPage([self.summary("7200000000000000009", "别的剧")]) }
-            if keyword == "霸总归来" { return self.webPage([self.summary("7200000000000000001", "霸总归来之前传")]) }
-            return self.webPage([])
-        }, app: { _, _, _ in XCTFail("App search is off"); throw HongguoError(.unavailable, "") },
-           newReleases: { _, _ in ([NewRelease(series: self.summary("7200000000000000002", "霸总归来"), releasedToday: true)], false) })
-        let result = try await search.search("霸总，归来", appFirst: false)
-        XCTAssertEqual(result.channel, .web)
-        XCTAssertEqual(result.relaxedQueries, ["霸总归来"])
-        XCTAssertEqual(result.results.map(\.seriesId), ["7200000000000000009", "7200000000000000001", "7200000000000000002"])
-        XCTAssertEqual(result.releasedTodayIds, ["7200000000000000002"])
-        XCTAssertEqual(result.notice, "")
-    }
-
-    func testAppFirstAndFallbacks() async throws {
-        let appPage = AppSearchPage(results: [summary("7200000000000000001", "霸总归来")], page: 1, hasMore: true,
-                                    cursor: AppSearchCursor(searchId: "s", passback: "", nextOffset: 20))
-        let appFirst = HongguoSearch(web: { _, _ in XCTFail("web not needed"); return self.webPage([]) },
-                                     app: { _, page, cursor in
-                                         if page == 2 { XCTAssertEqual(cursor?.nextOffset, 20) }
-                                         return appPage
-                                     }, newReleases: { _, _ in ([], false) })
-        let first = try await appFirst.search("霸总归来", appFirst: true)
-        XCTAssertEqual(first.channel, .app)
-        let more = try await appFirst.search("霸总归来", page: 2, channel: .app, appCursor: first.appCursor)
-        XCTAssertEqual(more.channel, .app)
-
-        // Website down: the App answers without being enabled.
-        let fallback = HongguoSearch(web: { _, _ in throw HongguoError(.upstream, "官网 502") }, app: { _, _, _ in appPage },
-                                     newReleases: { _, _ in ([], false) })
-        let rescued = try await fallback.search("霸总归来", appFirst: false)
-        XCTAssertEqual(rescued.channel, .app)
-        XCTAssertTrue(rescued.notice.contains("官网 502"))
-
-        // Website and App down: new releases still answer.
-        let last = HongguoSearch(web: { _, _ in throw HongguoError(.upstream, "官网 502") },
-                                 app: { _, _, _ in throw HongguoError(.unavailable, "App 不可用") },
-                                 newReleases: { _, _ in ([NewRelease(series: self.summary("7200000000000000002", "霸总归来"), releasedToday: false)], false) })
-        let found = try await last.search("霸总归来")
-        XCTAssertEqual(found.channel, .appNew)
-        XCTAssertEqual(found.results.count, 1)
-
-        // Everything fails: an error, not an empty result.
-        let none = HongguoSearch(web: { _, _ in throw HongguoError(.upstream, "官网 502") },
-                                 app: { _, _, _ in throw HongguoError(.unavailable, "App 不可用") },
-                                 newReleases: { _, _ in throw HongguoError(.timeout, "App 上新请求超时") })
-        do { _ = try await none.search("霸总归来"); XCTFail("expected an error") }
-        catch let error as HongguoError { XCTAssertTrue(error.message.contains("App 上新请求超时")) }
     }
 }

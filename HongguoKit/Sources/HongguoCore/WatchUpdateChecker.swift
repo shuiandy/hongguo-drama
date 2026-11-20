@@ -28,7 +28,7 @@ public actor WatchUpdateChecker {
         self.store = store
         self.now = now
         self.concurrency = max(1, concurrency)
-        let series = SeriesService(), search = SearchService()
+        let series = SeriesService(), search = AppSearchService()
         self.episodeCount = episodeCount ?? { try await series.episodes(seriesId: $0, force: true).total }
         self.searchCandidates = searchCandidates ?? { keyword in
             try await search.search(keyword).results.map { SeriesRef(seriesId: $0.seriesId, title: $0.title) }

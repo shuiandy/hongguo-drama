@@ -103,7 +103,7 @@ enum SidebarItem: Hashable, Identifiable {
 final class AppModel {
     static let shared = AppModel()
 
-    let search = SearchService()
+    let search = AppSearchService()
     let catalog = CatalogService()
     let series = SourceRouter.series
     let store = LibraryStore.shared
