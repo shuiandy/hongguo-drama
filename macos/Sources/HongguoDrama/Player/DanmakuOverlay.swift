@@ -118,7 +118,7 @@ struct DanmakuOverlay: View {
                 context.opacity = settings.opacity / 100
                 context.addFilter(.shadow(color: .black.opacity(0.85), radius: 1.5, x: 0, y: 1))
                 for sprite in model.stage.items {
-                    let text = Text(sprite.text)
+                    let text = Emoticons.text(sprite.text, size: settings.fontSize)
                         .font(.system(size: settings.fontSize, weight: .bold))
                         .foregroundColor(Color(hex: sprite.color) ?? .white)
                     context.draw(text, at: CGPoint(x: sprite.x, y: sprite.y), anchor: .topLeading)

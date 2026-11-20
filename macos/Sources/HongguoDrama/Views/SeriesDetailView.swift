@@ -341,8 +341,7 @@ struct SeriesDetailView: View {
                                 Label(formatCount(likes), systemImage: "hand.thumbsup").font(.system(size: 11)).foregroundStyle(.secondary)
                             }
                         }
-                        Text(review.content)
-                            .font(.system(size: 14))
+                        EmoticonText(review.content, size: 14)
                             .lineSpacing(3)
                             .lineLimit(5)
                             .textSelection(.enabled)

@@ -44,6 +44,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/HongguoDrama" "$APP/Contents/MacOS/HongguoDrama"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
+# Built-in emoticon pack: code -> image map plus the images (see Sources/HongguoDrama/Emoticons.swift).
+if [[ -f "$ROOT/Resources/Emoticons/map.json" ]]; then
+  cp -R "$ROOT/Resources/Emoticons" "$APP/Contents/Resources/Emoticons"
+fi
 if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then
   cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
   /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$APP/Contents/Info.plist" 2>/dev/null || true

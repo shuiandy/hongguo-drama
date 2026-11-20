@@ -763,7 +763,7 @@ struct PlayerSidePanel: View {
                             Label(formatCount(likes), systemImage: "hand.thumbsup").font(.system(size: 11)).foregroundStyle(.secondary)
                         }
                     }
-                    Text(review.content).font(.system(size: 13)).lineSpacing(3).textSelection(.enabled)
+                    EmoticonText(review.content, size: 13).lineSpacing(3).textSelection(.enabled)
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -788,7 +788,7 @@ struct PlayerSidePanel: View {
                 Text("本集暂无公开评论").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 30)
             }
             ForEach(comments.items) { item in
-                Text(item.content).font(.system(size: 13)).lineSpacing(3).textSelection(.enabled)
+                EmoticonText(item.content, size: 13).lineSpacing(3).textSelection(.enabled)
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .glassSurface(.clear, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
