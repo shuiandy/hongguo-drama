@@ -22,6 +22,8 @@ struct SeriesDetailView: View {
     @State private var similarSeries: [SeriesRef] = []
     @State private var findingSequels = false
     @State private var sequelError = ""
+    // 系列剧 from the App (other seasons of the same story).
+    @State private var seasons: DiscoveryAccess.SameIPSeriesResult?
 
     var body: some View {
         ScrollView {
@@ -31,6 +33,7 @@ struct SeriesDetailView: View {
                     sequelRow(sequels)
                 }
                 sequelFinder
+                seasonShelf
                 episodePanel
                 if let reviews = details?.reviews, !reviews.isEmpty {
                     reviewList(reviews)
@@ -56,6 +59,61 @@ struct SeriesDetailView: View {
             model.acknowledgeUpdates(summary.seriesId)
             await load()
         }
+        .task(id: summary.seriesId) {
+            guard SourceRouter.isHongguo(summary.seriesId) else { return }
+            seasons = try? await DiscoveryAccess.sameIPSeries(seriesId: summary.seriesId)
+        }
+    }
+
+    /// 系列剧: the other seasons the App lists for this story. Seasons not out yet show 待上线.
+    @ViewBuilder
+    private var seasonShelf: some View {
+        let items = (seasons?.items ?? []).filter { !$0.title.isEmpty }
+        if items.contains(where: { $0.seriesId != summary.seriesId }) {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(seasons?.tabTitle.isEmpty == false ? seasons!.tabTitle : "系列剧", systemImage: "square.stack.3d.up")
+                    .font(.system(size: 13, weight: .semibold))
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: 12) {
+                        ForEach(items) { item in seasonCard(item) }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .scrollIndicators(.never)
+            }
+        }
+    }
+
+    private func seasonCard(_ item: DiscoveryAccess.RelatedSeriesItem) -> some View {
+        let current = item.seriesId == summary.seriesId
+        let badge = current ? "当前" : (item.disablePlay ? "待上线" : item.badgeText)
+        return Button {
+            model.open(SeriesSummary(seriesId: item.seriesId, title: item.title, cover: item.cover, episodeCount: item.episodeCount))
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                CoverImage(url: item.cover, cornerRadius: 12)
+                    .frame(width: 96, height: 128)
+                    .overlay(alignment: .topLeading) {
+                        if !badge.isEmpty {
+                            Text(badge)
+                                .font(.system(size: 10, weight: .bold))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(current ? Color.hongguoRed : .black.opacity(0.6), in: Capsule())
+                                .foregroundStyle(.white)
+                                .padding(6)
+                        }
+                    }
+                Text(item.title).font(.system(size: 12, weight: .semibold)).lineLimit(2)
+                let meta = [item.seasonIndex > 0 ? "第\(item.seasonIndex)部" : "", item.episodeCount > 0 ? "\(item.episodeCount)集" : ""]
+                    .filter { !$0.isEmpty }.joined(separator: " · ")
+                if !meta.isEmpty { Text(meta).font(.system(size: 11)).foregroundStyle(.secondary) }
+            }
+            .frame(width: 96, alignment: .leading)
+            .opacity(item.disablePlay && !current ? 0.6 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(current || item.disablePlay)
+        .help(item.disablePlay ? "\(item.title) 还没上线" : "打开 \(item.title)")
     }
 
     /// Later seasons found by the watch-update check.

@@ -13,16 +13,7 @@ struct SettingsAccountPane: View {
         Form {
             Section {
                 HStack(spacing: 14) {
-                    ZStack {
-                        Circle().fill(LinearGradient(colors: [Color(red: 1, green: 0.54, blue: 0.58), .purple],
-                                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-                        if let name = account.profile?.nickname, let first = name.first {
-                            Text(String(first)).font(.system(size: 22, weight: .heavy)).foregroundStyle(.white)
-                        } else {
-                            Image(systemName: "person.fill").font(.system(size: 22, weight: .bold)).foregroundStyle(.white)
-                        }
-                    }
-                    .frame(width: 52, height: 52)
+                    AccountAvatar(account: account)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(account.restoring ? "正在恢复登录…" : (account.profile?.nickname ?? "未登录"))
                             .font(.system(size: 16, weight: .bold))

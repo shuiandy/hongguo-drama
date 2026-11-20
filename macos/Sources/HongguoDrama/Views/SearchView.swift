@@ -21,6 +21,8 @@ struct SearchView: View {
     @State private var newReleaseIds: Set<String> = []
     @State private var releasedTodayIds: Set<String> = []
     @State private var notice = ""
+    /// 搜索联想 from the App for what is typed, cleared on submit.
+    @State private var suggestions: [String] = []
 
     @FocusState private var fieldFocused: Bool
 
@@ -31,6 +33,9 @@ struct SearchView: View {
                 searchField
                     .frame(maxWidth: 680)
                     .padding(.top, 8)
+                if !suggestions.isEmpty {
+                    suggestionList.frame(maxWidth: 680)
+                }
 
                 if submitted.isEmpty {
                     idleContent.frame(maxWidth: 680, alignment: .leading)
@@ -67,6 +72,7 @@ struct SearchView: View {
             .ignoresSafeArea()
             .allowsHitTesting(false)
         }
+        .task(id: query) { await loadSuggestions() }
         .navigationTitle(submitted.isEmpty ? "搜索" : "“\(submitted)”")
         .transparentToolbar()
         .onAppear {
@@ -99,6 +105,45 @@ struct SearchView: View {
         .padding(.trailing, 10)
         .frame(height: 56)
         .glassSurface(in: Capsule(), interactive: true)
+    }
+
+    private var suggestionList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(suggestions, id: \.self) { word in
+                Button {
+                    query = word
+                    Task { await submit() }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        Text(word).lineLimit(1)
+                        Spacer()
+                    }
+                    .font(.system(size: 14))
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 6)
+        .glassSurface(in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    /// Asks the App for suggestions a moment after typing stops. Links and ids open directly, so
+    /// they get none; neither does the query that was just searched.
+    private func loadSuggestions() async {
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text != submitted, text.count <= 30, !text.contains("://"), !text.allSatisfy(\.isNumber) else {
+            suggestions = []
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+        guard !Task.isCancelled else { return }
+        let words = await DiscoveryAccess.searchSuggestions(query: text)
+        guard !Task.isCancelled, query.trimmingCharacters(in: .whitespacesAndNewlines) == text, text != submitted else { return }
+        suggestions = words.filter { $0 != text }
     }
 
     @ViewBuilder
@@ -203,6 +248,7 @@ struct SearchView: View {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         error = nil
+        suggestions = []
         if looksLikeLink(text) {
             isLoading = true
             submitted = text

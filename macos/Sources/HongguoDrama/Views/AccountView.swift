@@ -8,7 +8,11 @@ import HongguoCore
 final class AccountState {
     static let shared = AccountState()
 
-    var profile: AccountProfile?
+    var profile: AccountProfile? {
+        didSet { if profile?.id != oldValue?.id { avatar = ""; if profile != nil { Task { await loadAvatar() } } } }
+    }
+    /// The account's avatar address from the App profile, empty until loaded. Memory only.
+    var avatar = ""
     var restoring = true
     var message = ""
     private var restoreStarted = false
@@ -21,6 +25,36 @@ final class AccountState {
         profile = status.profile
         message = status.error
         restoring = false
+    }
+
+    /// Reads the App profile for the avatar (read only); a failure keeps the initial-letter circle.
+    func loadAvatar() async {
+        let id = profile?.id
+        guard id != nil, let details = try? await AccountDataAccess.profile(), profile?.id == id else { return }
+        avatar = details.avatar
+    }
+}
+
+/// The signed-in account's avatar, or the initial letter on a gradient when there is none.
+struct AccountAvatar: View {
+    var account: AccountState
+    var size: CGFloat = 52
+
+    var body: some View {
+        ZStack {
+            Circle().fill(LinearGradient(colors: [Color(red: 1, green: 0.54, blue: 0.58), .purple],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+            if let name = account.profile?.nickname, let first = name.first {
+                Text(String(first)).font(.system(size: size * 0.42, weight: .heavy)).foregroundStyle(.white)
+            } else {
+                Image(systemName: "person.fill").font(.system(size: size * 0.42, weight: .bold)).foregroundStyle(.white)
+            }
+            if account.profile != nil, let url = URL(string: account.avatar), url.scheme == "https" {
+                AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { Color.clear }
+                    .clipShape(Circle())
+            }
+        }
+        .frame(width: size, height: size)
     }
 }
 
@@ -40,6 +74,7 @@ struct AccountView: View {
         ScrollView {
             PageHeader(title: "账号", subtitle: account.profile.map { "已登录：\($0.nickname)" } ?? "未登录") {
                 if account.profile != nil {
+                    AccountAvatar(account: account, size: 34)
                     Button { Task { await loadHistory(refresh: true) } } label: { Label("刷新", systemImage: "arrow.clockwise") }
                         .buttonStyle(GlassButtonStyle())
                         .disabled(loadingHistory)
