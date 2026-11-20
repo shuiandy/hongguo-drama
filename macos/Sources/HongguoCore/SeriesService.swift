@@ -257,13 +257,29 @@ public final class SeriesService: Sendable {
         options.headers["Origin"] = Site.origin
         options.headers["Content-Type"] = "application/json"
         let body = try JSONSerialization.data(withJSONObject: ["item_id": vid])
-        let response: HTTPResponse
-        do {
-            response = try await http.post(Self.webFallbackEndpoint, json: body, options: options)
-        } catch is CancellationError {
-            throw HongguoError(.cancelled, "已取消官网片源请求")
+        // Signed in: the website login cookie first (the channel is "protected"; without it only
+        // free episodes answer), then without it.
+        var attempts: [String?] = [nil]
+        if let saved = try? KeychainCredentialStore().load(), !saved.cookie.isEmpty { attempts.insert(saved.cookie, at: 0) }
+        var lastError: Error = HongguoError(.unavailable, "官网备用通道未返回片源")
+        for cookie in attempts {
+            var attempt = options
+            if let cookie { attempt.headers["Cookie"] = cookie }
+            do {
+                let response = try await http.post(Self.webFallbackEndpoint, json: body, options: attempt)
+                let info = try Self.parseWebFallback(response.data, status: response.status, vid: vid)
+                AccountDataAccess.onWriteLog?("web fallback \(cookie == nil ? "anonymous" : "with login") ok")
+                return info
+            } catch is CancellationError {
+                throw HongguoError(.cancelled, "已取消官网片源请求")
+            } catch let error as HongguoError where error.kind == .cancelled {
+                throw error
+            } catch {
+                AccountDataAccess.onWriteLog?("web fallback \(cookie == nil ? "anonymous" : "with login") failed: \(Self.describe(error).prefix(60))")
+                lastError = error
+            }
         }
-        return try Self.parseWebFallback(response.data, status: response.status, vid: vid)
+        throw lastError
     }
 
     static func parseWebFallback(_ data: Data, status: Int, vid: String, now: Date = Date()) throws -> PlayInfo {
