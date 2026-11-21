@@ -108,7 +108,7 @@ struct CelebrityView: View {
                 } else {
                     // Series not out yet (预约) cannot play, so their cards open the detail page.
                     PosterGrid(items: order == .hottest ? ActorHomeService.hottestFirst(page.items) : page.items,
-                               clickPlays: page.upcomingIds.isEmpty, heatOnCover: true) {
+                               actorPage: page, heatOnCover: true) {
                         Task { await loadMore() }
                     }
                 }
@@ -149,7 +149,7 @@ struct CelebrityView: View {
             let loaded = try await ActorHomeService.home(userId: member.profileUserId)
             home = loaded
             guard let tab = loaded.worksTab else { error = "这位演员的主页没有作品"; return }
-            subTab = (loaded.defaultSubTab ?? tab.subTabs.first)?.type ?? 0
+            subTab = loaded.defaultSubTab?.type ?? tab.type
         } catch {
             self.error = describe(error)
         }
@@ -162,7 +162,7 @@ struct CelebrityView: View {
         error = nil
         defer { isLoading = false }
         do {
-            pages[sub] = try await ActorHomeService.works(userId: member.profileUserId, tab: tab.type, subTab: sub)
+            pages[sub] = try await ActorHomeService.works(userId: member.profileUserId, tab: tab.type, subTab: sub == tab.type ? nil : sub)
         } catch {
             if subTab == sub { self.error = describe(error) }
         }
@@ -172,12 +172,9 @@ struct CelebrityView: View {
         guard let tab = worksTab, let sub = subTab, let page = pages[sub], page.hasMore, !page.cursor.isEmpty, !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
-        guard let next = try? await ActorHomeService.works(userId: member.profileUserId, tab: tab.type, subTab: sub, cursor: page.cursor) else { return }
-        var merged = page
-        let known = Set(page.items.map(\.seriesId))
-        merged.items += next.items.filter { !known.contains($0.seriesId) }
-        merged.cursor = next.cursor
-        merged.hasMore = next.hasMore && !next.items.isEmpty
+        guard let next = try? await ActorHomeService.works(userId: member.profileUserId, tab: tab.type, subTab: sub == tab.type ? nil : sub, cursor: page.cursor) else { return }
+        guard !Task.isCancelled, var merged = pages[sub] else { return }
+        merged.append(next, requestedCursor: page.cursor)
         pages[sub] = merged
     }
 }

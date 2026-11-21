@@ -38,4 +38,21 @@ final class CloudHistoryMergeTests: XCTestCase {
         XCTAssertEqual(store.history().map(\.seriesId), ["101", "102", "103"])
         XCTAssertEqual(store.mergeCloudHistory([item("102", index: 7, position: 44, at: 5_000)]), 0, "merging again changes nothing")
     }
+
+    func testSwitchThenLogoutKeepsGuestHistory() {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LibraryStore(directory: directory)
+        store.savePosition(seriesId: "100", title: "本机", cover: "", total: 3, episodeIndex: 1,
+                           vid: "1001", position: 5, duration: 30, finished: false)
+        store.mergeCloudHistory([item("101", index: 1, position: 8, at: 100)], accountId: "a")
+        store.mergeCloudHistory([item("102", index: 2, position: 9, at: 200)], accountId: "b")
+        store.clearCloudHistory(exceptAccountId: "b")
+        XCTAssertNil(store.record(for: "101"))
+        XCTAssertEqual(store.record(for: "102")?.cloudAccountId, "b")
+        store.clearCloudHistory()
+        XCTAssertEqual(store.history().map(\.seriesId), ["100"])
+        XCTAssertEqual(LibraryStore(directory: directory).history().map(\.seriesId), ["100"])
+    }
+
 }

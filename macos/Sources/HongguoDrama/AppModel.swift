@@ -420,6 +420,16 @@ final class AppModel {
     private(set) var cloudSyncing = false
     var cloudSyncMessage = ""
 
+    func accountChanged(to id: String?) {
+        store.clearCloudHistory(exceptAccountId: id)
+        refreshHistory()
+        cloudSyncing = false
+        lastCloudSync = .distantPast
+        lastFullCloudSync = .distantPast
+        lastCloudSyncCount = 0
+        cloudSyncMessage = ""
+    }
+
     /// Pulls the signed-in account's cloud watch history into the local history (newer side wins),
     /// then, with 双向同步 on, the account's favourites and likes (`AccountSync`). Local progress
     /// goes up as it is saved. `force` skips the one-minute throttle; `manual` (a button) also
@@ -428,30 +438,37 @@ final class AppModel {
     /// never starts from a position another device has already moved past. Gives up after `timeout`
     /// seconds and keeps this Mac's record (playback does not wait on a slow network).
     func syncCloudPosition(seriesId: String, timeout: Double = 3) async {
-        guard settings.cloudHistorySync, SourceRouter.isHongguo(seriesId) else { return }
+        guard settings.cloudHistorySync, SourceRouter.isHongguo(seriesId),
+              let token = AccountState.shared.session.current else { return }
         guard let row = await AccountService.shared.latestHistoryRow(seriesId: seriesId, timeout: timeout) else { return }
-        if store.mergeCloudHistory([row]) > 0 { refreshHistory() }
+        guard AccountState.shared.session.accepts(token) else { return }
+        if store.mergeCloudHistory([row], accountId: token.accountId) > 0 { refreshHistory() }
     }
 
     func syncCloudHistory(force: Bool = false, manual: Bool = false) async {
         guard !cloudSyncing, force || Date().timeIntervalSince(lastCloudSync) > 60 else { return }
-        guard await AccountService.shared.status().profile != nil else { return }
+        let account = AccountState.shared
+        guard let token = account.session.current else { return }
         cloudSyncing = true
-        defer { cloudSyncing = false }
+        defer { if account.session.accepts(token) { cloudSyncing = false } }
         await AccountSync.shared.pull()
-        if AccountState.shared.avatar.isEmpty { await AccountState.shared.loadAvatar() }
+        guard account.session.accepts(token) else { return }
+        if account.avatar.isEmpty { await account.loadAvatar() }
+        guard account.session.accepts(token) else { return }
         guard manual || settings.cloudHistorySync else { lastCloudSync = Date(); return }
         do {
             // Every page at launch, on demand and every 30 minutes; the 3-minute checks read the newest page.
             let full = force || manual || Date().timeIntervalSince(lastFullCloudSync) > 30 * 60
             let items = try await AccountService.shared.history(refresh: true, firstPageOnly: !full)
+            guard account.session.accepts(token) else { return }
             if full { lastFullCloudSync = Date() }
             lastCloudSync = Date()
             lastCloudSyncCount = items.count
-            store.mergeCloudHistory(items)
+            store.mergeCloudHistory(items, accountId: token.accountId)
             cloudSyncMessage = ""
             refreshHistory()
         } catch {
+            guard account.session.accepts(token) else { return }
             cloudSyncMessage = (error as? HongguoError)?.message ?? "云端观看记录同步失败，请稍后重试"
         }
     }

@@ -63,6 +63,23 @@ public struct ActorWorksPage: Sendable, Equatable {
     public init(items: [SeriesSummary], upcomingIds: Set<String> = [], upcomingNote: String = "", cursor: String = "", hasMore: Bool = false) {
         self.items = items; self.upcomingIds = upcomingIds; self.upcomingNote = upcomingNote; self.cursor = cursor; self.hasMore = hasMore
     }
+
+    public func isUpcoming(_ seriesId: String) -> Bool {
+        upcomingIds.contains(seriesId)
+    }
+
+    /// Apply only the response for the current cursor. Keep server order across overlapping pages.
+    public mutating func append(_ next: ActorWorksPage, requestedCursor: String) {
+        guard hasMore, !requestedCursor.isEmpty, cursor == requestedCursor else { return }
+        var known = Set(items.map(\.seriesId))
+        let added = next.items.filter { known.insert($0.seriesId).inserted }
+        items.append(contentsOf: added)
+        upcomingIds.formUnion(next.upcomingIds)
+        if upcomingNote.isEmpty { upcomingNote = next.upcomingNote }
+        let advanced = !next.cursor.isEmpty && next.cursor != requestedCursor
+        cursor = advanced ? next.cursor : ""
+        hasMore = next.hasMore && advanced && !added.isEmpty
+    }
 }
 
 public enum ActorHomeService {

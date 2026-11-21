@@ -113,7 +113,7 @@ struct RankBadge: View {
 struct PosterGrid: View {
     let items: [SeriesSummary]
     /// Click plays the series instead of opening its detail page (the actor page, as in the official app).
-    var clickPlays = false
+    var actorPage: ActorWorksPage?
     var heatOnCover = false
     var onAppearLast: (() -> Void)?
 
@@ -122,7 +122,8 @@ struct PosterGrid: View {
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: 24) {
             ForEach(items) { item in
-                PosterCell(item: item, clickPlays: clickPlays, heatOnCover: heatOnCover)
+                let upcoming = actorPage?.isUpcoming(item.seriesId) ?? false
+                PosterCell(item: item, clickPlays: actorPage != nil && !upcoming, upcoming: upcoming, heatOnCover: heatOnCover)
                     .onAppear { if item.id == items.last?.id { onAppearLast?() } }
             }
         }
@@ -134,6 +135,7 @@ struct PosterGrid: View {
 struct PosterCell: View {
     let item: SeriesSummary
     var clickPlays = false
+    var upcoming = false
     var heatOnCover = false
     @Environment(AppModel.self) private var model
     @State private var hovering = false
@@ -142,7 +144,7 @@ struct PosterCell: View {
         Button { if clickPlays { playFirst() } else { model.open(item) } } label: { PosterCard(summary: item, hovering: hovering, heatOnCover: heatOnCover) }
             .buttonStyle(.plain)
             .overlay(alignment: .top) {
-                if hovering {
+                if hovering && !upcoming {
                     GeometryReader { proxy in
                         Button { playFirst() } label: { Image(systemName: "play.fill").offset(x: 1) }
                             .buttonStyle(GlassIconButtonStyle(diameter: 48))
@@ -155,7 +157,7 @@ struct PosterCell: View {
             }
             .onHover { value in withAnimation(.easeOut(duration: 0.15)) { hovering = value } }
             .contextMenu {
-                Button("立即播放第 1 集") { playFirst() }
+                if !upcoming { Button("立即播放第 1 集") { playFirst() } }
                 if clickPlays { Button("查看详情") { model.open(item) } }
                 Button(model.isFavorite(item.seriesId) ? "取消收藏" : "收藏") {
                     model.toggleFavorite(seriesId: item.seriesId, title: item.title, cover: item.cover)

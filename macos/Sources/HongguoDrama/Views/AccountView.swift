@@ -8,9 +8,14 @@ import HongguoCore
 final class AccountState {
     static let shared = AccountState()
 
+    private(set) var session = AccountSessionGate()
+
     var profile: AccountProfile? {
         didSet {
             guard profile?.id != oldValue?.id else { return }
+            if let id = profile?.id { session.signedIn(accountId: id) } else { session.signedOut() }
+            AccountSync.shared.resetSession()
+            AppModel.shared.accountChanged(to: profile?.id)
             avatar = ""
             guard let id = profile?.id else { return }
             // Last known nickname and picture at once; the App profile refreshes them.
@@ -23,23 +28,32 @@ final class AccountState {
     }
     /// The account's avatar address from the App profile ("" until known), cached per account.
     var avatar = ""
-    @ObservationIgnored private var loadingAvatar = false
+    @ObservationIgnored private var loadingAvatar: AccountSessionGate.Token?
 
     private static func cacheKey(_ id: String) -> String { "account.display.\(id)" }
     var restoring = true
     var message = ""
-    private var restoreStarted = false
+    @ObservationIgnored private var restoreTask: Task<Void, Never>?
 
     /// Restores the saved login once (the Keychain profile shows at once, the cookie is checked in the background).
     func restore() async {
-        guard !restoreStarted else { return }
-        restoreStarted = true
+        if let restoreTask { await restoreTask.value; return }
+        guard restoring else { return }
+        let task = Task { await restoreSavedProfile() }
+        restoreTask = task
+        await task.value
+        restoreTask = nil
+    }
+
+    private func restoreSavedProfile() async {
         // The background cookie check (or any later one) may find the login expired and drop it.
         NotificationCenter.default.addObserver(forName: AccountService.sessionExpiredNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.sessionExpired() }
         }
         let status = await AccountService.shared.status()
+        guard restoring, profile == nil else { restoring = false; return }
         profile = status.profile
+        if profile == nil, status.error.isEmpty { AppModel.shared.accountChanged(to: nil) }
         message = status.error
         restoring = false
     }
@@ -52,16 +66,18 @@ final class AccountState {
 
     /// Reads the App profile for the avatar (read only); a failure keeps the initial-letter circle.
     func loadAvatar() async {
-        guard let id = profile?.id, !loadingAvatar else { return }
-        loadingAvatar = true
-        defer { loadingAvatar = false }
+        guard let token = session.current, loadingAvatar != token else { return }
+        let id = token.accountId
+        loadingAvatar = token
+        defer { if loadingAvatar == token { loadingAvatar = nil } }
         // Right after launch the first signed request can fail while the device registers: retry a little.
         var found: AccountDataAccess.Profile?
         for attempt in 0..<3 {
             if attempt > 0 { try? await Task.sleep(for: .seconds(Double(attempt) * 3)) }
+            guard session.accepts(token) else { return }
             if let details = try? await AccountDataAccess.profile() { found = details; break }
         }
-        guard let details = found, profile?.id == id else { return }
+        guard let details = found, session.accepts(token) else { return }
         if !details.avatar.isEmpty { avatar = details.avatar }
         UserDefaults.standard.set([details.name, details.avatar], forKey: Self.cacheKey(id))
         // The saved nickname is often the placeholder "用户 <number>"; the App profile has the real one.
@@ -134,9 +150,12 @@ struct AccountView: View {
         }
         .navigationTitle("账号")
         .transparentToolbar()
-        .task {
-            await account.restore()
-            if account.profile != nil { await loadHistory(refresh: false) }
+        .task { await account.restore() }
+        .task(id: account.session.current) {
+            history = []
+            historyError = ""
+            loadingHistory = false
+            if account.session.current != nil { await loadHistory(refresh: false) }
         }
         .onDisappear { cancelLogin() }
     }
@@ -206,7 +225,6 @@ struct AccountView: View {
                         qrState = ""
                         account.profile = profile
                         account.message = warning
-                        await loadHistory(refresh: true)
                         await AccountSync.shared.pull()
                         return
                     }
@@ -230,7 +248,6 @@ struct AccountView: View {
         cancelLogin()
         Task {
             let warning = await AccountService.shared.logout()
-            AccountSync.shared.signedOut()
             account.profile = nil
             account.message = warning
             history = []
@@ -268,17 +285,22 @@ struct AccountView: View {
     }
 
     private func loadHistory(refresh: Bool) async {
+        guard let token = account.session.current else { return }
         loadingHistory = true
-        defer { loadingHistory = false }
+        defer { if account.session.accepts(token) { loadingHistory = false } }
         do {
-            history = try await AccountService.shared.history(refresh: refresh)
+            let rows = try await AccountService.shared.history(refresh: refresh)
+            guard account.session.accepts(token) else { return }
+            history = rows
             historyError = ""
-            model.store.mergeCloudHistory(history)
+            model.store.mergeCloudHistory(history, accountId: token.accountId)
             model.refreshHistory()
             // The background check may have dropped an expired login.
             let status = await AccountService.shared.status()
+            guard account.session.accepts(token) else { return }
             if status.profile == nil { account.profile = nil; history = [] }
         } catch {
+            guard account.session.accepts(token) else { return }
             historyError = (error as? HongguoError)?.message ?? "云端观看记录加载失败，请稍后重试"
         }
     }
