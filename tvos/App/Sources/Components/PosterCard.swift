@@ -20,6 +20,8 @@ struct PosterCard: View {
     var progress: Double? = nil
     /// Called when the card takes the focus (the page's colour follows the focused cover).
     var onFocus: (() -> Void)? = nil
+    /// A long-press menu on the card.
+    var menu: AnyView? = nil
     var action: () -> Void = {}
     @FocusState private var focused: Bool
 
@@ -53,6 +55,7 @@ struct PosterCard: View {
                     }
             }
             .buttonStyle(.card)
+            .contextMenu { if let menu { menu } }
             .focused($focused)
             .onChange(of: focused) { _, now in if now { onFocus?() } }
             VStack(alignment: .leading, spacing: 4) {

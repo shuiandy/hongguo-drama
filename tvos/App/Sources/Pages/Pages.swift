@@ -56,31 +56,6 @@ struct CatalogShelvesPage: View {
     }
 }
 
-/// 追剧: the favourites the shared library keeps (the account's shelf when signed in comes with
-/// the 我的 page model).
-struct FollowingPage: View {
-    @Environment(TVAppModel.self) private var app
-
-    var body: some View {
-        let favorites = app.library.favorites()
-        if favorites.isEmpty {
-            LoadStateView(state: .empty("还没有在追的剧"))
-        } else {
-            ZStack {
-                AmbientBackground(tint: PlaceholderTint.color(for: favorites[0].seriesId))
-                ScrollView(.vertical) {
-                    Shelf(title: "我的收藏", items: favorites.map {
-                        SeriesSummary(seriesId: $0.seriesId, title: $0.title, cover: $0.cover)
-                    })
-                    .padding(.horizontal, 80)
-                    .padding(.vertical, 40)
-                }
-                .scrollClipDisabled()
-            }
-        }
-    }
-}
-
 struct RecommendPage: View {
     @Environment(TVAppModel.self) private var app
 

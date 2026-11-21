@@ -33,10 +33,18 @@ final class LaunchTests: XCTestCase {
                        "focus stayed on the tab bar")
     }
 
-    /// 追剧 shows the favourites the shared library was seeded with in a sample run.
+    /// 追剧 shows the favourites and the history the shared library was seeded with in a sample
+    /// run; a long press offers 取消收藏 (a device-only change here: signed out, offline).
     func testFollowingShowsSeededFavourites() {
         let app = launch(route: "following")
-        XCTAssertTrue(app.staticTexts["我的收藏"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["收藏"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["历史"].exists)
+        XCUIRemote.shared.press(.down)
+        XCUIRemote.shared.press(.select, forDuration: 1.5)
+        let unfavorite = app.descendants(matching: .any)["取消收藏"]
+        XCTAssertTrue(unfavorite.waitForExistence(timeout: 5), "the long-press menu")
+        XCUIRemote.shared.press(.select)
+        XCTAssertFalse(unfavorite.waitForExistence(timeout: 2))
     }
 
     /// 剧场: 继续观看 and one shelf per category.
