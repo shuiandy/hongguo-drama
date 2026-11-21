@@ -419,7 +419,7 @@ struct AppLegacySigner {
     }
 
     /// Port of `signedSearchRequest` (hash branch 0) on `currentVersionName`.
-    func search(keyword: String, page: Int, cursor: SearchCursor?, identity: PlaybackIdentity, nowMillis: Int64, version: ClientVersion = .current) throws -> Signed {
+    func search(keyword: String, page: Int, cursor: SearchCursor?, identity: PlaybackIdentity, dToken: String = "", nowMillis: Int64, version: ClientVersion = .current) throws -> Signed {
         guard (1...50).contains(page) else { throw HongguoError(.input, "App 搜索页码需为 1 至 50 的整数") }
         guard [identity.deviceId, identity.iid].allSatisfy({ $0.matchesDigits(min: 1, max: 30) && $0.contains(where: { $0 != "0" }) }),
               identity.cdid.range(of: "^[a-fA-F0-9-]{36}$", options: .regularExpression) != nil else {
@@ -446,7 +446,7 @@ struct AppLegacySigner {
                 ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
                 ("x-gorgon", Self.xGorgon(query: query, body: nil, ts: ts, random: random)), ("x-helios", helios(ts: ts)),
                 ("x-medusa", try medusa(url: url, body: nil, ts: ts, deviceId: identity.deviceId, versionName: version.name, nowMillis: nowMillis)),
-                ("x-tt-dt", ""),
+                ("x-tt-dt", dToken),
             ]
             return Signed(url: url, query: query, headers: headers, body: nil)
         }

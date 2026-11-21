@@ -175,7 +175,12 @@ public actor AccountService {
         let transport = AppTransport(http: .shared)
         self.accountRequest = accountRequest ?? { url, headers in
             do { return try await transport.requestJSON(url, headers: headers, deadline: Date().addingTimeInterval(12)) }
-            catch let error as AppSourceError { throw HongguoError(.unavailable, error.message) }
+            catch let error as AppSourceError {
+                if error.status == 401 {
+                    Task { await AccountService.shared.notifyPossibleAuthFailure() }
+                }
+                throw error.hongguoError
+            }
         }
         self.identity = identity ?? { try await PersistentAppDevice.shared.get(transport: transport) }
         // Tests inject the identity and send no device token.
@@ -237,10 +242,10 @@ public actor AccountService {
 
     static func parseProfile(_ payload: JSONValue) throws -> AccountProfile {
         let data = try responseData(payload)
-        let id = (data["user_id_str"].idString ?? data["user_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
+        let id = data["user_id_str"].nonZeroIdString ?? data["user_id"].nonZeroIdString ?? ""
         guard !id.isEmpty else { throw HongguoError(.input, "登录态未通过红果账号验证，请重新扫码") }
-        guard id.matchesDigits(min: 1, max: 30), id.contains(where: { $0 != "0" }) else { throw HongguoError(.input, "红果账号编号无效，请重新扫码") }
-        let nickname = cleanText(data["name"].string ?? data["screen_name"].string ?? data["username"].string)
+        guard id.matchesDigits(min: 1, max: 30) else { throw HongguoError(.input, "红果账号编号无效，请重新扫码") }
+        let nickname = cleanText(data["name"].nonEmptyString ?? data["screen_name"].nonEmptyString ?? data["username"].nonEmptyString)
         return AccountProfile(id: id, nickname: nickname.isEmpty ? "红果用户" : nickname)
     }
 
@@ -269,23 +274,28 @@ public actor AccountService {
 
     static func parseHistoryRow(_ row: JSONValue) -> AccountHistoryItem? {
         if row["is_delete"].bool == true { return nil }
-        let seriesId = (row["book_id_str"].idString ?? row["book_id"].idString ?? row["series_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
-        let episodeId = (row["vid"].idString ?? row["item_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
+        let seriesId = row["book_id_str"].nonZeroIdString ?? row["book_id"].nonZeroIdString ?? row["series_id"].nonZeroIdString ?? ""
+        let episodeId = row["vid"].nonZeroIdString ?? row["item_id"].nonZeroIdString ?? ""
         guard seriesId.matchesDigits(min: 1, max: 30), episodeId.matchesDigits(min: 1, max: 30) else { return nil }
         func seconds(_ value: JSONValue) -> Double { max(0, (value.number ?? Double(value.string ?? "") ?? 0) / 1000) }
-        func pick(_ a: String, _ b: String) -> JSONValue { row[a].isNull ? row[b] : row[a] }
-        let index = row["vid_index"].number.map(Int.init) ?? 0
-        let title = cleanText(row["series_title"].string ?? row["book_name"].string)
-        let rawCover = row["series_cover_url"].string ?? row["thumb_url"].string ?? row["cover"].string ?? ""
+        func positiveSeconds(_ a: String, _ b: String) -> Double {
+            let first = seconds(row[a])
+            return first > 0 ? first : seconds(row[b])
+        }
+        let index = row["vid_index"].signedInt ?? 0
+        let title = cleanText(row["series_title"].nonEmptyString ?? row["book_name"].nonEmptyString)
+        let rawCover = row["series_cover_url"].nonEmptyString ?? row["thumb_url"].nonEmptyString ?? row["cover"].nonEmptyString ?? ""
         let cleaned = cleanCover(rawCover)
+        let aiUsage = row["ai_usage_type"].signedInt ?? 0
         return AccountHistoryItem(seriesId: seriesId, seriesTitle: title.isEmpty ? "剧集 \(seriesId)" : title,
                                   cover: cleaned.isEmpty ? AccountDataAccess.normalizeHTTPSURL(rawCover) : cleaned,
                                   episodeId: episodeId, episodeIndex: index > 0 ? index : 0,
-                                  position: seconds(pick("current_play_position", "current_play_time")),
-                                  duration: seconds(pick("duration", "current_total_time")),
+                                  position: positiveSeconds("current_play_position", "current_play_time"),
+                                  duration: positiveSeconds("duration", "current_total_time"),
                                   updatedAt: Date(timeIntervalSince1970: historyMillis(row) / 1000),
-                                  total: max(0, (row["episode_cnt"].number ?? row["episode_count"].number).map(Int.init) ?? 0),
-                                  category: AccountDataAccess.categoryLabel(contentType: Int(row["content_type"].number ?? 0),
+                                  total: max(0, row["episode_cnt"].signedInt ?? row["episode_count"].signedInt ?? 0),
+                                  category: AccountDataAccess.categoryLabel(contentType: row["content_type"].signedInt ?? 0,
+                                                                            aiUsageType: aiUsage,
                                                                             genre: row["genre"].string ?? ""))
     }
 
@@ -368,14 +378,19 @@ public actor AccountService {
     /// Signed-in profile, restoring the saved login on first use. A saved profile shows at once;
     /// the cookie is checked in the background and dropped only when the website rejects it.
     public func status() async -> (profile: AccountProfile?, error: String) {
-        guard !restored else { return (profile, restoreError) }
-        restored = true
+        if restored { return (profile, restoreError) }
         do {
-            guard let saved = try store.load() else { return (nil, "") }
+            guard let saved = try store.load() else {
+                restored = true
+                restoreError = ""
+                return (nil, "")
+            }
             let token = generation
             if let cached = saved.profile, cached.id.matchesDigits(min: 1, max: 30) {
                 credentials = saved
                 profile = cached
+                restored = true
+                restoreError = ""
                 Task { await self.revalidate(saved, token: token) }
                 return (cached, "")
             }
@@ -383,12 +398,41 @@ public actor AccountService {
             guard token == generation else { return (profile, "") }
             credentials = saved
             profile = next
+            restored = true
+            restoreError = ""
             try? store.save(AccountCredentials(cookie: saved.cookie, profile: next))
             return (next, "")
         } catch {
-            restoreError = Self.safeMessage(error, fallback: "上次登录暂时无法恢复")
+            let message = Self.safeMessage(error, fallback: "上次登录暂时无法恢复")
+            if Self.isAuthRejection(message) {
+                restored = true
+                credentials = nil
+                profile = nil
+                cachedHistory = nil
+                try? store.clear()
+                PersistentAppDevice.invalidateAuthCache()
+            }
+            restoreError = message
             return (nil, restoreError)
         }
+    }
+
+    private static func isAuthRejection(_ message: String) -> Bool {
+        message.range(
+            of: "会话过期|登录态未通过|账号编号无效|未登录|session.*expir|HTTP\\s*(401|403)",
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
+    /// Triggered by authenticated API requests when HTTP 401 or an auth rejection is observed.
+    public func notifyPossibleAuthFailure() async {
+        guard let saved = credentials else { return }
+        await revalidate(saved, token: generation)
+    }
+
+    /// Removes one series from the in-memory cloud history cache after local deletion.
+    public func evictCachedHistory(seriesId: String) {
+        cachedHistory?.removeAll { $0.seriesId == seriesId }
     }
 
     private func revalidate(_ saved: AccountCredentials, token: Int) async {
@@ -400,11 +444,12 @@ public actor AccountService {
         } catch {
             guard token == generation else { return }
             let message = Self.safeMessage(error)
-            guard message.range(of: "会话过期|登录态未通过|账号编号无效|HTTP\\s*(401|403)", options: .regularExpression) != nil else { return }
+            guard Self.isAuthRejection(message) else { return }
             credentials = nil
             profile = nil
             cachedHistory = nil
             try? store.clear()
+            PersistentAppDevice.invalidateAuthCache()
             NotificationCenter.default.post(name: Self.sessionExpiredNotification, object: nil)
         }
     }
@@ -412,6 +457,7 @@ public actor AccountService {
     private func signIn(cookie: String, profile next: AccountProfile) -> String {
         var warning = ""
         do { try store.save(AccountCredentials(cookie: cookie, profile: next)) } catch { warning = Self.safeMessage(error) }
+        PersistentAppDevice.invalidateAuthCache()
         credentials = AccountCredentials(cookie: cookie, profile: next)
         profile = next
         cachedHistory = nil
@@ -486,6 +532,7 @@ public actor AccountService {
         login = nil
         restored = true
         restoreError = ""
+        PersistentAppDevice.invalidateAuthCache()
         do { try store.clear(); return "" } catch { return Self.safeMessage(error) }
     }
 
@@ -523,10 +570,13 @@ public actor AccountService {
         let token = generation
         guard let page = try await historyPage(.first, cookie: current.cookie, token: token) else { return nil }
         if let row = Self.latestPerSeries(page.items).first(where: { $0.seriesId == seriesId }) {
-            if var cached = cachedHistory, let at = cached.firstIndex(where: { $0.seriesId == seriesId }) {
+            var cached = cachedHistory ?? []
+            if let at = cached.firstIndex(where: { $0.seriesId == seriesId }) {
                 cached[at] = row
-                cachedHistory = Self.latestPerSeries(cached)
+            } else {
+                cached.insert(row, at: 0)
             }
+            cachedHistory = Self.latestPerSeries(cached)
             return row
         }
         return cachedHistory?.first { $0.seriesId == seriesId }

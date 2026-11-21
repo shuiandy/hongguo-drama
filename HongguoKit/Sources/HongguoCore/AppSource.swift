@@ -305,7 +305,8 @@ enum AppSource {
         let h2 = AppCrypto.sha512(AppCrypto.sha512(seed) + spadeConstants)
         var plain = try AppCrypto.aes128CBC(encrypt: false, key: Array(h2[0..<16]), iv: Array(h2[16..<32]),
                                             Array(raw[4..<(4 + cipherLength)]), pkcs7: false)
-        if let padding = plain.last, (1...16).contains(Int(padding)), Int(padding) <= plain.count {
+        if let padding = plain.last, (1...16).contains(Int(padding)), Int(padding) <= plain.count,
+           plain.suffix(Int(padding)).allSatisfy({ $0 == padding }) {
             plain.removeLast(Int(padding))
         }
         while plain.last == 0 { plain.removeLast() }
@@ -314,9 +315,14 @@ enum AppSource {
 
     struct Row { var item: JSONValue; var codec: String; var codecRank: Int; var pixels: Int; var width: Int; var height: Int }
 
-    /// Stream choice for "auto": H.264 > HEVC, then the highest tier. Every compatible encoding at the
-    /// best tier is tried before failing; lower tiers are never used silently. ByteVC2 is used last,
-    /// and only when the conversion helper is available.
+    static func containsByteVC2(_ info: JSONValue) -> Bool {
+        let items = info["video_list"].object.map { Array($0.values) } ?? info["video_list"].array ?? []
+        return items.contains { ($0["codec_type"].string ?? $0["video_meta"]["codec_type"].string)?.lowercased() == "bytevc2" }
+    }
+
+    /// Stream choice for "auto": among hardware-decodable streams (H.264 and HEVC/ByteVC1), pick
+    /// the highest resolution first and prefer H.264 over HEVC within the same tier. ByteVC2 is
+    /// strictly last, and only when the conversion helper is available.
     static func parsePlayModel(_ info: JSONValue, vid: String, inline: Bool, requireEncryptionMetadata: Bool? = nil,
                                minimumPixels: Int = 0) throws -> PlayInfo {
         let requireMetadata = requireEncryptionMetadata ?? inline
@@ -338,17 +344,24 @@ enum AppSource {
             let digits = quality.range(of: "[0-9]+", options: .regularExpression).map { Int(quality[$0]) ?? 0 } ?? 0
             let pixels = size.0 > 0 ? min(size.0, size.1) : digits
             return Row(item: item, codec: codec, codecRank: rank, pixels: pixels, width: size.0, height: size.1)
-        }.filter { $0.codecRank < 3 && (minimumPixels == 0 || min($0.width, $0.height) >= minimumPixels) }
-            .sorted { $0.codecRank != $1.codecRank ? $0.codecRank < $1.codecRank : $0.pixels > $1.pixels }
+        }.filter { $0.codecRank < 3 && (minimumPixels == 0 || $0.pixels >= minimumPixels) }
+            .sorted {
+                let lhsHw = $0.codecRank < 2
+                let rhsHw = $1.codecRank < 2
+                if lhsHw != rhsHw { return lhsHw }
+                if $0.pixels != $1.pixels { return $0.pixels > $1.pixels }
+                return $0.codecRank < $1.codecRank
+            }
         guard let best = rows.first else {
-            let onlyByteVC2 = items.contains { ($0["codec_type"].string ?? $0["video_meta"]["codec_type"].string)?.lowercased() == "bytevc2" }
+            let onlyByteVC2 = containsByteVC2(info)
             throw AppSourceError(.noCompatibleSource, onlyByteVC2
                 ? (ByteVC2Converter.executableURL == nil
                     ? "本集仅提供 ByteVC2 编码，未找到兼容转换组件，请重新安装完整版本"
                     : "本集仅提供 ByteVC2 编码，已在设置中关闭兼容转换；打开设置 > 下载 > ByteVC2 兼容转换后可播放")
                 : "本集暂未提供兼容的 H.264/HEVC 片源")
         }
-        let seed = info["key_seed"].string.map(AppCrypto.base64Decode)
+        let rawSeed = info["key_seed"].nonEmptyString.map(AppCrypto.base64Decode)
+        let seed = (rawSeed?.isEmpty == false) ? rawSeed : nil
         var lastError: Error?
         var incomplete = false
         /// First working stream among `tierRows` (already in codec preference order).
@@ -377,7 +390,16 @@ enum AppSource {
                     var validURLs: [URL] = []
                     for candidate in candidates.compactMap({ $0 }).filter({ !$0.isEmpty }) {
                         do {
-                            let media = try seed.map { try decryptSpadeURL(candidate, seed: $0) } ?? cleanURL(candidate)
+                            let cleaned = cleanURL(candidate)
+                            let alreadyPlain = cleaned.lowercased().hasPrefix("http://") || cleaned.lowercased().hasPrefix("https://")
+                            let media: String
+                            if alreadyPlain {
+                                media = cleaned
+                            } else if let seed {
+                                media = try decryptSpadeURL(candidate, seed: seed)
+                            } else {
+                                media = cleaned
+                            }
                             let url = try checkedURL(media, domains: mediaDomains)
                             guard URLGuard.isPublicURL(url) else { throw URLGuard.blocked() }
                             if !validURLs.contains(url) { validURLs.append(url) }
@@ -406,7 +428,7 @@ enum AppSource {
         var error = AppSourceError(.invalidResponse, "本集片源地址或密钥无法解析")
         if incomplete {
             error.incompleteEncryptionMetadata = true
-            error.minimumPixels = min(best.width, best.height)
+            error.minimumPixels = best.pixels
         }
         throw error
     }

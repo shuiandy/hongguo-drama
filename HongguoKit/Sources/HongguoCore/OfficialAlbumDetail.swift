@@ -42,10 +42,11 @@ enum OfficialAlbumDetail {
 
     /// The collection as an `OfficialSeriesDetail`, or nil when `albumId` is not a collection with videos.
     static func load(_ albumId: String, http: HTTPClient = .shared) async throws -> OfficialSeriesDetail? {
-        guard let listing = try? await request(albumId, items: nil, http: http) else { return nil }
-        guard let album = listing["data"]["album_data"].object, !(album["video_detail_list"]?.array ?? []).isEmpty else {
-            // Not a collection: perhaps one creator video on its own (an actor's 作品 › 全部 lists
-            // them), which the same read answers when asked for its own id.
+        let listing = try? await request(albumId, items: nil, http: http)
+        let albumList = listing?["data"]["album_data"]["video_detail_list"].array ?? []
+        guard let listing, !albumList.isEmpty else {
+            // Not a collection (or album listing rejected a lone video id): try as a single creator
+            // video (`content_type` 1001), which the same read answers when asked for its own id.
             guard let reply = try? await request(albumId, items: [albumId], http: http),
                   let lone = parseLone(reply["data"]["video_detail_data"][albumId]["video_data"], id: albumId) else { return nil }
             UGCVideos.insert(lone.episodes.map(\.vid))
@@ -97,9 +98,9 @@ enum OfficialAlbumDetail {
     /// A single creator video (`content_type` 1001) as a one-episode series, or nil.
     static func parseLone(_ video: JSONValue, id: String) -> OfficialSeriesDetail? {
         guard Int(video["content_type"].number ?? 0) == 1001,
-              (video["series_id_str"].idString ?? video["series_id"].idString) == id else { return nil }
+              (video["series_id_str"].nonZeroIdString ?? video["series_id"].nonZeroIdString) == id else { return nil }
         let item = video["video_list"][0]
-        let vid = item["vid"].idString.flatMap { $0.matchesDigits(min: 1, max: 30) ? $0 : nil } ?? id
+        let vid = item["vid"].nonZeroIdString.flatMap { $0.matchesDigits(min: 1, max: 30) ? $0 : nil } ?? id
         func count(_ value: JSONValue) -> Int? { value.number.flatMap { $0 >= 0 && $0 < 1e15 ? Int($0) : nil } }
         let title = AccountService.cleanText(video["series_title"].string)
         let rawCover = video["series_cover"].string ?? ""
@@ -111,13 +112,13 @@ enum OfficialAlbumDetail {
             episodeLabel: "共1集", episodeCount: 1, completion: .completed,
             favoriteCount: count(video["followed_cnt"]), playCount: count(video["series_play_cnt"]), recordNumber: "",
             episodes: [OfficialSeriesDetail.Entry(vid: vid, index: 1, likes: count(item["digged_count"]) ?? count(video["digg_cnt"]),
-                                                  disabled: item["disable_play"].bool == true, title: title)])
+                                                  disabled: video["disable_play"].bool == true || item["disable_play"].bool == true, title: title)])
     }
 
     static func itemIds(_ listing: JSONValue) -> [String] {
         var seen = Set<String>()
         return (listing["data"]["album_data"]["video_detail_list"].array ?? []).compactMap { item in
-            guard let id = item["series_id_str"].idString ?? item["series_id"].idString, id.matchesDigits(min: 1, max: 30),
+            guard let id = item["series_id_str"].nonZeroIdString ?? item["series_id"].nonZeroIdString, id.matchesDigits(min: 1, max: 30),
                   seen.insert(id).inserted else { return nil }
             return id
         }
@@ -127,16 +128,16 @@ enum OfficialAlbumDetail {
     /// gives, else the item id, which the detail has always matched.
     static func parse(_ listing: JSONValue, details: [String: JSONValue], albumId: String) throws -> OfficialSeriesDetail {
         let album = listing["data"]["album_data"]
-        if let id = album["album_id_str"].idString ?? album["album_id"].idString, id != albumId {
+        if let id = album["album_id_str"].nonZeroIdString ?? album["album_id"].nonZeroIdString, id != albumId {
             throw HongguoError(.format, "红果返回的合集与请求不一致")
         }
         func count(_ value: JSONValue) -> Int? { value.number.flatMap { $0 >= 0 && $0 < 1e15 ? Int($0) : nil } }
         var seen = Set<String>()
         var entries: [OfficialSeriesDetail.Entry] = []
         for item in album["video_detail_list"].array ?? [] {
-            guard let id = item["series_id_str"].idString ?? item["series_id"].idString, id.matchesDigits(min: 1, max: 30) else { continue }
+            guard let id = item["series_id_str"].nonZeroIdString ?? item["series_id"].nonZeroIdString, id.matchesDigits(min: 1, max: 30) else { continue }
             let video = details[id]?["video_data"]["video_list"][0] ?? .null
-            let vid = video["vid"].idString.flatMap { $0.matchesDigits(min: 1, max: 30) ? $0 : nil } ?? id
+            let vid = video["vid"].nonZeroIdString.flatMap { $0.matchesDigits(min: 1, max: 30) ? $0 : nil } ?? id
             guard seen.insert(vid).inserted else { continue }
             entries.append(OfficialSeriesDetail.Entry(
                 vid: vid, index: entries.count + 1, likes: count(video["digged_count"]),

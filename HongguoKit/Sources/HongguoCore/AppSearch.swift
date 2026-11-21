@@ -17,17 +17,24 @@ public enum SearchText {
     }
 
     /// Catalogue covers: a HEIC object on the novel picture CDN maps to its public JPEG variant;
-    /// other HEIC covers are dropped.
+    /// protocol-relative and http URLs are upgraded to https; other HTTPS HEIC covers are kept for
+    /// native Apple decoding.
     public static func catalogCover(_ value: String?) -> String {
-        let text = (value ?? "").trimmingCharacters(in: .whitespaces)
-        let isHTTP = text.range(of: "^https?://", options: [.regularExpression, .caseInsensitive]) != nil
-        let isHEIC = text.range(of: "\\.heic(\\?|$)", options: [.regularExpression, .caseInsensitive]) != nil
-        let compatible = isHTTP && !isHEIC ? text : ""
-        guard let value, let url = URL(string: value), url.path.lowercased().hasSuffix(".heic") else { return compatible }
-        guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-              let host = url.host?.lowercased(), host.range(of: "(^|\\.)(fqnovelpic\\.com|byteimg\\.com)$", options: .regularExpression) != nil,
-              url.path.hasPrefix("/novel-pic/"), url.path.contains("~") else { return "" }
-        return "https://p3-novel.byteimg.com\(url.path.split(separator: "~", maxSplits: 1)[0])~tplv-shrink:640:0.image"
+        var text = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("//") { text = "https:" + text }
+        else if text.lowercased().hasPrefix("http://") { text = "https://" + text.dropFirst(7) }
+        guard let url = URL(string: text), url.scheme?.lowercased() == "https" else { return "" }
+        if url.path.lowercased().hasSuffix(".heic") {
+            guard let host = url.host?.lowercased(),
+                  host.range(of: "(^|\\.)(fqnovelpic\\.com|byteimg\\.com|douyinpic\\.com)$", options: .regularExpression) != nil else {
+                return ""
+            }
+            if url.path.hasPrefix("/novel-pic/"), url.path.contains("~") {
+                return "https://p3-novel.byteimg.com\(url.path.split(separator: "~", maxSplits: 1)[0])~tplv-shrink:640:0.image"
+            }
+            return text
+        }
+        return text
     }
 
     static func integer(_ value: JSONValue) -> Int? {
@@ -75,23 +82,25 @@ public final class AppSearchService: Sendable {
             throw HongguoError(.input, "App 搜索游标已失效，请重新搜索")
         }
         let deadline = Date().addingTimeInterval(timeout)
-        let identity: PlaybackIdentity
+        let device: (identity: PlaybackIdentity, dToken: String)
         do {
-            identity = try await PersistentAppDevice.shared.get(transport: transport)
+            device = try await PersistentAppDevice.dataIdentity(transport: transport)
+        } catch let error as AppSourceError {
+            throw error.hongguoError
         } catch {
             throw HongguoError(.unavailable, "App 搜索暂不可用")
         }
         guard Date() < deadline else { throw HongguoError(.timeout, "App 搜索超时") }
         let signed = try signer().search(keyword: kw, page: page,
                                          cursor: cursor.map { .init(searchId: $0.searchId, passback: $0.passback, nextOffset: $0.nextOffset) },
-                                         identity: identity, nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
+                                         identity: device.identity, dToken: device.dToken,
+                                         nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
         let payload: JSONValue
         do {
             // Signed out on purpose (`user_is_login=0` in the query), as before: no website Cookie.
             payload = try await transport.requestJSON(signed.url, headers: signed.headers, deadline: deadline)
         } catch let error as AppSourceError {
-            if error.code == .timeout { throw HongguoError(.timeout, "App 搜索超时") }
-            throw HongguoError(.unavailable, "App 搜索暂不可用")
+            throw error.hongguoError
         }
         return try Self.parse(payload, page: page)
     }
@@ -101,8 +110,7 @@ public final class AppSearchService: Sendable {
     public static func parse(_ payload: JSONValue, page: Int) throws -> AppSearchPage {
         guard (1...50).contains(page) else { throw HongguoError(.input, "App 搜索页码需为 1 至 50 的整数") }
         guard payload.object != nil else { throw HongguoError(.upstream, "App 搜索返回空响应") }
-        if let code = SearchText.integer(payload["code"]), code != 0 { throw HongguoError(.upstream, "App 搜索返回业务错误") }
-        if case .int(let code) = payload["code"], code != 0 { throw HongguoError(.upstream, "App 搜索返回业务错误") }
+        guard payload["code"].isZeroOrMissingStatusCode else { throw HongguoError(.upstream, "App 搜索返回业务错误") }
         guard let tabs = payload["search_tabs"].array ?? payload["data"]["search_tabs"].array else {
             throw HongguoError(.format, "App 搜索数据结构异常")
         }
@@ -111,24 +119,33 @@ public final class AppSearchService: Sendable {
         }
         var seen = Set<String>(), results: [SeriesSummary] = []
         for cell in tab["data"].array ?? [] {
-            guard let video = (cell["video_data"].array ?? []).first(where: { ($0["series_id"].idString ?? "").matchesDigits(min: 1, max: 30) }),
-                  let seriesId = video["series_id"].idString else { continue }
-            let title = SearchText.clean(cell["search_high_light"]["title"]["text"].string ?? video["title"].string ?? cell["cell_name"].string)
-            guard !title.isEmpty, seen.insert(seriesId).inserted else { continue }
-            let count = SearchText.integer(video["episode_cnt"]) ?? SearchText.integer(video["episode_count"]) ?? 0
-            let rawCover = video["cover"].string ?? video["series_cover"].string ?? video["video_detail"]["series_cover"].string ?? ""
-            let subs = video["sub_title_list"].array ?? []
-            let rawHeat = AccountService.cleanText(
-                subs.first(where: { Int($0["data_type"].number ?? 0) == 27 })?["content"].string
-                ?? subs.first(where: { ($0["content"].string ?? "").contains("热度") })?["content"].string
-            )
-            let heat = (!rawHeat.isEmpty && !rawHeat.contains("热度")) ? "\(rawHeat)热度" : rawHeat
-            let tags = subs.filter { Int($0["data_type"].number ?? 0) == 3 }
-                .map { AccountService.cleanText($0["content"].string) }.filter { !$0.isEmpty }
-            results.append(SeriesSummary(seriesId: seriesId, title: title, cover: DiscoveryAccess.normalizedCover(rawCover),
-                                         episodeCount: count, tags: tags,
-                                         description: SearchText.clean(video["series_intro"].string ?? video["video_desc"].string ?? cell["series_intro"].string),
-                                         heat: heat, episodeLabel: count > 0 ? "全\(count)集" : ""))
+            let videos = (cell["video_data"].array ?? []).filter {
+                guard let id = $0["series_id"].nonZeroIdString else { return false }
+                return id.matchesDigits(min: 1, max: 30)
+            }
+            for (idx, video) in videos.enumerated() {
+                guard let seriesId = video["series_id"].nonZeroIdString else { continue }
+                let highlight = idx == 0 ? cell["search_high_light"]["title"]["text"].nonEmptyString : nil
+                let title = SearchText.clean(highlight ?? video["title"].nonEmptyString ?? video["series_title"].nonEmptyString ?? (idx == 0 ? cell["cell_name"].nonEmptyString : nil))
+                guard !title.isEmpty, seen.insert(seriesId).inserted else { continue }
+                let count = SearchText.integer(video["episode_cnt"]) ?? SearchText.integer(video["episode_count"]) ?? 0
+                let rawCover = video["cover"].nonEmptyString ?? video["series_cover"].nonEmptyString ?? video["video_detail"]["series_cover"].nonEmptyString ?? ""
+                let subs = video["sub_title_list"].array ?? []
+                let rawHeat = AccountService.cleanText(
+                    subs.first(where: { Int($0["data_type"].number ?? 0) == 27 })?["content"].string
+                    ?? subs.first(where: { ($0["content"].string ?? "").contains("热度") })?["content"].string
+                )
+                let heat = (!rawHeat.isEmpty && !rawHeat.contains("热度")) ? "\(rawHeat)热度" : rawHeat
+                let tags = subs.filter { Int($0["data_type"].number ?? 0) == 3 }
+                    .map { AccountService.cleanText($0["content"].string) }.filter { !$0.isEmpty }
+                let epRight = AccountService.cleanText(video["episode_right_text"].nonEmptyString)
+                let disabled = video["disable_play"].bool == true || video["video_detail"]["disable_play"].bool == true
+                let episodeLabel = disabled ? "待上线" : (!epRight.isEmpty ? epRight : (count > 0 ? "全\(count)集" : ""))
+                results.append(SeriesSummary(seriesId: seriesId, title: title, cover: DiscoveryAccess.normalizedCover(rawCover),
+                                             episodeCount: count, tags: tags,
+                                             description: SearchText.clean(video["series_intro"].nonEmptyString ?? video["video_desc"].nonEmptyString ?? cell["series_intro"].nonEmptyString),
+                                             heat: heat, episodeLabel: episodeLabel))
+            }
         }
         let hasMore = tab["has_more"].bool == true && page < 50
         return AppSearchPage(results: results, page: page, hasMore: hasMore,
@@ -179,17 +196,30 @@ public actor NewReleaseService {
     }
 
     static func row(_ row: JSONValue) -> NewRelease? {
-        guard let id = row["series_id"].idString, id.matchesDigits(min: 1, max: 30) else { return nil }
-        let title = SearchText.clean(row["title"].string ?? row["series_title"].string ?? row["series_name"].string)
+        guard let id = row["series_id"].nonZeroIdString, id.matchesDigits(min: 1, max: 30) else { return nil }
+        let title = SearchText.clean(row["title"].nonEmptyString ?? row["series_title"].nonEmptyString ?? row["series_name"].nonEmptyString)
         guard !title.isEmpty else { return nil }
         var labels: [String] = []
+        var heat = ""
         func add(_ value: String?) { let text = SearchText.clean(value); if !text.isEmpty, !labels.contains(text) { labels.append(text) } }
         add(row["tag_info"]["text"].string)
-        for item in row["sub_title_list"].array ?? [] { add(item["content"].string) }
+        for item in row["sub_title_list"].array ?? [] {
+            let text = SearchText.clean(item["content"].string)
+            guard !text.isEmpty else { continue }
+            if item["data_type"].signedInt == 27 {
+                if heat.isEmpty { heat = text }
+            } else {
+                add(text)
+            }
+        }
+        let count = SearchText.integer(row["episode_cnt"]) ?? 0
+        let epRight = SearchText.clean(row["episode_right_text"].nonEmptyString)
         let summary = SeriesSummary(seriesId: id, title: title, cover: SearchText.catalogCover(row["cover"].string),
-                                    episodeCount: SearchText.integer(row["episode_cnt"]) ?? 0,
+                                    episodeCount: count,
                                     tags: Array(labels.filter { $0 != "新剧" && $0 != "今日上新" }.prefix(4)),
-                                    description: SearchText.clean(row["video_desc"].string ?? row["series_intro"].string))
+                                    description: SearchText.clean(row["video_desc"].nonEmptyString ?? row["series_intro"].nonEmptyString),
+                                    heat: heat,
+                                    episodeLabel: !epRight.isEmpty ? epRight : (count > 0 ? "全\(count)集" : ""))
         return NewRelease(series: summary, releasedToday: labels.contains("今日上新"))
     }
 
@@ -217,7 +247,7 @@ public actor NewReleaseService {
             guard now() < deadline else { break }
             let payload = try await fetch(Self.pageBody(scene: scene, genre: genre, offset: offset, sessionId: sessionId), deadline)
             guard payload.object != nil else { throw HongguoError(.upstream, "App 上新返回空响应") }
-            if let code = SearchText.integer(payload["code"]), code != 0 { throw HongguoError(.upstream, "App 上新服务暂不可用") }
+            guard payload["code"].isZeroOrMissingStatusCode else { throw HongguoError(.upstream, "App 上新服务暂不可用") }
             guard let data = payload["data"].object, let videos = data["video_data"]?.array else { throw HongguoError(.format, "App 上新数据结构异常") }
             rows += videos
             guard data["has_more"]?.bool == true, let next = data["next_offset"].flatMap(SearchText.integer), next > offset else { break }

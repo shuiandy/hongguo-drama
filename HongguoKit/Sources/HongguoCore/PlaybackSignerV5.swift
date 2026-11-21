@@ -232,7 +232,7 @@ struct PlaybackSignerV5 {
         return encoded.map { UInt8($0 & 255) }
     }
 
-    struct Who { var deviceId, osVersion, deviceType, channel, versionName: String }
+    struct Who { var deviceId, osVersion, deviceType, channel, versionName: String; var brand: String = "HONOR" }
 
     func medusa(query: [UInt8], f13: [UInt8], ts: UInt32, who: Who) throws -> String {
         let flags = [UInt8](repeating: 0, count: 8)
@@ -240,8 +240,8 @@ struct PlaybackSignerV5 {
         device.sint(1, 1); device.sint(2, 2); device.string(3, "8662"); device.string(4, who.deviceId)
         device.string(5, processNonce); device.string(6, "!noperm!"); device.string(12, "Asia/Shanghai,8")
         device.string(13, "zh_CN"); device.string(22, who.osVersion); device.sint(25, processStarted)
-        device.string(30, who.deviceType); device.string(31, "HONOR"); device.string(32, who.deviceType)
-        device.string(34, "HONOR")
+        device.string(30, who.deviceType); device.string(31, who.brand); device.string(32, who.deviceType)
+        device.string(34, who.brand)
         var env = ProtoWriter()
         env.string(6, "v04.10.03.04-bugfix"); env.string(8, who.channel); env.bytes(12, device.bytes)
         env.string(14, who.versionName)
@@ -324,8 +324,9 @@ struct PlaybackSignerV5 {
         let ts = UInt32(nowMillis / 1000)
         let bodyHash = AppCrypto.md5(body)
         let fields = values.map { $0.0 == "ts" ? ($0.0, String(ts)) : $0 }
+        let brand = lookup["device_platform"]?.lowercased() == "iphone" ? "Apple" : "HONOR"
         let who = Who(deviceId: lookup["device_id"]!, osVersion: lookup["os_version"]!, deviceType: lookup["device_type"]!,
-                      channel: lookup["channel"]!, versionName: lookup["version_name"]!)
+                      channel: lookup["channel"]!, versionName: lookup["version_name"]!, brand: brand)
         for offset in 0..<1024 {
             let ticket = String(nowMillis + Int64(offset))
             var pairs = fields

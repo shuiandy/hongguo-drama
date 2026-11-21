@@ -28,7 +28,10 @@ public final class SeriesService: Sendable {
 
     /// Every listed episode plays through the App source, so `webAvailable` stays unset.
     static func episodes(from detail: OfficialSeriesDetail) -> SeriesEpisodes {
-        let episodes = detail.episodes.map { Episode(vid: $0.vid, index: $0.index, title: $0.title, seriesId: detail.seriesId, webAvailable: nil) }
+        let episodes = detail.episodes.map {
+            Episode(vid: $0.vid, index: $0.index, title: $0.title, seriesId: detail.seriesId,
+                    webAvailable: nil, locked: nil, disabled: $0.disabled ? true : nil)
+        }
         return SeriesEpisodes(seriesId: detail.seriesId, title: detail.title.isEmpty ? "未命名短剧" : detail.title, cover: detail.cover,
                               episodes: episodes, webAccessibleEpisodes: nil, source: .api)
     }

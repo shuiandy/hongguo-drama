@@ -8,20 +8,24 @@ enum AppCommentClient {
     static func post(_ path: String, body: [String: Any], headers extra: [(String, String)] = [],
                      http: HTTPClient) async throws -> JSONValue {
         let stampMs = Int64(Date().timeIntervalSince1970 * 1000)
-        let device = try await PersistentAppDevice.dataIdentity(transport: AppTransport(http: http)).identity
-        let rawQuery = DanmakuSigner.buildQuery(stampMs: stampMs, deviceId: device.deviceId, installId: device.iid)
+        let device = try await PersistentAppDevice.dataIdentity(transport: AppTransport(http: http))
+        let rawQuery = DanmakuSigner.buildQuery(stampMs: stampMs, deviceId: device.identity.deviceId, installId: device.identity.iid)
         guard let url = URL(string: "\(host)\(path)?\(rawQuery)") else { throw HongguoError(.input, "请求地址无效") }
+        let bodyData = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         var options = HTTPClient.Options()
         options.timeout = 8
+        options.maxRedirects = 0
         let signing = try DanmakuSigner.headers(rawQuery: rawQuery, stamp: stampMs / 1000,
-                                                nonce: AppCrypto.randomBytes(DanmakuSigner.nonceBytes))
-        let headers: [(String, String)] = [
+                                                nonce: AppCrypto.randomBytes(DanmakuSigner.nonceBytes),
+                                                stampMs: stampMs, body: bodyData)
+        var headers: [(String, String)] = [
             ("User-Agent", DanmakuService.userAgent), ("Accept", "application/json"),
             ("X-XS-From-Web", "0"), ("Sdk-Version", "2"), ("Content-Type", "application/json; charset=utf-8"),
-        ] + extra + signing
+        ]
+        if !device.dToken.isEmpty { headers.append(("x-tt-dt", device.dToken)) }
+        headers += extra + signing
         for (key, value) in headers { options.headers[key] = value }
-        let response = try await http.post(url, json: try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]),
-                                           options: options)
+        let response = try await http.post(url, json: bodyData, options: options)
         guard let payload = try? JSONValue.parse(response.data) else { throw HongguoError(.upstream, "红果接口返回了无法识别的内容") }
         return payload
     }

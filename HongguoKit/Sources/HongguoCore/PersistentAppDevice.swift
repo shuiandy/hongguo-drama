@@ -64,11 +64,13 @@ public actor PersistentAppDevice {
         public var klinkEgdi: String?
         public var isActivated: Bool?
         public var lastRegisteredAt: Date?
+        public var firstInstallTimeMs: Int64?
 
         public init(deviceId: String, iid: String, cdid: String,
                     openudid: String? = nil, clientudid: String? = nil,
                     deviceToken: String? = nil, klinkEgdi: String? = nil,
-                    isActivated: Bool? = nil, lastRegisteredAt: Date? = nil) {
+                    isActivated: Bool? = nil, lastRegisteredAt: Date? = nil,
+                    firstInstallTimeMs: Int64? = nil) {
             self.deviceId = deviceId
             self.iid = iid
             self.cdid = cdid
@@ -78,6 +80,7 @@ public actor PersistentAppDevice {
             self.klinkEgdi = klinkEgdi
             self.isActivated = isActivated
             self.lastRegisteredAt = lastRegisteredAt
+            self.firstInstallTimeMs = firstInstallTimeMs
         }
 
         /// Mirrors `-[BDInstall _needRegsiter]`: re-register if >6 hours old, missing `device_token`,
@@ -99,6 +102,8 @@ public actor PersistentAppDevice {
     private var inflight: Task<StoredRecord, Error>?
     private var inflightIsFresh = false
     private var backgroundRenewTask: Task<Void, Never>?
+    private var lastBackgroundRenewFailureAt = Date.distantPast
+    private static let backgroundRenewCooldown: TimeInterval = 60
     private var lastRefreshAt = Date.distantPast
     private var loadedFromStore = false
 
@@ -171,16 +176,22 @@ public actor PersistentAppDevice {
 
     private func scheduleBackgroundRenewal(transport: AppTransport) {
         guard backgroundRenewTask == nil, inflight == nil else { return }
+        guard Date().timeIntervalSince(lastBackgroundRenewFailureAt) >= Self.backgroundRenewCooldown else { return }
         let existing = record
         backgroundRenewTask = Task { [weak self] in
-            defer { Task { await self?.clearBackgroundRenewTask() } }
             guard let self else { return }
-            _ = try? await self.registerOrRenew(existing: existing, transport: transport)
+            let succeeded = (try? await self.registerOrRenew(existing: existing, transport: transport)) != nil
+            await self.finishBackgroundRenewTask(succeeded: succeeded)
         }
     }
 
-    private func clearBackgroundRenewTask() {
+    private func finishBackgroundRenewTask(succeeded: Bool) {
         backgroundRenewTask = nil
+        if !succeeded {
+            lastBackgroundRenewFailureAt = Date()
+        } else {
+            lastBackgroundRenewFailureAt = .distantPast
+        }
     }
 
     private func registerOrRenew(existing: StoredRecord?, transport: AppTransport) async throws -> StoredRecord {
@@ -192,7 +203,11 @@ public actor PersistentAppDevice {
         let task = Task<StoredRecord, Error> {
             var updated = try await Self.performRegister(existing: existing, transport: transport)
             let activated = await Self.performActivate(record: updated, transport: transport)
-            if activated { updated.isActivated = true }
+            if activated {
+                updated.isActivated = true
+            } else if updated.deviceId != existing?.deviceId {
+                updated.isActivated = false
+            }
             Self.savePersisted(updated)
             Self.onLog?("device \(label) ok activated=\(updated.isActivated == true) dtoken=\(!(updated.deviceToken ?? "").isEmpty)")
             return updated
@@ -221,6 +236,7 @@ public actor PersistentAppDevice {
 
     private static func performRegister(existing: StoredRecord?, transport: AppTransport) async throws -> StoredRecord {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let firstInstallTime = existing?.firstInstallTimeMs ?? now
         let cdid = existing?.cdid ?? AppCrypto.uuid()
         let openudid = existing?.openudid ?? AppCrypto.hex(AppCrypto.randomBytes(8))
         let clientudid = existing?.clientudid ?? AppCrypto.uuid()
@@ -233,8 +249,8 @@ public actor PersistentAppDevice {
             "app_version_minor": AppLegacySigner.currentVersionName, "aid": 8662, "channel": "update_64", "package": "com.phoenix.read",
             "app_version": AppLegacySigner.currentVersionName, "version_code": versionCode, "sdk_version": "3.7.0-rc.34-fanqie-xiaoshuo",
             "sdk_target_version": 29, "git_hash": "3a88f4e", "os": "Android", "os_version": "16", "os_api": 36,
-            "device_model": "25053RT47C", "device_brand": "Redmi", "device_manufacturer": "Redmi",
-            "cpu_abi": "arm64-v8a", "release_build": "b5e187f", "density_dpi": 520, "display_density": "mdpi",
+            "device_model": "25053RT47C", "device_brand": "Redmi", "device_manufacturer": "Xiaomi",
+            "cpu_abi": "arm64-v8a", "release_build": "b5e187f", "density_dpi": 520, "display_density": "xxxhdpi",
             "resolution": "1280x2772", "language": "zh", "timezone": 8, "access": "wifi", "not_request_sender": 0,
             "carrier": "CHINA MOBILE", "mcc_mnc": "46000", "rom": "eng.root.20231116.160340",
             "rom_version": "W528JS release-keys", "cdid": cdid,
@@ -243,7 +259,7 @@ public actor PersistentAppDevice {
             "tz_offset": 28800, "sim_region": "cn", "sim_serial_number": [Any](), "oaid_may_support": false,
             "req_id": AppCrypto.uuid(), "device_platform": "android",
             "custom": ["account_region_src": "fallback", "account_region": "cn", "host_bit": 64, "dragon_device_type": "phone"],
-            "pre_installed_channel": "", "apk_first_install_time": now, "is_system_app": 0, "sdk_flavor": "china", "guest_mode": 0,
+            "pre_installed_channel": "", "apk_first_install_time": firstInstallTime, "is_system_app": 0, "sdk_flavor": "china", "guest_mode": 0,
         ]
         if let oldDid = existing?.deviceId, !oldDid.isEmpty {
             header["old_did"] = oldDid
@@ -277,6 +293,8 @@ public actor PersistentAppDevice {
         ]
 
         var primaryQuery: [(String, String)] = [
+            ("is_activated", wasActivated ? "1" : "0"),
+            ("aid", "8662"),
             ("tt_data", "a"),
             ("cronet_version", "8d40f833_2026-03-03"),
             ("ttnet_version", "4.2.243.31-douyin"),
@@ -289,8 +307,6 @@ public actor PersistentAppDevice {
         ]
         if let did = existing?.deviceId, !did.isEmpty {
             primaryQuery.insert(("device_id", did), at: 0)
-            primaryQuery.insert(("is_activated", wasActivated ? "1" : "0"), at: 1)
-            primaryQuery.insert(("aid", "8662"), at: 2)
             fallbackQuery.insert(("device_id", did), at: 0)
         }
         let urls = [
@@ -304,7 +320,7 @@ public actor PersistentAppDevice {
             guard deadline.timeIntervalSinceNow >= 1 else { break }
             do {
                 let response = try await transport.requestJSON(url, method: "POST", headers: headers, body: body, deadline: deadline)
-                if (response["code"].number ?? response["Code"].number ?? 0) != 0 {
+                if !response["code"].isZeroOrMissingStatusCode || !response["Code"].isZeroOrMissingStatusCode {
                     throw AppSourceError(.businessRejected, "Registration rejected")
                 }
                 let deviceId = responseId(response, "device_id")
@@ -314,6 +330,7 @@ public actor PersistentAppDevice {
                 }
                 let token = response["device_token"].string?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let egdi = response["klink_egdi"].string?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let stillActivated = wasActivated && deviceId == existing?.deviceId
                 return StoredRecord(
                     deviceId: deviceId,
                     iid: iid,
@@ -322,8 +339,9 @@ public actor PersistentAppDevice {
                     clientudid: clientudid,
                     deviceToken: (token?.isEmpty == false ? token : existing?.deviceToken),
                     klinkEgdi: (egdi?.isEmpty == false ? egdi : existing?.klinkEgdi),
-                    isActivated: wasActivated,
-                    lastRegisteredAt: Date()
+                    isActivated: stillActivated,
+                    lastRegisteredAt: Date(),
+                    firstInstallTimeMs: firstInstallTime
                 )
             } catch let error as AppSourceError where error.code == .cancelled {
                 throw error
@@ -357,20 +375,36 @@ public actor PersistentAppDevice {
                                                               deadline: Date().addingTimeInterval(6)) else {
             return false
         }
-        let msg = response["message"].string?.lowercased() ?? ""
-        let code = response["code"].number ?? response["Code"].number ?? 0
-        return msg == "success" || code == 0
+        let msg = response["message"].string?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if !msg.isEmpty { return msg == "success" }
+        if let code = response["code"].signedInt ?? response["Code"].signedInt { return code == 0 }
+        return false
     }
 
     // MARK: - Auth Cookie Helper
 
     private static var isMacTestRunner: Bool { MacTestRunner.isActive }
+    private static let authCookieCache = LockedValue<(loaded: Bool, cookie: String)>((false, ""))
+
+    /// Clears the cached auth cookie after sign-in, sign-out, or session expiration.
+    static func invalidateAuthCache() {
+        authCookieCache.withLock { $0 = (false, "") }
+    }
 
     /// Returns the saved login Cookie header when signed in, or empty when anonymous.
     static func authHeaders() -> [(String, String)] {
         guard !isMacTestRunner else { return [] }
-        guard let saved = try? KeychainCredentialStore().load() else { return [] }
-        let cookie = saved.cookie.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cached: String? = authCookieCache.withLock { state in
+            state.loaded ? state.cookie : nil
+        }
+        let cookie: String
+        if let cached {
+            cookie = cached
+        } else {
+            let loaded = (try? KeychainCredentialStore().load())?.cookie.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            authCookieCache.withLock { $0 = (true, loaded) }
+            cookie = loaded
+        }
         guard !cookie.isEmpty else { return [] }
         return [("Cookie", cookie)]
     }

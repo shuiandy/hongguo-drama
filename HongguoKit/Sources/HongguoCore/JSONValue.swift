@@ -62,6 +62,13 @@ public enum JSONValue: Equatable, Sendable {
     /// Only a real JSON string.
     public var string: String? { if case .string(let s) = self { return s }; return nil }
 
+    /// Trimmed non-empty JSON string; returns `nil` for `""` or whitespace-only strings.
+    public var nonEmptyString: String? {
+        guard let raw = string else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     /// A string, or an integer rendered as text. Upstream ids appear as either.
     public var idString: String? {
         switch self {
@@ -70,6 +77,37 @@ public enum JSONValue: Equatable, Sendable {
         case .double(let d) where d.rounded() == d && abs(d) < 9.0e15: return String(Int64(d))
         default: return nil
         }
+    }
+
+    /// Non-empty `idString` that is not all-zeros (e.g. `"0"`).
+    public var nonZeroIdString: String? {
+        guard let raw = idString?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty,
+              raw.contains(where: { $0 != "0" }) else { return nil }
+        return raw
+    }
+
+    /// Safe signed integer from int, finite bounded double, or trimmed numeric string.
+    public var signedInt: Int? {
+        switch self {
+        case .int(let i):
+            return Int(exactly: i)
+        case .double(let d) where d.isFinite && abs(d) < 9.0e15:
+            return Int(d)
+        case .string(let s):
+            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let i = Int(trimmed) { return i }
+            if let d = Double(trimmed), d.isFinite, d.rounded() == d, abs(d) < 9.0e15 { return Int(d) }
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    /// True when the field is absent/null or explicitly represents status code `0` (`0`, `0.0`, `"0"`).
+    public var isZeroOrMissingStatusCode: Bool {
+        if isNull { return true }
+        return signedInt == 0
     }
 
     /// Numeric value from a number or a numeric string.

@@ -224,4 +224,31 @@ final class BookMallFeedTests: XCTestCase {
         XCTAssertThrowsError(try BookMallFeed.parseCellChange(JSONValue.parse("{\"code\":10001,\"data\":{}}"), after: cursor))
         XCTAssertThrowsError(try BookMallFeed.parseCellChange(JSONValue.parse("{\"code\":0,\"data\":{}}"), after: cursor))
     }
+
+    func testOuterZeroFieldsDoNotShadowVideoDetailAndZeroIdFallsThrough() throws {
+        let row = try JSONValue.parse(#"""
+        {
+          "series_id": 0,
+          "vid": "0",
+          "content_type": 0,
+          "ai_usage_type": 0,
+          "episode_cnt": 0,
+          "video_detail": {
+            "series_id_str": "7694948718188973999",
+            "first_vid": "7694948718188973888",
+            "content_type": 1,
+            "ai_usage_type": 1,
+            "episode_cnt": 60,
+            "series_title": "AI 嵌套测试"
+          }
+        }
+        """#)
+        var seen = Set<String>()
+        XCTAssertNil(AppFeed.parseEntry(row, seen: &seen, filter: .liveActionOnly), "detail ai_usage_type=1 must be rejected for liveActionOnly even when outer ai_usage_type=0")
+        let entry = try XCTUnwrap(AppFeed.parseEntry(row, seen: &seen, filter: .anyShortDrama))
+        XCTAssertEqual(entry.series.seriesId, "7694948718188973999")
+        XCTAssertEqual(entry.firstVid, "7694948718188973888")
+        XCTAssertEqual(entry.aiUsageType, 1)
+        XCTAssertEqual(entry.series.episodeCount, 60)
+    }
 }
