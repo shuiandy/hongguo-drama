@@ -33,7 +33,16 @@ struct MePage: View {
         }
         .onAppear { if me == nil { me = MeModel(library: app.library, account: app.account) } }
         .alert("退出登录？", isPresented: $confirmsSignOut) {
-            Button("退出登录", role: .destructive) { Task { await app.account.signOut() } }
+            Button("退出登录", role: .destructive) {
+                Task {
+                    // Signing out on a shared TV also takes the account off this Apple TV's list,
+                    // so nobody can switch back into it without scanning again.
+                    if let id = app.account.profile?.id, let entry = app.roster.entries.first(where: { $0.id == id }) {
+                        await app.roster.remove(entry, account: app.account)
+                    }
+                    await app.account.signOut()
+                }
+            }
             Button("取消", role: .cancel) {}
         } message: {
             Text("这台 Apple TV 上的观看记录会保留，账号里的收藏和历史不再显示。")

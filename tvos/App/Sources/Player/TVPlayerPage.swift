@@ -43,7 +43,8 @@ struct TVPlayerPage: View {
             let video = videoFrame(in: proxy.size)
             ZStack {
                 AmbientBackground(tint: tint)
-                VideoSurface(engine: engine)
+                // Priority 1 as on the iOS player page: over the feed's surface under it.
+                VideoSurface(engine: engine, priority: 1)
                     .frame(width: video.width, height: video.height)
                     .position(x: video.midX, y: video.midY)
                 if app.library.settings.danmaku.enabled, !session.danmaku.isEmpty {

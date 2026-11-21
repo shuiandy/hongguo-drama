@@ -21,7 +21,18 @@ struct RecommendPage: View {
                 Color.black
             }
         }
-        .onAppear { if feed == nil { feed = FeedModel(app: app) } }
+        // Made once the account is chosen, so the opening request is the chosen account's.
+        .onAppear { makeFeedIfReady() }
+        .onChange(of: app.showsAccountPicker) { _, _ in makeFeedIfReady() }
+        .onChange(of: app.awaitingLaunchRoute) { _, _ in makeFeedIfReady() }
+        .onChange(of: app.playerTarget?.id) { _, _ in makeFeedIfReady() }
+        .onChange(of: app.detailTarget?.seriesId) { _, _ in makeFeedIfReady() }
+    }
+
+    private func makeFeedIfReady() {
+        if feed == nil, !app.showsAccountPicker, !app.awaitingLaunchRoute, app.playerTarget == nil, app.detailTarget == nil {
+            feed = FeedModel(app: app)
+        }
     }
 }
 
@@ -72,6 +83,10 @@ private struct RecommendContent: View {
         .task(id: feed.tab) { await feed.load() }
         .onAppear { feed.setVisible(visible) }
         .onDisappear { feed.setVisible(false) }
+        // Another account (switched, signed in or out): the feed starts over for it, as on iOS.
+        .onChange(of: app.account.profile?.id) { oldId, newId in
+            Task { await feed.accountDidChange(from: oldId, to: newId) }
+        }
         .onChange(of: visible) { _, now in
             feed.setVisible(now)
             if now { takeFocus() }

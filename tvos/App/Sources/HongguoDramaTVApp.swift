@@ -56,6 +56,9 @@ final class TVAppModel: PlayerHost {
     var showsLogin = false
     /// 选择账号, over everything; shown at launch when accounts are saved on this Apple TV.
     var showsAccountPicker = false
+    /// A series page or player launch route still being opened (live: after the hot ranking
+    /// arrives); the feed waits, so it does not start a clip under it.
+    var awaitingLaunchRoute = false
 
     init(launch: LaunchOptions) {
         self.launch = launch
@@ -89,7 +92,9 @@ final class TVAppModel: PlayerHost {
         } else if routesToSeries, launch.offlineFixtures {
             open(route: launch.route, FixtureBackend.summary(1), startEpisode: 1)
         } else if routesToSeries {
+            awaitingLaunchRoute = true
             Task { [weak self] in
+                defer { self?.awaitingLaunchRoute = false }
                 guard let self, let first = try? await self.backend.catalog(kind: .hotDrama, genre: nil, page: 1).items.first else { return }
                 self.open(route: launch.route, first, startEpisode: 1)
             }
@@ -194,6 +199,13 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.25), value: app.detailTarget?.seriesId)
         .animation(.easeInOut(duration: 0.25), value: app.playerTarget?.id)
         .animation(.easeInOut(duration: 0.25), value: app.showsAccountPicker)
+        .onChange(of: app.account.profile?.id) { oldId, newId in
+            // The server no longer accepts a saved login: it leaves the list too.
+            if let oldId, newId == nil, app.account.message.contains("过期"),
+               let entry = app.roster.entries.first(where: { $0.id == oldId }) {
+                Task { await app.roster.remove(entry, account: app.account) }
+            }
+        }
         .onChange(of: app.account.avatar) { _, avatar in
             // The picture and name arrive after a sign-in or switch: keep the roster's entry current.
             if let profile = app.account.profile { app.roster.update(id: profile.id, nickname: profile.nickname, avatar: avatar) }
