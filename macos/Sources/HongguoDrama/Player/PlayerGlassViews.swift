@@ -567,9 +567,9 @@ struct PlayerControlBar: View {
 
 // MARK: Right panel
 
-/// Right panel of the player: 选集 / 简介 / 评论.
+/// Right panel of the player: 选集 / 简介 / 评论, plus 系列剧 when the App lists other seasons.
 struct PlayerSidePanel: View {
-    enum Tab: Hashable, Sendable { case episodes, info, reviews }
+    enum Tab: Hashable, Sendable { case episodes, info, series, reviews }
 
     let controller: PlayerController
     let windows: PlayerWindows
@@ -578,6 +578,8 @@ struct PlayerSidePanel: View {
     @State private var reviewScope: ReviewScope = .series
     @State private var episodeComments: EpisodeComments?
     @State private var episodeCommentsError = ""
+    /// 系列剧: other seasons / same-IP works, as the App's player panel lists them.
+    @State private var seasons: DiscoveryAccess.SameIPSeriesResult?
 
     enum ReviewScope: Hashable, Sendable { case series, episode }
     private static let episodeCommentService = EpisodeCommentService()
@@ -590,10 +592,7 @@ struct PlayerSidePanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
-                GlassSegments(options: [GlassOption(label: "选集", value: Tab.episodes),
-                                        GlassOption(label: "简介", value: Tab.info),
-                                        GlassOption(label: reviewTabTitle, value: Tab.reviews)],
-                              selection: $tab)
+                GlassSegments(options: tabOptions, selection: $tab, compact: hasSeasons)
                 Spacer(minLength: 0)
                 Button { windows.toggleEpisodes() } label: { Image(systemName: "sidebar.right") }
                     .buttonStyle(GlassIconButtonStyle(diameter: 34, variant: .clear))
@@ -603,6 +602,7 @@ struct PlayerSidePanel: View {
             switch tab {
             case .episodes: episodesTab
             case .info: infoTab
+            case .series: seriesTab
             case .reviews: reviewsTab
             }
         }
@@ -614,9 +614,41 @@ struct PlayerSidePanel: View {
             guard let id = controller.episodes?.seriesId, SourceRouter.isHongguo(id) else { return }
             details = try? await AppModel.shared.series.publicDetails(seriesId: id)
         }
+        .task(id: controller.episodes?.seriesId) {
+            seasons = nil
+            guard let id = controller.episodes?.seriesId, SourceRouter.isHongguo(id) else {
+                if tab == .series { tab = .episodes }
+                return
+            }
+            let loaded = try? await DiscoveryAccess.sameIPSeries(seriesId: id)
+            guard !Task.isCancelled, controller.episodes?.seriesId == id else { return }
+            seasons = loaded
+            if tab == .series, !hasSeasons { tab = .episodes }
+        }
         .task(id: "\(controller.episodes?.seriesId ?? ""):\(controller.currentEpisode?.vid ?? ""):\(tab == .reviews && reviewScope == .episode)") {
             await loadEpisodeComments()
         }
+    }
+
+    private var tabOptions: [GlassOption<Tab>] {
+        var options = [GlassOption(label: "选集", value: Tab.episodes), GlassOption(label: "简介", value: Tab.info)]
+        if hasSeasons { options.append(GlassOption(label: seasonsTitle, value: Tab.series)) }
+        options.append(GlassOption(label: reviewTabTitle, value: Tab.reviews))
+        return options
+    }
+
+    /// The seasons listed for this story, current one included; empty when it has no other part.
+    private var seasonItems: [DiscoveryAccess.RelatedSeriesItem] {
+        let items = (seasons?.items ?? []).filter { !$0.title.isEmpty }
+        let current = controller.episodes?.seriesId
+        return items.contains { $0.seriesId != current } ? items : []
+    }
+
+    private var hasSeasons: Bool { !seasonItems.isEmpty }
+
+    private var seasonsTitle: String {
+        if let title = seasons?.tabTitle, !title.isEmpty { return title }
+        return "系列剧"
     }
 
     private var reviewTabTitle: String {
@@ -632,6 +664,20 @@ struct PlayerSidePanel: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(controller.episodes?.title ?? "加载中").font(.system(size: 17, weight: .bold)).lineLimit(2)
                 Text(progressLine).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                if hasSeasons {
+                    Button { tab = .series } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "square.stack.3d.up").font(.system(size: 10, weight: .semibold))
+                            Text("\(seasonsTitle) · 共 \(seasonItems.count) 部")
+                            Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold))
+                        }
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.hongguoRed)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("查看其他部")
+                }
             }
             Spacer(minLength: 0)
         }
@@ -639,6 +685,7 @@ struct PlayerSidePanel: View {
 
     private var progressLine: String {
         var parts: [String] = []
+        if let season = seasons?.currentSeasonIndex, season > 0, hasSeasons { parts.append("第\(season)季") }
         if let total = controller.episodes?.total, controller.index > 0 { parts.append("第 \(controller.index) / \(total) 集") }
         if let rating = details?.rating, rating > 0 { parts.append(String(format: "%.1f 分", rating)) }
         return parts.joined(separator: " · ")
@@ -691,6 +738,107 @@ struct PlayerSidePanel: View {
         }
         .padding(12)
         .glassSurface(.clear, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    // MARK: 系列剧
+
+    private var seriesTab: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 10) {
+                if let novel = seasons?.novel, !novel.bookName.isEmpty {
+                    Label("原著小说《\(novel.bookName)》", systemImage: "book.closed.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .glassSurface(.clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                ForEach(seasonItems) { item in seasonRow(item) }
+            }
+            .padding(2)
+        }
+        .scrollIndicators(.never)
+    }
+
+    private func seasonRow(_ item: DiscoveryAccess.RelatedSeriesItem) -> some View {
+        let isCurrent = item.seriesId == controller.episodes?.seriesId
+        let summary = SeriesSummary(seriesId: item.seriesId, title: item.title, cover: item.cover,
+                                    episodeCount: item.episodeCount, description: item.description)
+        let tag: String = item.disablePlay ? (item.badgeText.isEmpty ? "待上线" : item.badgeText)
+            : (item.categoryLabel != "真人剧" ? item.categoryLabel : "")
+        return HStack(spacing: 12) {
+            CoverImage(url: item.cover, cornerRadius: 10)
+                .frame(width: 54, height: 72)
+                .overlay(alignment: .topLeading) {
+                    if !tag.isEmpty {
+                        Text(tag)
+                            .font(.system(size: 9, weight: .bold))
+                            .padding(.horizontal, 4).padding(.vertical, 1.5)
+                            .background(item.disablePlay ? Color.hongguoRed : .black.opacity(0.6), in: RoundedRectangle(cornerRadius: 4))
+                            .foregroundStyle(.white)
+                            .padding(3)
+                    }
+                }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isCurrent ? Color.hongguoRed : .primary)
+                    .lineLimit(2)
+                Text(seasonSubtitle(item)).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            if isCurrent {
+                seasonPill("在看", filled: false)
+            } else if item.disablePlay {
+                seasonPill(item.badgeText.isEmpty ? "待上线" : item.badgeText, filled: false)
+            } else {
+                Button { playSeason(item) } label: { seasonPill("播放", filled: true) }
+                    .buttonStyle(.plain)
+                    .help("播放《\(item.title)》")
+            }
+        }
+        .padding(10)
+        .glassSurface(.clear, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            if isCurrent {
+                RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.hongguoRed.opacity(0.5), lineWidth: 1)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard !isCurrent, !item.disablePlay else { return }
+            playSeason(item)
+        }
+        .contextMenu {
+            if !isCurrent, !item.disablePlay {
+                Button("播放") { playSeason(item) }
+            }
+            Button("查看详情") { AppModel.shared.open(summary) }
+        }
+    }
+
+    private func seasonSubtitle(_ item: DiscoveryAccess.RelatedSeriesItem) -> String {
+        if !item.subtitle.isEmpty { return item.subtitle }
+        var parts: [String] = []
+        if item.seasonIndex > 0 { parts.append("第\(item.seasonIndex)季") }
+        if item.episodeCount > 0 { parts.append("全\(item.episodeCount)集") }
+        if !item.heatText.isEmpty { parts.append(item.heatText) }
+        return parts.joined(separator: " · ")
+    }
+
+    private func seasonPill(_ text: String, filled: Bool) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .semibold))
+            .padding(.horizontal, 12).padding(.vertical, 5)
+            .background(filled ? Color.hongguoRed : Color.white.opacity(0.1), in: Capsule())
+            .foregroundStyle(filled ? .white : .secondary)
+    }
+
+    /// Opens another part in this player, continuing where this Mac or the account left off.
+    private func playSeason(_ item: DiscoveryAccess.RelatedSeriesItem) {
+        tab = .episodes
+        Task { await controller.resume(seriesId: item.seriesId, title: item.title, cover: item.cover) }
     }
 
     // MARK: 简介
