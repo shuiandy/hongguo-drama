@@ -154,3 +154,60 @@ final class EpisodePanelModelTests: XCTestCase {
         XCTAssertEqual(model.more.count, 5)
     }
 }
+
+@MainActor
+final class SearchAndMeModelTests: XCTestCase {
+    private func suite() -> UserDefaults {
+        let name = "SearchModelTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: name) }
+        return defaults
+    }
+
+    func testSearchHistoryBoardsAndResults() async {
+        let defaults = suite()
+        let model = SearchModel(backend: FixtureBackend(), defaults: defaults)
+        await model.loadBoard(.hotSearch)
+        XCTAssertEqual(model.rankLists[.hotSearch]?.count, 18)
+        await model.loadBoard(.subscribe)
+        XCTAssertEqual(model.rankLists[.subscribe]?.count, 0, "offline: only 热搜榜 has sample rows")
+        await model.loadBoard(.hotTopic)
+        XCTAssertEqual(model.hotTopics?.count, 0)
+        await model.loadSearchLanding()
+        XCTAssertEqual(model.suggestions.count, 3)
+
+        model.submitSearch("  龙王殿 ")
+        XCTAssertEqual(model.submittedQuery, "龙王殿")
+        XCTAssertEqual(model.history.first, "龙王殿")
+        XCTAssertEqual(SearchModel(backend: FixtureBackend(), defaults: defaults).history.first, "龙王殿", "kept in defaults")
+        for _ in 0..<50 where model.phase != .loaded { await Task.yield() }
+        XCTAssertEqual(model.results.count, 6)
+        model.queryChanged("")
+        XCTAssertTrue(model.results.isEmpty)
+        XCTAssertEqual(model.phase, .idle)
+        model.removeHistory("龙王殿")
+        XCTAssertTrue(model.history.isEmpty)
+    }
+
+    func testMeListsSignedOut() {
+        let library = LibraryModel(offline: true, account: AccountModel(mode: .offline), backend: FixtureBackend(), defaults: suite())
+        let me = MeModel(library: library, account: library.account)
+        XCTAssertEqual(me.history.count, 4)
+        me.filter = .finished
+        XCTAssertEqual(me.history.count, 2, "two sample series are watched to the end")
+        XCTAssertEqual(me.localFavorites.count, 3)
+        XCTAssertTrue(me.accountShelf.isEmpty)
+        XCTAssertTrue(me.onlineReservations.isEmpty)
+    }
+
+    func testMeListsPreviewAccount() {
+        let account = AccountModel(mode: .preview)
+        let library = LibraryModel(offline: true, account: account, backend: FixtureBackend(), defaults: suite())
+        let me = MeModel(library: library, account: account)
+        XCTAssertTrue(me.localFavorites.isEmpty, "signed in: the account's lists")
+        XCTAssertEqual(me.accountShelf.count, 1)
+        XCTAssertEqual(me.likes.account.count, 1)
+        XCTAssertEqual(me.upcomingReservations.count, 1)
+        XCTAssertTrue(me.history.contains { $0.fromAccount })
+    }
+}
