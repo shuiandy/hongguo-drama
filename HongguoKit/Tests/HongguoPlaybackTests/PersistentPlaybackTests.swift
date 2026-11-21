@@ -85,6 +85,19 @@ final class PersistentPlaybackTests: XCTestCase {
         missingToken.deviceToken = "valid-token"
         missingToken.isActivated = false
         XCTAssertTrue(missingToken.needsRenewal(now: now.addingTimeInterval(60)))
+
+        var legacyAndroid = PersistentAppDevice.StoredRecord(
+            deviceId: "7600112233445566",
+            iid: "7600998877665544",
+            cdid: "11111111-2222-3333-4444-555555555555",
+            deviceToken: "valid-token",
+            isActivated: true,
+            lastRegisteredAt: now,
+            platform: nil
+        )
+        XCTAssertTrue(legacyAndroid.needsRenewal(now: now.addingTimeInterval(60)), "legacy non-iOS device records must trigger a fresh iOS registration")
+        legacyAndroid.platform = "iphone"
+        XCTAssertFalse(legacyAndroid.needsRenewal(now: now.addingTimeInterval(60)))
     }
 
     func testRecordRoundTripAndValidation() throws {

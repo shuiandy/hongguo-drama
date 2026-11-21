@@ -144,7 +144,7 @@ struct EpisodeCell: View {
                 }
             }
         }
-        .help(episode.webAvailable == false ? "第 \(episode.index) 集 · 官网未公开，走 App 片源" : "第 \(episode.index) 集")
+        .help("第 \(episode.index) 集")
     }
 
     private var foreground: AnyShapeStyle {

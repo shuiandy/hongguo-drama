@@ -33,7 +33,7 @@ public actor PersistentAppDevice {
     private static let primaryRegisterBase = "https://log5-applog-lf.fqnovel.com/service/2/device_register/"
     private static let fallbackRegisterBase = "https://log.snssdk.com/service/2/device_register/"
     private static let activateBase = "https://ichannel.snssdk.com/service/2/app_alert_check/"
-    private static let registerUA = AppLegacySigner.currentSearchUA
+    private static let registerUA = AppSource.iosPlayerUA
     /// ttEncrypt key derivation salt of `device_register`.
     static let kdfSalt = AppCrypto.fromHex("4dd4c2e6b83162090e52b3c7a6733ba41cb2462b829ab58a196b39db57177524f49baf7f08e8d68d26a72e37c1a95a2f1f05a51892aef2949732b62a38aadd58")!
 
@@ -65,12 +65,15 @@ public actor PersistentAppDevice {
         public var isActivated: Bool?
         public var lastRegisteredAt: Date?
         public var firstInstallTimeMs: Int64?
+        /// Platform recorded at registration (`"iphone"` for official iOS 7.4.3 `BDInstall`);
+        /// legacy non-iOS records trigger a one-time fresh iOS registration.
+        public var platform: String?
 
         public init(deviceId: String, iid: String, cdid: String,
                     openudid: String? = nil, clientudid: String? = nil,
                     deviceToken: String? = nil, klinkEgdi: String? = nil,
                     isActivated: Bool? = nil, lastRegisteredAt: Date? = nil,
-                    firstInstallTimeMs: Int64? = nil) {
+                    firstInstallTimeMs: Int64? = nil, platform: String? = "iphone") {
             self.deviceId = deviceId
             self.iid = iid
             self.cdid = cdid
@@ -81,15 +84,17 @@ public actor PersistentAppDevice {
             self.isActivated = isActivated
             self.lastRegisteredAt = lastRegisteredAt
             self.firstInstallTimeMs = firstInstallTimeMs
+            self.platform = platform
         }
 
         /// Mirrors `-[BDInstall _needRegsiter]`: re-register if >6 hours old, missing `device_token`,
-        /// or never activated via `app_alert_check`.
+        /// never activated via `app_alert_check`, or still on a legacy non-iOS registration.
         public func needsRenewal(now: Date = Date(), interval: TimeInterval = PersistentAppDevice.renewalInterval) -> Bool {
             guard let lastRegisteredAt else { return true }
             if now.timeIntervalSince(lastRegisteredAt) >= interval { return true }
             if (deviceToken ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
             if isActivated != true { return true }
+            if platform != "iphone" { return true }
             return false
         }
 
@@ -200,12 +205,13 @@ public actor PersistentAppDevice {
             return try await inflight.value
         }
         let label = wantsFresh ? "register" : "renew"
+        let baseRecord = existing?.platform == "iphone" ? existing : nil
         let task = Task<StoredRecord, Error> {
-            var updated = try await Self.performRegister(existing: existing, transport: transport)
+            var updated = try await Self.performRegister(existing: baseRecord, transport: transport)
             let activated = await Self.performActivate(record: updated, transport: transport)
             if activated {
                 updated.isActivated = true
-            } else if updated.deviceId != existing?.deviceId {
+            } else if updated.deviceId != baseRecord?.deviceId {
                 updated.isActivated = false
             }
             Self.savePersisted(updated)
@@ -238,31 +244,51 @@ public actor PersistentAppDevice {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let firstInstallTime = existing?.firstInstallTimeMs ?? now
         let cdid = existing?.cdid ?? AppCrypto.uuid()
-        let openudid = existing?.openudid ?? AppCrypto.hex(AppCrypto.randomBytes(8))
-        let clientudid = existing?.clientudid ?? AppCrypto.uuid()
+        let vendorId = existing?.clientudid ?? AppCrypto.uuid().uppercased()
+        let openudid = existing?.openudid ?? AppCrypto.hex(AppCrypto.randomBytes(20))
         let wasActivated = existing?.isActivated == true
-        // The registered app version is the one every legacy-signed request presents.
-        let versionCode = Int(AppLegacySigner.currentVersionCode) ?? 0
 
+        // Official iOS 7.4.3 `BDInstallNetworkUtility +onTheFlyParameter` (`com.phoenix.video`,
+        // `novelread`, `App Store`, `7.4.3`, `sdk_version=1120`, `os=iOS`, `device_platform=iphone`).
         var header: [String: Any] = [
-            "display_name": "红果免费短剧", "update_version_code": versionCode, "manifest_version_code": versionCode,
-            "app_version_minor": AppLegacySigner.currentVersionName, "aid": 8662, "channel": "update_64", "package": "com.phoenix.read",
-            "app_version": AppLegacySigner.currentVersionName, "version_code": versionCode, "sdk_version": "3.7.0-rc.34-fanqie-xiaoshuo",
-            "sdk_target_version": 29, "git_hash": "3a88f4e", "os": "Android", "os_version": "16", "os_api": 36,
-            "device_model": "25053RT47C", "device_brand": "Redmi", "device_manufacturer": "Xiaomi",
-            "cpu_abi": "arm64-v8a", "release_build": "b5e187f", "density_dpi": 520, "display_density": "xxxhdpi",
-            "resolution": "1280x2772", "language": "zh", "timezone": 8, "access": "wifi", "not_request_sender": 0,
-            "carrier": "CHINA MOBILE", "mcc_mnc": "46000", "rom": "eng.root.20231116.160340",
-            "rom_version": "W528JS release-keys", "cdid": cdid,
-            "sig_hash": "56a962410c494bbaf0b58dba20cae56f", "openudid": openudid,
-            "clientudid": clientudid, "ipv6_list": [Any](), "region": "CN", "tz_name": "Asia/Shanghai",
-            "tz_offset": 28800, "sim_region": "cn", "sim_serial_number": [Any](), "oaid_may_support": false,
-            "req_id": AppCrypto.uuid(), "device_platform": "android",
-            "custom": ["account_region_src": "fallback", "account_region": "cn", "host_bit": 64, "dragon_device_type": "phone"],
-            "pre_installed_channel": "", "apk_first_install_time": firstInstallTime, "is_system_app": 0, "sdk_flavor": "china", "guest_mode": 0,
+            "package": "com.phoenix.video",
+            "display_name": "红果短剧",
+            "app_name": "novelread",
+            "app_version": "7.4.3",
+            "app_version_minor": "7.4.3.33",
+            "aid": "8662",
+            "channel": "App Store",
+            "sdk_version": 1120,
+            "os": "iOS",
+            "os_version": "18.3",
+            "device_platform": "iphone",
+            "device_model": "iPhone17,1",
+            "model_display_name": "iPhone 16 Pro",
+            "resolution": "1206*2622",
+            "language": "zh",
+            "app_language": "zh-Hans",
+            "region": "CN",
+            "app_region": "CN",
+            "timezone": 8,
+            "tz_name": "Asia/Shanghai",
+            "tz_offset": 28800,
+            "access": "wifi",
+            "is_jailbroken": false,
+            "is_upgrade_user": false,
+            "cdid": cdid,
+            "vendor_id": vendorId,
+            "openudid": openudid,
+            "idfa": "00000000-0000-0000-0000-000000000000",
+            "auth_status": 0,
+            "user_agent": registerUA,
+            "custom": ["account_region_src": "fallback", "account_region": "cn", "dragon_device_type": "phone"],
         ]
         if let oldDid = existing?.deviceId, !oldDid.isEmpty {
+            header["device_id"] = oldDid
             header["old_did"] = oldDid
+        }
+        if let oldIid = existing?.iid, !oldIid.isEmpty {
+            header["install_id"] = oldIid
         }
         if let oldToken = existing?.deviceToken, !oldToken.isEmpty {
             header["device_token"] = oldToken
@@ -284,24 +310,31 @@ public actor PersistentAppDevice {
             ("log-encode-type", "gzip"),
             ("x-ss-dp", "8662"),
             ("x-ss-req-ticket", String(now)),
-            ("x-vc-bdturing-sdk-version", "4.0.3.cn"),
-            ("lc", "101"),
             ("sdk-version", "2"),
-            ("passport-sdk-version", "5051452"),
-            ("x-neptune", "-8|50:51:59:30:40:47:49:39"),
             ("x-ss-stub", AppCrypto.hex(AppCrypto.md5(body), uppercase: true)),
         ]
 
         var primaryQuery: [(String, String)] = [
             ("is_activated", wasActivated ? "1" : "0"),
             ("aid", "8662"),
+            ("app_name", "novelread"),
+            ("channel", "App Store"),
+            ("device_platform", "iphone"),
+            ("os_version", "18.3"),
+            ("version_code", "7.4.3"),
+            ("vid", vendorId),
+            ("ac", "wifi"),
+            ("timezone", "8"),
+            ("is_upgrade_user", "0"),
             ("tt_data", "a"),
-            ("cronet_version", "8d40f833_2026-03-03"),
-            ("ttnet_version", "4.2.243.31-douyin"),
-            ("use_store_region_cookie", "1"),
         ]
         var fallbackQuery: [(String, String)] = [
             ("aid", "8662"),
+            ("app_name", "novelread"),
+            ("channel", "App Store"),
+            ("device_platform", "iphone"),
+            ("os_version", "18.3"),
+            ("version_code", "7.4.3"),
             ("is_activated", wasActivated ? "1" : "0"),
             ("tt_data", "a"),
         ]
@@ -336,12 +369,13 @@ public actor PersistentAppDevice {
                     iid: iid,
                     cdid: cdid,
                     openudid: openudid,
-                    clientudid: clientudid,
+                    clientudid: vendorId,
                     deviceToken: (token?.isEmpty == false ? token : existing?.deviceToken),
                     klinkEgdi: (egdi?.isEmpty == false ? egdi : existing?.klinkEgdi),
                     isActivated: stillActivated,
                     lastRegisteredAt: Date(),
-                    firstInstallTimeMs: firstInstallTime
+                    firstInstallTimeMs: firstInstallTime,
+                    platform: "iphone"
                 )
             } catch let error as AppSourceError where error.code == .cancelled {
                 throw error
@@ -356,13 +390,16 @@ public actor PersistentAppDevice {
         var params: [(String, String)] = [
             ("aid", "8662"),
             ("app_name", "novelread"),
-            ("channel", "update_64"),
-            ("device_platform", "android"),
-            ("os_version", "16"),
-            ("version_code", AppLegacySigner.currentVersionCode),
+            ("channel", "App Store"),
+            ("device_platform", "iphone"),
+            ("os_version", "18.3"),
+            ("version_code", "7.4.3"),
             ("device_id", record.deviceId),
             ("iid", record.iid),
             ("cdid", record.cdid),
+            ("vid", record.clientudid ?? ""),
+            ("ac", "wifi"),
+            ("timezone", "8"),
             ("is_activated", record.isActivated == true ? "1" : "0"),
         ]
         var headers: [(String, String)] = [("User-Agent", registerUA)]

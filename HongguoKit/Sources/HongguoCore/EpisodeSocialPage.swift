@@ -417,8 +417,9 @@ public enum EpisodeSocialService {
         var components = URLComponents(string: "https://reading.snssdk.com/reading/reader/upload/picture/")
         var queryItems: [URLQueryItem] = [
             URLQueryItem(name: "aid", value: "8662"),
-            URLQueryItem(name: "app_name", value: "dragon_app"),
-            URLQueryItem(name: "version_code", value: "74532"),
+            URLQueryItem(name: "app_name", value: "novelread"),
+            URLQueryItem(name: "version_code", value: "74300"),
+            URLQueryItem(name: "device_platform", value: "iphone"),
         ]
         if let identity {
             if !identity.deviceId.isEmpty {
