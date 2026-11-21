@@ -1556,7 +1556,7 @@ public enum PlaybackLog {
 
     /// Where the playback log, the playback metrics and the feed log are written: Documents
     /// unless the app chose another folder at launch (tvOS has no writable Documents).
-    nonisolated(unsafe) static var directory: URL? = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+    nonisolated(unsafe) public static var directory: URL? = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
 
     public static func note(_ text: String) {
         let line = Data("\(Date().formatted(.iso8601)) \(text)\n".utf8)
