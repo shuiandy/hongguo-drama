@@ -198,6 +198,11 @@ final class SearchAndMeModelTests: XCTestCase {
         XCTAssertEqual(me.localFavorites.count, 3)
         XCTAssertTrue(me.accountShelf.isEmpty)
         XCTAssertTrue(me.onlineReservations.isEmpty)
+        // 删除记录 signed out: the device's row only, no account write.
+        me.filter = .all
+        let first = me.history[0]
+        me.deleteHistory(first)
+        XCTAssertFalse(me.history.contains { $0.seriesId == first.seriesId })
     }
 
     func testMeListsPreviewAccount() {

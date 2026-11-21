@@ -112,4 +112,31 @@ public final class MeModel {
     /// The account's reservations not out yet.
     public var upcomingReservations: [AccountModel.ReservedSeries] { (signedIn ? account.reservations : []).filter { !$0.isOnline } }
     public var upcomingCount: Int { localReservations.count + upcomingReservations.count }
+
+    /// 删除记录 (moved from the iOS MeView's committed code): the device's row goes at once;
+    /// signed in, the account delete is queued for the series like every other account write,
+    /// and if it fails the device's row comes back.
+    public func deleteHistory(_ record: HistoryEntry) {
+        let removedLocal = localRecords.first { $0.seriesId == record.seriesId }
+        if removedLocal != nil {
+            library.store.removeHistory(record.seriesId)
+            library.libraryChanged()
+        }
+        if account.isSignedIn {
+            let library = library
+            account.enqueue(.history(record.seriesId)) { account in
+                let ok = await account.deleteHistory(seriesId: record.seriesId,
+                                                     vid: removedLocal?.vid ?? "",
+                                                     episodeIndex: record.episodeIndex)
+                if !ok, let prev = removedLocal {
+                    library.store.savePosition(seriesId: prev.seriesId, title: prev.title, cover: prev.cover,
+                                               total: prev.total, episodeIndex: prev.episodeIndex, vid: prev.vid,
+                                               position: prev.position, duration: prev.duration,
+                                               finished: prev.completedEpisode >= prev.episodeIndex && prev.position <= 0,
+                                               accountId: prev.cloudAccountId)
+                    library.libraryChanged()
+                }
+            }
+        }
+    }
 }
