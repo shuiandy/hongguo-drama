@@ -79,3 +79,27 @@ final class NewReleasesModelTests: XCTestCase {
         XCTAssertTrue(model.filtered.isEmpty, "sample rows carry no category")
     }
 }
+
+@MainActor
+final class SeriesDetailModelTests: XCTestCase {
+    func testOfflineSeriesPage() async {
+        let item = FixtureBackend.summary(2)
+        let model = SeriesDetailModel(item: item)
+        XCTAssertEqual(model.release, .unknown)
+        await model.load(using: FixtureBackend())
+        XCTAssertEqual(model.phase, .loaded)
+        XCTAssertEqual(model.release, .released)
+        XCTAssertEqual(model.total, item.episodeCount)
+        XCTAssertEqual(model.social?.commentTotal, 422)
+        await model.loadExtras(using: FixtureBackend())
+        XCTAssertEqual(model.reviews?.rating, 8.6)
+        XCTAssertFalse(model.related.contains { $0.seriesId == item.seriesId })
+    }
+
+    func testUpcomingAndBaseTitle() {
+        var item = FixtureBackend.summary(3)
+        item.episodeLabel = SeriesDetailModel.upcomingLabel
+        XCTAssertEqual(SeriesDetailModel(item: item).release, .upcoming)
+        XCTAssertEqual(SeriesDetailModel.baseTitle("龙王殿第二季：归来"), "龙王殿")
+    }
+}
