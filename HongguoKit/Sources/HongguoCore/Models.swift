@@ -65,6 +65,8 @@ public struct Episode: Identifiable, Hashable, Codable, Sendable {
     public var webAvailable: Bool?
     /// Set by 西饭/河马 lists: the source marks this episode as paid or locked. nil for Hongguo.
     public var locked: Bool? = nil
+    /// Set when the server marks this episode `disable_play == true`.
+    public var disabled: Bool? = nil
 }
 
 public enum EpisodeListSource: String, Codable, Sendable { case web, api }

@@ -107,7 +107,10 @@ public actor EpisodeResolver {
     /// `force: true` refresh or a `forget(vid:)` invalidation in `ready`.
     private var keyEpochs: [String: UInt64] = [:]
     private var inflight: [String: InflightEntry] = [:]
-    private var episodeLists: [String: SeriesEpisodes] = [:]
+    private var episodeLists: [String: (list: SeriesEpisodes, expiresAt: Date)] = [:]
+    private var episodeListOrder: [String] = []
+    private static let episodeListTTL: TimeInterval = 60
+    private static let maxEpisodeListEntries = 64
     /// Sources saved by an earlier run, each tried once in place of a lookup while unexpired.
     private var seeds: [String: SeedEntry] = [:]
     /// Source lookups actually sent (cache hits not counted), for reporting.
@@ -150,12 +153,22 @@ public actor EpisodeResolver {
         return [winner] + list
     }
 
-    public func episodes(seriesId: String) async throws -> SeriesEpisodes {
-        if let list = episodeLists[seriesId] { return list }
+    public func episodes(seriesId: String, force: Bool = false) async throws -> SeriesEpisodes {
+        if !force, let hit = episodeLists[seriesId], hit.expiresAt > Date() { return hit.list }
         episodeListLookups += 1
-        let list = try await series.episodes(seriesId: seriesId)
-        episodeLists[seriesId] = list
+        let list = try await series.episodes(seriesId: seriesId, force: force)
+        episodeListOrder.removeAll { $0 == seriesId }
+        episodeListOrder.append(seriesId)
+        episodeLists[seriesId] = (list, Date().addingTimeInterval(Self.episodeListTTL))
+        while episodeListOrder.count > Self.maxEpisodeListEntries {
+            episodeLists[episodeListOrder.removeFirst()] = nil
+        }
         return list
+    }
+
+    public func forgetEpisodes(seriesId: String) {
+        episodeLists[seriesId] = nil
+        episodeListOrder.removeAll { $0 == seriesId }
     }
 
     public func details(seriesId: String) async throws -> PublicDetails {

@@ -117,12 +117,15 @@ public enum DiscoveryAccess {
         public var categoryLabel: String
         public var episodeCount: Int
         public var description: String
+        public var subscribeItemId: String
         public var id: String { "\(seriesId):\(isOnline ? 1 : 0)" }
         public init(seriesId: String, title: String, cover: String, isOnline: Bool, heatText: String,
-                    categoriesLine: String, categoryLabel: String, episodeCount: Int, description: String) {
+                    categoriesLine: String, categoryLabel: String, episodeCount: Int, description: String,
+                    subscribeItemId: String = "") {
             self.seriesId = seriesId; self.title = title; self.cover = cover; self.isOnline = isOnline
             self.heatText = heatText; self.categoriesLine = categoriesLine; self.categoryLabel = categoryLabel
             self.episodeCount = episodeCount; self.description = description
+            self.subscribeItemId = subscribeItemId.isEmpty ? seriesId : subscribeItemId
         }
     }
 
@@ -237,7 +240,10 @@ public enum DiscoveryAccess {
         }
     }
 
+    private struct CategoryCursor: Sendable { var offset: Int; var sessionId: String }
     private static let catalogCache = TTLCache<CatalogBrowseResult>(limit: 32)
+    private static let catalogCursors = TTLCache<CategoryCursor>(limit: 64)
+    private static let catalogRankCursors = TTLCache<(cursor: RankCursor, startRank: Int)>(limit: 32)
 
     // MARK: - Ranking Requests
 
@@ -332,7 +338,7 @@ public enum DiscoveryAccess {
             path: "/reading/user/subscribe/list/v1/",
             timeout: timeout
         )
-        return try parseCalendar(payload)
+        return try parseCalendar(payload, requestedOffset: offset)
     }
 
     public static func newDramaRecommendations(
@@ -365,7 +371,7 @@ public enum DiscoveryAccess {
         ]
         let data = try JSONSerialization.data(withJSONObject: bodyObj, options: [.sortedKeys])
         let payload = try await AppCatalogueAccess.landpage(body: data, timeout: timeout)
-        return try parseNewDramaPage(payload)
+        return try parseNewDramaPage(payload, requestedOffset: offset)
     }
 
     /// Official App category browsing (`/reading/distribution/category/landpage/v/`) for
@@ -395,7 +401,17 @@ public enum DiscoveryAccess {
             default: selectedItem = "all"
             }
             let subItem = kind == .hotDrama ? "ranklist_hot_sc" : ""
-            let rankPage = try await ranking(selectedItem: selectedItem, subSelectedItem: subItem, timeout: timeout)
+            let rankPage: RankPage
+            let startRank: Int
+            if pg == 1 {
+                rankPage = try await ranking(selectedItem: selectedItem, subSelectedItem: subItem, timeout: timeout)
+                startRank = 0
+            } else if let state = await catalogRankCursors.get("\(kind.rawValue):\(pg)") {
+                rankPage = try await rankingMore(cursor: state.cursor, selectedItem: selectedItem, subSelectedItem: subItem, timeout: timeout)
+                startRank = state.startRank
+            } else {
+                return CatalogBrowseResult(items: [], genres: [], hasMore: false, totalPages: pg - 1)
+            }
             let mapped = rankPage.items.enumerated().map { idx, item in
                 SeriesSummary(
                     seriesId: item.seriesId,
@@ -404,17 +420,21 @@ public enum DiscoveryAccess {
                     episodeCount: item.episodeCount,
                     tags: item.metaLine.split(separator: "·").map(String.init).filter { !$0.isEmpty },
                     description: item.intro,
-                    rank: idx + 1,
+                    rank: startRank + idx + 1,
                     heat: item.metricTags.first ?? item.recommendText,
                     episodeLabel: item.episodeCount > 0 ? "全\(item.episodeCount)集" : "",
                     completionStatus: .unknown
                 )
             }
+            let hasMore = rankPage.hasMore && rankPage.cursor != nil && !mapped.isEmpty
+            if hasMore, let nextCursor = rankPage.cursor {
+                await catalogRankCursors.set("\(kind.rawValue):\(pg + 1)", (nextCursor, startRank + mapped.count), ttl: 600)
+            }
             result = CatalogBrowseResult(
                 items: mapped,
                 genres: [],
-                hasMore: rankPage.hasMore,
-                totalPages: rankPage.hasMore ? max(pg + 1, 2) : pg
+                hasMore: hasMore,
+                totalPages: hasMore ? max(pg + 1, 2) : pg
             )
         } else {
             let genreKey: String
@@ -425,7 +445,9 @@ public enum DiscoveryAccess {
             case .aiDrama: (genreKey, reqScene) = ("ai_series", "ai_series")
             default: (genreKey, reqScene) = ("short_play", "default")
             }
-            let offset = (pg - 1) * limit
+            let savedCursor = pg > 1 ? await catalogCursors.get("\(kind.rawValue):\(themeFilter):\(pg)") : nil
+            let offset = savedCursor?.offset ?? ((pg - 1) * limit)
+            let sessionId = savedCursor?.sessionId ?? ""
             let bodyObj: [String: Any] = [
                 "filter_ids": "",
                 "req_scene": reqScene,
@@ -442,13 +464,20 @@ public enum DiscoveryAccess {
                     "online_time": [String](),
                     "creation_status": [String](),
                 ],
-                "session_id": "",
+                "session_id": sessionId,
                 "req_type": offset > 0 ? "only_content" : "default",
                 "client_req_type": 3,
             ]
             let data = try JSONSerialization.data(withJSONObject: bodyObj, options: [.sortedKeys])
             let payload = try await AppCatalogueAccess.landpage(body: data, timeout: timeout)
             result = try parseCatalogBrowsePage(payload, page: pg)
+            let payloadData = payload["data"]
+            let nextOffset = payloadData["next_offset"].signedInt ?? (offset + result.items.count)
+            let nextSession = payloadData["session_id"].nonEmptyString ?? sessionId
+            if result.hasMore, nextOffset > offset {
+                await catalogCursors.set("\(kind.rawValue):\(themeFilter):\(pg + 1)",
+                                         CategoryCursor(offset: nextOffset, sessionId: nextSession), ttl: 600)
+            }
         }
         await catalogCache.set(cacheKey, result, ttl: 60)
         return result
@@ -616,8 +645,8 @@ public enum DiscoveryAccess {
         return items
     }
 
-    static func parseCalendar(_ payload: JSONValue) throws -> CalendarPage {
-        guard (payload["code"].number ?? -1) == 0 else {
+    static func parseCalendar(_ payload: JSONValue, requestedOffset: Int = 0) throws -> CalendarPage {
+        guard payload["code"].isZeroOrMissingStatusCode else {
             throw HongguoError(.upstream, "上新日历暂时不可用")
         }
         let data = payload["data"]
@@ -627,15 +656,16 @@ public enum DiscoveryAccess {
         for row in rows {
             let subData = row["subscribe_data"]
             let subDetail = subData["video_detail"]
-            let isOnline = row["is_online"].bool ?? (subData.object != nil)
-            let id = (subData["series_id"].idString
-                ?? subDetail["series_id_str"].idString
-                ?? subDetail["series_id"].idString
-                ?? row["series_id"].idString
-                ?? row["item_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
+            let isOnline = row["is_online"].bool ?? !(subData.object?.isEmpty ?? true)
+            let id = subData["series_id"].nonZeroIdString
+                ?? subDetail["series_id_str"].nonZeroIdString
+                ?? subDetail["series_id"].nonZeroIdString
+                ?? row["series_id"].nonZeroIdString
+                ?? row["item_id"].nonZeroIdString ?? ""
             guard id.matchesDigits(min: 1, max: 30), seen.insert(id).inserted else { continue }
+            let subItemId = row["item_id"].nonZeroIdString ?? id
             let title = AccountService.cleanText(
-                subDetail["series_title"].string ?? subData["title"].string ?? row["name"].string
+                subDetail["series_title"].nonEmptyString ?? subData["title"].nonEmptyString ?? row["name"].nonEmptyString
             )
             guard !title.isEmpty else { continue }
             let rawCover = [
@@ -645,10 +675,10 @@ public enum DiscoveryAccess {
             ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty } ?? ""
             let cover = normalizedCover(rawCover)
             let heatText: String = {
-                if let tag = (row["rec_tags"].array ?? []).first(where: { Int($0["data_type"].number ?? 0) == 27 })?["content"].string {
+                if let tag = (row["rec_tags"].array ?? []).first(where: { $0["data_type"].signedInt == 27 })?["content"].string {
                     return AccountService.cleanText(tag)
                 }
-                if let info = (subDetail["secondary_infos"].array ?? []).first(where: { Int($0["data_type"].number ?? 0) == 27 })?["content"].string {
+                if let info = (subDetail["secondary_infos"].array ?? []).first(where: { $0["data_type"].signedInt == 27 })?["content"].string {
                     return AccountService.cleanText(info)
                 }
                 let expected = AccountService.cleanText(row["expected_rec_text"].string)
@@ -657,24 +687,30 @@ public enum DiscoveryAccess {
             }()
             let cats = (row["categories"].array ?? []).compactMap { AccountService.cleanText($0.string) }.filter { !$0.isEmpty }
             let catLine = cats.isEmpty ? AccountService.cleanText(row["category"].string) : cats.prefix(3).joined(separator: "·")
-            let ct = Int(subData["content_type"].number ?? subDetail["content_type"].number ?? 0)
-            let epCount = max(0, Int(subData["episode_cnt"].number ?? subDetail["episode_cnt"].number ?? 0))
-            let desc = AccountService.cleanText(subDetail["series_intro"].string ?? subData["video_desc"].string ?? row["item_desc"].string)
+            let ct = subData["content_type"].signedInt.flatMap { $0 > 0 ? $0 : nil }
+                ?? subDetail["content_type"].signedInt.flatMap { $0 > 0 ? $0 : nil }
+                ?? row["content_type"].signedInt ?? 0
+            let aiUsage = max(
+                subData["ai_usage_type"].signedInt ?? 0,
+                max(subDetail["ai_usage_type"].signedInt ?? 0, row["ai_usage_type"].signedInt ?? 0)
+            )
+            let epCount = max(0, subData["episode_cnt"].signedInt.flatMap { $0 > 0 ? $0 : nil } ?? subDetail["episode_cnt"].signedInt ?? 0)
+            let desc = AccountService.cleanText(subDetail["series_intro"].nonEmptyString ?? subData["video_desc"].nonEmptyString ?? row["item_desc"].nonEmptyString)
             items.append(CalendarItem(
                 seriesId: id, title: title, cover: cover, isOnline: isOnline,
                 heatText: heatText, categoriesLine: catLine,
-                categoryLabel: AccountDataAccess.categoryLabel(contentType: ct),
-                episodeCount: epCount, description: desc
+                categoryLabel: AccountDataAccess.categoryLabel(contentType: ct, aiUsageType: aiUsage),
+                episodeCount: epCount, description: desc, subscribeItemId: subItemId
             ))
         }
-        let hasMore = data["has_more"].bool == true && !items.isEmpty
-        let nextOffset = Int(data["next_offset"].number ?? 0)
+        let nextOffset = data["next_offset"].signedInt ?? 0
+        let hasMore = data["has_more"].bool == true && !items.isEmpty && nextOffset > requestedOffset
         let sessionId = data["session_id"].string ?? ""
         return CalendarPage(items: items, hasMore: hasMore, nextOffset: nextOffset, sessionId: sessionId)
     }
 
-    static func parseNewDramaPage(_ payload: JSONValue) throws -> NewDramaPage {
-        guard (payload["code"].number ?? -1) == 0 else {
+    static func parseNewDramaPage(_ payload: JSONValue, requestedOffset: Int = 0) throws -> NewDramaPage {
+        guard payload["code"].isZeroOrMissingStatusCode else {
             throw HongguoError(.upstream, "新剧推荐暂时不可用")
         }
         let data = payload["data"]
@@ -682,21 +718,22 @@ public enum DiscoveryAccess {
         var seen = Set<String>()
         var items: [NewDramaItem] = []
         for row in rows {
-            let id = (row["series_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
-            let title = AccountService.cleanText(row["title"].string ?? row["series_title"].string)
+            let id = row["series_id"].nonZeroIdString ?? ""
+            let title = AccountService.cleanText(row["title"].nonEmptyString ?? row["series_title"].nonEmptyString)
             guard id.matchesDigits(min: 1, max: 30), !title.isEmpty, seen.insert(id).inserted else { continue }
             let cover = normalizedCover(row["cover"].string ?? "")
-            let epCount = max(0, Int(row["episode_cnt"].number ?? 0))
+            let epCount = max(0, row["episode_cnt"].signedInt ?? 0)
             let subs = row["sub_title_list"].array ?? []
             let heatText = AccountService.cleanText(
-                subs.first(where: { Int($0["data_type"].number ?? 0) == 27 })?["content"].string
+                subs.first(where: { $0["data_type"].signedInt == 27 })?["content"].string
                 ?? subs.first(where: { ($0["content"].string ?? "").contains("热度") })?["content"].string
             )
-            let otherSubs = subs.compactMap { AccountService.cleanText($0["content"].string) }
+            let otherSubs = subs.compactMap { AccountService.cleanText($0.string ?? $0["content"].string) }
                 .filter { !$0.isEmpty && $0 != heatText && $0 != "新剧" && $0 != "今日上新" }
             let tag = AccountService.cleanText(row["tag_info"]["text"].string)
-            let ct = Int(row["content_type"].number ?? 0)
-            let catLabel = AccountDataAccess.categoryLabel(contentType: ct)
+            let ct = row["content_type"].signedInt ?? 0
+            let aiUsage = row["ai_usage_type"].signedInt ?? 0
+            let catLabel = AccountDataAccess.categoryLabel(contentType: ct, aiUsageType: aiUsage)
             let subtitle: String = {
                 var parts: [String] = []
                 if let firstSub = otherSubs.first { parts.append(firstSub) }
@@ -704,15 +741,15 @@ public enum DiscoveryAccess {
                 if !heatText.isEmpty { parts.append("🔥\(heatText)") }
                 return parts.joined(separator: "·")
             }()
-            let desc = AccountService.cleanText(row["video_desc"].string ?? row["series_intro"].string)
+            let desc = AccountService.cleanText(row["video_desc"].nonEmptyString ?? row["series_intro"].nonEmptyString)
             items.append(NewDramaItem(
                 seriesId: id, title: title, cover: cover, episodeCount: epCount,
                 heatText: heatText, badgeText: tag, categoryLabel: catLabel,
                 subtitle: subtitle, description: desc
             ))
         }
-        let hasMore = data["has_more"].bool == true && !items.isEmpty
-        let nextOffset = Int(data["next_offset"].number ?? 0)
+        let nextOffset = data["next_offset"].signedInt ?? 0
+        let hasMore = data["has_more"].bool == true && !items.isEmpty && nextOffset > requestedOffset
         let sessionId = data["session_id"].string ?? ""
         return NewDramaPage(items: items, hasMore: hasMore, nextOffset: nextOffset, sessionId: sessionId)
     }

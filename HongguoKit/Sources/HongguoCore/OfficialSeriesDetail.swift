@@ -46,11 +46,12 @@ struct OfficialSeriesDetail: Sendable, Equatable {
         guard seriesId.matchesDigits(min: 6, max: 30) else { throw HongguoError(.input, "无效的剧集编号") }
         if !force, let cached = await cache.get(seriesId) { return cached }
         let json = try await request(seriesId, http: http)
+        let videoList = json["data"]["video_detail_data"][seriesId]["video_data"]["video_list"].array
         let detail: OfficialSeriesDetail
-        if json["data"]["video_detail_data"][seriesId]["video_data"]["video_list"].array == nil,
-           Int(json["code"].number ?? -1) == 0,
+        if (videoList == nil || videoList?.isEmpty == true),
+           json["code"].isZeroOrMissingStatusCode,
            let album = try await OfficialAlbumDetail.load(seriesId, http: http) {
-            // A creator's collection: the series read answers its id without episodes.
+            // A creator's collection or single creator video: the series read answers its id without episodes.
             detail = album
         } else {
             detail = try parse(json, seriesId: seriesId)
@@ -77,17 +78,18 @@ struct OfficialSeriesDetail: Sendable, Equatable {
         guard code == 0 else { throw HongguoError(.upstream, "红果剧集接口暂时不可用（\(code)）") }
         let data = json["data"]["video_detail_data"][seriesId]["video_data"]
         guard let list = data["video_list"].array else { throw HongguoError(.upstream, "红果剧集接口没有返回分集列表") }
-        if let id = data["series_id_str"].idString ?? data["series_id"].idString, id != seriesId {
+        if let id = data["series_id_str"].nonZeroIdString ?? data["series_id"].nonZeroIdString, id != seriesId {
             throw HongguoError(.format, "红果返回的剧集与请求不一致")
         }
+        let seriesDisabled = data["disable_play"].bool == true
         func count(_ value: JSONValue) -> Int? { value.number.flatMap { $0 >= 0 && $0 < 1e15 ? Int($0) : nil } }
         var seen = Set<String>()
         var entries: [Entry] = []
         for (offset, item) in list.enumerated() {
-            guard let vid = item["vid"].idString, vid.matchesDigits(min: 1, max: 30), seen.insert(vid).inserted else { continue }
+            guard let vid = item["vid"].nonZeroIdString, vid.matchesDigits(min: 1, max: 30), seen.insert(vid).inserted else { continue }
             let index = count(item["vid_index"]) ?? 0
             entries.append(Entry(vid: vid, index: index > 0 ? index : offset + 1, likes: count(item["digged_count"]),
-                                 disabled: item["disable_play"].bool == true))
+                                 disabled: seriesDisabled || item["disable_play"].bool == true))
         }
         entries.sort { $0.index < $1.index }
         guard !entries.isEmpty else { throw HongguoError(.upstream, "红果剧集接口的分集列表为空") }

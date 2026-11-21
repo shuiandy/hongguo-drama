@@ -57,7 +57,8 @@ public final class CatalogService: Sendable {
         }
         let app = try await DiscoveryAccess.catalog(kind: kind, genre: theme.isEmpty ? nil : theme, page: page, forceRefresh: forceRefresh)
         return CatalogPage(results: app.items, page: max(1, page), total: app.items.count, totalPages: app.totalPages,
-                           genres: app.genres, pageTitle: kind.label, sourceURL: Self.url(kind: kind, genre: nil, page: page))
+                           genres: app.genres, pageTitle: kind.label,
+                           sourceURL: Self.url(kind: kind, genre: theme.isEmpty ? nil : theme, page: page))
     }
 
     /// App ranking board pages. Page 1 opens the board; later pages continue from the cursor the
@@ -74,6 +75,11 @@ public final class CatalogService: Sendable {
         }
         let sub = kind == .hotDrama ? "ranklist_hot_sc" : ""
         let pageKey = "\(kind.rawValue):\(pg)"
+        if pg == 1 && forceRefresh {
+            await rankPages.clear()
+            await rankCursors.clear()
+            await rankOffsets.clear()
+        }
         if !forceRefresh, let cached = await rankPages.get(pageKey) { return cached }
         let board: DiscoveryAccess.RankPage
         if pg == 1 {

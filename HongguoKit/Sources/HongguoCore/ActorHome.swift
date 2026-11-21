@@ -84,11 +84,12 @@ public enum ActorHomeService {
     }
 
     /// One list (`tab`, `subTab`) of `userId`'s home page; the first page is cached for five minutes.
-    public static func works(userId: String, tab: Int, subTab: Int, cursor: String = "",
+    public static func works(userId: String, tab: Int, subTab: Int?, cursor: String = "",
                              http: HTTPClient = .shared) async throws -> ActorWorksPage {
-        let key = "\(userId):\(tab):\(subTab)"
+        let key = "\(userId):\(tab):\(subTab.map(String.init) ?? "none")"
         if cursor.isEmpty, let cached = await pageCache.get(key) { return cached }
-        let page = try parseWorks(try await request(userId: userId, tab: tab, subTab: subTab, cursor: cursor, http: http))
+        let page = try parseWorks(try await request(userId: userId, tab: tab, subTab: subTab, cursor: cursor, http: http),
+                                  requestedCursor: cursor)
         if cursor.isEmpty { await pageCache.set(key, page, ttl: 300) }
         return page
     }
@@ -129,14 +130,15 @@ public enum ActorHomeService {
                          highlight: EpisodeSocialService.integer(data["hightlight"]) ?? EpisodeSocialService.integer(data["hightlight"]["tab_type"]))
     }
 
-    static func parseWorks(_ json: JSONValue) throws -> ActorWorksPage {
+    static func parseWorks(_ json: JSONValue, requestedCursor: String = "") throws -> ActorWorksPage {
         try check(json)
         let data = json["data"]
+        let rawList = data["data_list"].array ?? []
         var seen = Set<String>()
         var items: [SeriesSummary] = []
         var upcomingIds = Set<String>()
         var note = ""
-        for entry in data["data_list"].array ?? [] {
+        for entry in rawList {
             if entry["video"].object != nil {
                 if let item = released(entry["video"]), seen.insert(item.seriesId).inserted { items.append(item) }
             } else if entry["subscribe_item"].object != nil {
@@ -147,11 +149,31 @@ public enum ActorHomeService {
                     items.append(item)
                     upcomingIds.insert(item.seriesId)
                 }
+            } else if let albumCard = [entry["album"], entry["video_album"], entry["album_data"]].first(where: { $0.object != nil }) {
+                if let item = album(albumCard), seen.insert(item.seriesId).inserted { items.append(item) }
             }
         }
         let info = data["common_list_info"]
+        let nextCursor = info["cursor"].string ?? info["cursor"].idString ?? ""
+        let cursorAdvanced = !nextCursor.isEmpty && nextCursor != requestedCursor
+        let hasMore = (info["has_more"].bool ?? false) && !rawList.isEmpty && cursorAdvanced
         return ActorWorksPage(items: items, upcomingIds: upcomingIds, upcomingNote: note.count <= 40 ? note : "",
-                              cursor: info["cursor"].string ?? "", hasMore: info["has_more"].bool ?? false)
+                              cursor: nextCursor, hasMore: hasMore)
+    }
+
+    static func album(_ card: JSONValue) -> SeriesSummary? {
+        let id = card["album_id_str"].nonZeroIdString ?? card["album_id"].nonZeroIdString ?? card["id"].nonZeroIdString ?? ""
+        let title = AccountService.cleanText(card["title"].nonEmptyString ?? card["name"].nonEmptyString)
+        guard id.matchesDigits(min: 6, max: 30), !title.isEmpty else { return nil }
+        let tags = texts(card["sub_title_list"])
+        let episodes = EpisodeSocialService.integer(card["episode_cnt"]) ?? EpisodeSocialService.integer(card["video_count"]) ?? 0
+        return SeriesSummary(
+            seriesId: id, title: title, cover: cover(card["cover"].nonEmptyString ?? card["album_cover"].nonEmptyString),
+            episodeCount: episodes, tags: tags,
+            description: String(AccountService.cleanText(card["intro"].string).prefix(500)),
+            heat: heatText(card["stat"]["hot"].number ?? card["hot"].number),
+            episodeLabel: label(tags.first, episodes)
+        )
     }
 
     /// A `video` item: `video_id`, `common` {title, cover, intro}, `expand` {episode_cnt,
@@ -159,7 +181,7 @@ public enum ActorHomeService {
     /// genre · N集 under the title.
     static func released(_ video: JSONValue) -> SeriesSummary? {
         let common = video["common"], expand = video["expand"]
-        let id = (video["video_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
+        let id = video["video_id"].nonZeroIdString ?? ""
         let title = AccountService.cleanText(common["title"].string)
         guard id.matchesDigits(min: 6, max: 30), !title.isEmpty else { return nil }
         let tags = texts(expand["sub_title_list"])
@@ -173,7 +195,9 @@ public enum ActorHomeService {
 
     /// A `subscribe_item` (预约): a series not out yet, with its date.
     static func upcoming(_ card: JSONValue) -> SeriesSummary? {
-        let id = (card["item_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
+        let id = card["subscribe_data"]["series_id"].nonZeroIdString
+            ?? card["series_id"].nonZeroIdString
+            ?? card["item_id"].nonZeroIdString ?? ""
         let title = AccountService.cleanText(card["name"].string)
         guard id.matchesDigits(min: 6, max: 30), !title.isEmpty else { return nil }
         let date = EpisodeSocialService.date(card["schedule_publish_time"])

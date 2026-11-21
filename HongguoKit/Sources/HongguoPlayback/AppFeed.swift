@@ -107,12 +107,16 @@ public enum AppFeed {
         filter: ContentFilter = .anyShortDrama
     ) -> AppFeedEntry? {
         let detail = row["video_detail"]
+        func positiveInt(_ value: JSONValue) -> Int? {
+            guard let n = integer(value), n > 0 else { return nil }
+            return n
+        }
         guard let id = firstDigits(row["series_id"], row["series_id_str"], detail["series_id_str"], detail["series_id"]),
               let vid = firstDigits(row["vid"], row["first_vid"], detail["first_vid"],
                                     row["video_list"].array?.first?["vid"],
                                     detail["video_list"].array?.first?["vid"]),
-              let contentType = integer(row["content_type"]) ?? integer(detail["content_type"]) else { return nil }
-        let aiUsageType = integer(row["ai_usage_type"]) ?? integer(detail["ai_usage_type"]) ?? 0
+              let contentType = positiveInt(row["content_type"]) ?? positiveInt(detail["content_type"]) else { return nil }
+        let aiUsageType = max(integer(row["ai_usage_type"]) ?? 0, integer(detail["ai_usage_type"]) ?? 0)
         guard filter.accepts(contentType: contentType, aiUsageType: aiUsageType),
               row["disable_play"].bool != true,
               detail["disable_play"].bool != true else { return nil }
@@ -152,10 +156,11 @@ public enum AppFeed {
                 if !tags.contains(name) { tags.append(name) }
             }
         }
-        let count = integer(row["episode_cnt"]) ?? integer(detail["episode_cnt"]) ?? 0
+        let count = positiveInt(row["episode_cnt"]) ?? positiveInt(detail["episode_cnt"]) ?? 0
         // The rights holder, for the series page (see `SeriesCredits`).
         SeriesCredits.shared.note(seriesId: id, copyright: SearchText.clean(firstNonEmpty(row["copyright"].string, detail["copyright"].string)))
         let rawCover = firstNonEmpty(row["cover"].string, row["series_cover"].string, detail["series_cover"].string)
+        let epRight = SearchText.clean(firstNonEmpty(row["episode_right_text"].string, detail["episode_right_text"].string))
         let summary = SeriesSummary(
             seriesId: id,
             title: title,
@@ -164,13 +169,13 @@ public enum AppFeed {
             tags: Array(tags.prefix(4)),
             description: SearchText.clean(firstNonEmpty(row["video_desc"].string, row["series_intro"].string, detail["series_intro"].string)),
             heat: heat,
-            episodeLabel: count > 0 ? "全\(count)集" : ""
+            episodeLabel: !epRight.isEmpty ? epRight : (count > 0 ? "全\(count)集" : "")
         )
         return AppFeedEntry(
             series: summary,
             firstVid: vid,
-            commentCount: integer(row["comment_count"]) ?? integer(detail["comment_count"]) ?? 0,
-            playCount: integer(row["play_cnt"]) ?? integer(row["series_play_cnt"]) ?? integer(detail["series_play_cnt"]) ?? 0,
+            commentCount: positiveInt(row["comment_count"]) ?? positiveInt(detail["comment_count"]) ?? 0,
+            playCount: positiveInt(row["play_cnt"]) ?? positiveInt(row["series_play_cnt"]) ?? positiveInt(detail["series_play_cnt"]) ?? 0,
             isVertical: row["vertical"].bool ?? detail["vertical"].bool ?? true,
             contentType: contentType,
             aiUsageType: aiUsageType
@@ -209,7 +214,7 @@ public enum AppFeed {
     }
 
     private static func isDigits(_ text: String) -> Bool {
-        (1...30).contains(text.count) && text.allSatisfy { $0.isASCII && $0.isNumber }
+        (1...30).contains(text.count) && text.allSatisfy { $0.isASCII && $0.isNumber } && text.contains(where: { $0 != "0" })
     }
 
     /// The service sends counts as numbers or as digit strings.

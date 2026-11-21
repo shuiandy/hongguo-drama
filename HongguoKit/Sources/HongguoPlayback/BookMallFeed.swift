@@ -164,11 +164,12 @@ public enum BookMallFeed {
             return AppFeedPage(entries: [], next: nil)
         }
 
-        let sessionId = validSessionId(tab["session_id"])
+        let tabSessionId = validSessionId(tab["session_id"]) ?? validSessionId(payload["data"]["session_id"])
         var seen = Set<String>()
         var entries: [AppFeedEntry] = []
         var feedCellId = ""
         var feedNextOffset: Int?
+        var cellSessionId: String?
 
         for cell in cells {
             let nested = cell["cell_data"].array ?? []
@@ -181,9 +182,10 @@ public enum BookMallFeed {
                     }
                 }
             }
-            let cid = (cell["cell_id_str"].string ?? cell["cell_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
-            if cellRawVideos > 0, feedCellId.isEmpty, !cid.isEmpty, cid != "0" {
+            let cid = cell["cell_id_str"].nonZeroIdString ?? cell["cell_id"].nonZeroIdString ?? ""
+            if cellRawVideos > 0, feedCellId.isEmpty, !cid.isEmpty {
                 feedCellId = cid
+                cellSessionId = validSessionId(cell["session_id"])
                 // `show_type=407` cells under `bottom_tab_type=7` omit `cell.next_offset`; paging
                 // continues from the number of videos already delivered on page 1.
                 let explicitOffset = AppFeed.integer(cell["next_offset"]).flatMap { $0 > 0 ? $0 : nil }
@@ -193,6 +195,7 @@ public enum BookMallFeed {
 
         SeriesCredits.shared.save()
         var next: AppFeedCursor?
+        let sessionId = tabSessionId ?? cellSessionId
         if !feedCellId.isEmpty, let offset = feedNextOffset, offset > 0, let sessionId {
             next = AppFeedCursor(offset: offset, sessionId: sessionId, cellId: feedCellId)
         }
@@ -215,8 +218,10 @@ public enum BookMallFeed {
         let filter = channel?.contentFilter ?? .anyShortDrama
         var seen = Set<String>()
         var entries: [AppFeedEntry] = []
+        var rawVideoCount = 0
         for item in items {
             for row in videoRows(in: item) {
+                rawVideoCount += 1
                 if let entry = AppFeed.parseEntry(row, seen: &seen, filter: filter) {
                     entries.append(entry)
                 }
@@ -225,13 +230,15 @@ public enum BookMallFeed {
 
         SeriesCredits.shared.save()
         var next: AppFeedCursor?
-        let session = validSessionId(data["session_id"]) ?? (cursor.sessionId.isEmpty ? nil : cursor.sessionId)
+        let session = validSessionId(data["session_id"]) ?? validSessionId(data["cell_view"]["session_id"]) ?? (cursor.sessionId.isEmpty ? nil : cursor.sessionId)
+        let explicitOffset = AppFeed.integer(data["next_offset"]).flatMap { $0 > 0 ? $0 : nil }
+            ?? AppFeed.integer(data["cell_view"]["next_offset"]).flatMap { $0 > 0 ? $0 : nil }
+        let resolvedOffset = explicitOffset ?? (rawVideoCount > 0 ? cursor.offset + rawVideoCount : 0)
         if data["has_more"].bool == true,
-           let offset = AppFeed.integer(data["next_offset"]),
-           offset > cursor.offset,
+           resolvedOffset > cursor.offset,
            let session,
            !cursor.cellId.isEmpty {
-            next = AppFeedCursor(offset: offset, sessionId: session, cellId: cursor.cellId)
+            next = AppFeedCursor(offset: resolvedOffset, sessionId: session, cellId: cursor.cellId)
         }
         return AppFeedPage(entries: entries, next: next)
     }

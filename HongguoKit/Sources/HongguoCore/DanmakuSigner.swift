@@ -97,13 +97,16 @@ public enum DanmakuSigner {
 
     // MARK: X-Gorgon
 
-    static func gorgon(rawQuery: String, stamp: Int64, nonce: [UInt8]) -> String {
+    static func gorgon(rawQuery: String, stamp: Int64, nonce: [UInt8], bodyMd5: [UInt8]? = nil) -> String {
         let head2 = UInt8(truncatingIfNeeded: ((Int(nonce[0]) % 7) + 1) << 5)
         let head3 = 0xE0 | (nonce[1] & 0x0F)
 
         var seed = [UInt8](repeating: 0, count: 20)
         let digest = AppCrypto.md5(Array(rawQuery.utf8))
         seed.replaceSubrange(0..<4, with: digest[0..<4])
+        if let bodyMd5, bodyMd5.count >= 4 {
+            seed.replaceSubrange(4..<8, with: bodyMd5[0..<4])
+        }
         seed.replaceSubrange(12..<16, with: [0, 1, 7, 4])
         seed.replaceSubrange(16..<20, with: AppCrypto.be32Bytes(UInt32(truncatingIfNeeded: stamp)))
 
@@ -162,7 +165,8 @@ public enum DanmakuSigner {
 
     /// `appVersion` is field 7 of the Argus record: the app version the SDK reports.
     static func argus(rawQuery: String, timestamp: Int64, nonce: [UInt8],
-                      appVersion: String = AppLegacySigner.currentVersionName) throws -> String {
+                      appVersion: String = AppLegacySigner.currentVersionName,
+                      bodyMd5: [UInt8]? = nil) throws -> String {
         let key = argusKey
         var parts: [UInt8] = []
         func varint(_ field: UInt64, _ value: UInt64) {
@@ -184,7 +188,7 @@ public enum DanmakuSigner {
         varint(9, 135_135_744)
         bytesField(10, [UInt8](repeating: 0, count: 8))
         varint(12, UInt64(bitPattern: timestamp &* 2))
-        let bodyHash = AppCrypto.sm3([UInt8](repeating: 0, count: 16))
+        let bodyHash = AppCrypto.sm3(bodyMd5 ?? [UInt8](repeating: 0, count: 16))
         let queryHash = AppCrypto.sm3(Array(rawQuery.utf8))
         bytesField(13, Array(bodyHash[0..<6]))
         bytesField(14, Array(queryHash[0..<6]))
@@ -233,19 +237,27 @@ public enum DanmakuSigner {
     // MARK: Headers
 
     /// All signing headers, in the reference's order. `stamp` is in seconds and must match the
-    /// `_rticket` (milliseconds) inside `rawQuery`.
-    public static func headers(rawQuery: String, stamp: Int64, nonce: [UInt8], aid: String = "8662") throws -> [(String, String)] {
-        try headers(rawQuery: rawQuery, stamp: stamp, nonce: nonce, aid: aid, argusVersion: AppLegacySigner.currentVersionName)
+    /// `_rticket` (milliseconds) inside `rawQuery`. When `stampMs` and `body` are supplied on live
+    /// POST requests, `X-SS-Req-Ticket` matches `_rticket` to the millisecond and `X-SS-STUB` /
+    /// Gorgon / Argus include the body digest.
+    public static func headers(rawQuery: String, stamp: Int64, nonce: [UInt8], aid: String = "8662",
+                               stampMs: Int64? = nil, body: Data? = nil) throws -> [(String, String)] {
+        try headers(rawQuery: rawQuery, stamp: stamp, nonce: nonce, aid: aid,
+                    argusVersion: AppLegacySigner.currentVersionName, stampMs: stampMs, body: body)
     }
 
-    static func headers(rawQuery: String, stamp: Int64, nonce: [UInt8], aid: String = "8662", argusVersion: String) throws -> [(String, String)] {
+    static func headers(rawQuery: String, stamp: Int64, nonce: [UInt8], aid: String = "8662",
+                        argusVersion: String, stampMs: Int64? = nil, body: Data? = nil) throws -> [(String, String)] {
         guard nonce.count == nonceBytes else { throw HongguoError(.input, "弹幕签名随机数长度无效") }
+        let bodyMd5: [UInt8]? = body.flatMap { $0.isEmpty ? nil : AppCrypto.md5(Array($0)) }
+        let stub = bodyMd5.map { AppCrypto.hex($0, uppercase: true) } ?? ""
+        let ticket = String(stampMs ?? (stamp * 1000))
         return [
-            ("X-Gorgon", gorgon(rawQuery: rawQuery, stamp: stamp, nonce: nonce)),
+            ("X-Gorgon", gorgon(rawQuery: rawQuery, stamp: stamp, nonce: nonce, bodyMd5: bodyMd5)),
             ("X-Khronos", String(stamp)),
-            ("X-SS-Req-Ticket", String(stamp * 1000)),
-            ("X-SS-STUB", ""),
-            ("X-Argus", try argus(rawQuery: rawQuery, timestamp: stamp, nonce: nonce, appVersion: argusVersion)),
+            ("X-SS-Req-Ticket", ticket),
+            ("X-SS-STUB", stub),
+            ("X-Argus", try argus(rawQuery: rawQuery, timestamp: stamp, nonce: nonce, appVersion: argusVersion, bodyMd5: bodyMd5)),
             ("X-Ladon", ladon(aid: aid, timestamp: stamp, prefix: Array(nonce[2..<6]))),
         ]
     }

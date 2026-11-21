@@ -168,7 +168,7 @@ public final class SeriesLibrary: @unchecked Sendable {
         let result: LibrarySeries = try lock.withLock {
             var item = items[id] ?? LibrarySeries(seriesId: id, title: cleanTitle, cover: "", episodeCount: 0, favorite: false,
                                                   likedEpisodeIds: [], publishedAt: nil, addedAt: now, lastOpenedAt: now, favoritedAt: nil)
-            if !cleanTitle.isEmpty { item.title = cleanTitle }
+            if !cleanTitle.isEmpty, (item.title.isEmpty || !cleanTitle.hasPrefix("剧集 ")) { item.title = cleanTitle }
             guard !item.title.isEmpty else { throw HongguoError(.input, "缺少剧集名称，无法保存到本机") }
             body(&item)
             var next = items

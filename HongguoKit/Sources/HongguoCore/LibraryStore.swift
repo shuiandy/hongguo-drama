@@ -24,6 +24,8 @@ public struct WatchRecord: Codable, Hashable, Identifiable, Sendable {
     public var seenSequelIds: [String]?
     public var lastCheckedAt: Date?
     public var lastCheckError: String?
+    /// Non-nil when this row originated from or was synced by a signed-in account's cloud history.
+    public var cloudAccountId: String? = nil
 
     public var isFinished: Bool { total > 0 && completedEpisode >= total }
 }
@@ -268,20 +270,28 @@ public final class LibraryStore: @unchecked Sendable {
     }
 
     public func savePosition(seriesId: String, title: String, cover: String, total: Int,
-                             episodeIndex: Int, vid: String, position: Double, duration: Double, finished: Bool) {
+                             episodeIndex: Int, vid: String, position: Double, duration: Double, finished: Bool,
+                             accountId: String? = nil) {
         queue.sync {
             var record = snapshot.history[seriesId] ?? WatchRecord(
                 seriesId: seriesId, title: title, cover: cover, total: total, episodeIndex: episodeIndex,
                 vid: vid, position: 0, duration: 0, updatedAt: Date(), completedEpisode: 0)
             record.title = title.isEmpty ? record.title : title
             record.cover = cover.isEmpty ? record.cover : cover
-            record.total = max(total, record.total)
+            if total > record.total {
+                record.total = total
+                if let known = record.knownTotal, total > known { record.knownTotal = total }
+                if let ack = record.acknowledgedTotal, total > ack { record.acknowledgedTotal = total }
+            }
             record.episodeIndex = episodeIndex
             record.vid = vid
             record.position = position.isFinite ? max(0, position) : 0
             record.duration = duration.isFinite ? max(0, duration) : 0
             record.updatedAt = Date()
             if finished { record.completedEpisode = max(record.completedEpisode, episodeIndex) }
+            if let accountId, !accountId.isEmpty {
+                record.cloudAccountId = accountId
+            }
             snapshot.history[seriesId] = record
             persistLocked()
         }
@@ -318,17 +328,24 @@ public final class LibraryStore: @unchecked Sendable {
     /// side wins by last-watched time; an older cloud row only fills an empty title, cover or total.
     /// Returns how many local records were added or moved forward.
     @discardableResult
-    public func mergeCloudHistory(_ items: [AccountHistoryItem]) -> Int {
-        queue.sync {
+    public func mergeCloudHistory(_ items: [AccountHistoryItem], accountId: String? = nil) -> Int {
+        let tag = (accountId?.isEmpty == false) ? accountId : "cloud"
+        return queue.sync {
             var count = 0
+            var dirty = false
             for item in items {
+                let cloudFinished = item.episodeIndex > 0 && item.duration > 0 && item.position >= item.duration - ResumePoint.endSlack
+                let cloudCompleted = item.episodeIndex > 0 ? (cloudFinished ? item.episodeIndex : max(0, item.episodeIndex - 1)) : 0
                 if var existing = snapshot.history[item.seriesId] {
                     if existing.updatedAt >= item.updatedAt {
                         var filled = existing
                         if filled.title.isEmpty || filled.title.hasPrefix("剧集 ") { filled.title = item.seriesTitle }
                         if filled.cover.isEmpty { filled.cover = item.cover }
                         filled.total = max(filled.total, item.total)
-                        if filled != existing { snapshot.history[item.seriesId] = filled }
+                        if filled != existing {
+                            snapshot.history[item.seriesId] = filled
+                            dirty = true
+                        }
                         continue
                     }
                     if !item.seriesTitle.isEmpty && !item.seriesTitle.hasPrefix("剧集 ") { existing.title = item.seriesTitle }
@@ -339,22 +356,46 @@ public final class LibraryStore: @unchecked Sendable {
                         existing.vid = item.episodeId
                         existing.position = item.position
                         existing.duration = item.duration
+                        existing.completedEpisode = max(existing.completedEpisode, cloudCompleted)
+                        existing.updatedAt = item.updatedAt
+                        if existing.cloudAccountId != nil { existing.cloudAccountId = tag }
+                        snapshot.history[item.seriesId] = existing
+                        count += 1
+                        dirty = true
+                    } else if existing != snapshot.history[item.seriesId] {
+                        snapshot.history[item.seriesId] = existing
+                        dirty = true
                     }
-                    existing.updatedAt = item.updatedAt
-                    snapshot.history[item.seriesId] = existing
                 } else {
                     // Without an episode number the position cannot be placed: start that series at episode 1.
                     let known = item.episodeIndex > 0
-                    snapshot.history[item.seriesId] = WatchRecord(
+                    var record = WatchRecord(
                         seriesId: item.seriesId, title: item.seriesTitle, cover: item.cover, total: item.total,
                         episodeIndex: known ? item.episodeIndex : 1, vid: known ? item.episodeId : "",
                         position: known ? item.position : 0, duration: known ? item.duration : 0,
-                        updatedAt: item.updatedAt, completedEpisode: known ? max(0, item.episodeIndex - 1) : 0)
+                        updatedAt: item.updatedAt, completedEpisode: known ? cloudCompleted : 0)
+                    record.cloudAccountId = tag
+                    snapshot.history[item.seriesId] = record
+                    count += 1
+                    dirty = true
                 }
-                count += 1
             }
-            persistLocked()
+            if dirty { persistLocked() }
             return count
+        }
+    }
+
+    /// Removes watch-history entries that originated from cloud sync (leaving purely local guest
+    /// entries untouched). Called on sign-out or account switch.
+    public func clearCloudHistory(exceptAccountId: String? = nil) {
+        queue.sync {
+            let before = snapshot.history.count
+            snapshot.history = snapshot.history.filter { _, record in
+                guard let owner = record.cloudAccountId else { return true }
+                if let keep = exceptAccountId, !keep.isEmpty { return owner == keep }
+                return false
+            }
+            if snapshot.history.count != before { persistLocked() }
         }
     }
 

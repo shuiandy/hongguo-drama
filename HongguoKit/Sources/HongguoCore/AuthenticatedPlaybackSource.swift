@@ -389,7 +389,11 @@ public actor AuthenticatedPlaybackSource {
 
         // Prefetches never trigger device renewal so they cannot consume the viewer's
         // recovery rate limits or race with an active viewer lookup.
-        if entries == nil, allowRecovery {
+        let needsDeviceRecovery: Bool = {
+            guard let appError = lastError as? AppSourceError else { return false }
+            return appError.code == .emptyResponse || appError.status == 403
+        }()
+        if entries == nil, allowRecovery, needsDeviceRecovery {
             // A) Renew persisted device_id + refresh device_token + activate (app_alert_check).
             if deadline.timeIntervalSinceNow >= 2,
                let refreshed = try? await PersistentAppDevice.shared.refreshForRecovery(transport: transport),
@@ -427,7 +431,7 @@ public actor AuthenticatedPlaybackSource {
         let expiresAt = VideoModelDiskCache.computeExpiry(
             serverExpireTime: entry["expire_time"].number ?? model["expire_time"].number
         )
-        let inline = !(model["video_list"].object?.isEmpty ?? true)
+        let inline = !(model["video_list"].object?.isEmpty ?? true) || !(model["video_list"].array?.isEmpty ?? true)
         if !inline {
             guard let fallback = AppSource.parseFallback(model["fallback_api"]), !fallback.isEmpty else {
                 throw AppSourceError(.missingModel, "App 接口未返回本集片源地址")
@@ -462,6 +466,22 @@ public actor AuthenticatedPlaybackSource {
             storeCached(vid: vid, info: resolved, expiresAt: expiresAt, expectedEpoch: epoch)
             return (resolved, expiresAt, finalTag)
         } catch let error as AppSourceError {
+            if error.code == .noCompatibleSource,
+               AppSource.containsByteVC2(model),
+               let fallback = AppSource.parseFallback(model["fallback_api"]), !fallback.isEmpty,
+               deadline.timeIntervalSinceNow >= 2,
+               let hw = await CodecFallback.tryHardwareCodecFallback(
+                   fallbackURL: fallback,
+                   expectedVideoId: model["video_id"].string,
+                   expectedDuration: model["video_duration"].number,
+                   vid: vid,
+                   transport: transport,
+                   extraHeaders: dToken,
+                   deadline: deadline
+               ) {
+                storeCached(vid: vid, info: hw, expiresAt: expiresAt, expectedEpoch: epoch)
+                return (hw, expiresAt, "\(routeTag)-h264")
+            }
             let duration = model["video_duration"].number ?? .nan
             guard error.incompleteEncryptionMetadata,
                   let videoId = model["video_id"].string,
@@ -487,38 +507,61 @@ public actor AuthenticatedPlaybackSource {
             headers: [("User-Agent", AppSource.iosPlayerUA)] + extra,
             deadline: deadline
         )
-        for value in [outer, outer["video_info"]] where (value["Code"].number ?? value["code"].number ?? 0) != 0 {
+        for value in [outer, outer["video_info"]]
+        where !value["Code"].isZeroOrMissingStatusCode || !value["code"].isZeroOrMissingStatusCode {
             throw AppSourceError(.businessRejected, "App 接口暂未提供本集播放信息")
         }
         let info = outer["video_info"]["data"]
         if let expectedId = pending.videoId, !expectedId.isEmpty,
-           let expectedDuration = pending.duration, expectedDuration.isFinite, expectedDuration > 0,
-           pending.requireEncryptionMetadata {
+           let expectedDuration = pending.duration, expectedDuration.isFinite, expectedDuration > 0 {
             let fallbackDuration = info["video_duration"].number ?? .nan
             guard info["video_id"].string == expectedId, fallbackDuration.isFinite, fallbackDuration > 0,
                   abs(fallbackDuration - expectedDuration) <= 0.5 else {
                 throw AppSourceError(.invalidResponse, "备用片源编号或完整时长无法确认，已停止取址")
             }
         }
-        let parsed = try AppSource.parsePlayModel(info, vid: vid, inline: false,
-                                                  requireEncryptionMetadata: pending.requireEncryptionMetadata,
-                                                  minimumPixels: pending.minimumPixels)
-        if parsed.isByteVC2, deadline.timeIntervalSinceNow >= 2 {
-            let expectedId = info["video_id"].string ?? pending.videoId
-            let expectedDur = info["video_duration"].number ?? pending.duration
-            if let hw = await CodecFallback.tryHardwareCodecFallback(
-                fallbackURL: pending.fallbackURL,
-                expectedVideoId: expectedId,
-                expectedDuration: expectedDur,
-                vid: vid,
-                transport: transport,
-                extraHeaders: extra,
-                deadline: deadline
-            ) {
-                return (hw, true)
+        do {
+            let parsed = try AppSource.parsePlayModel(info, vid: vid, inline: false,
+                                                      requireEncryptionMetadata: pending.requireEncryptionMetadata,
+                                                      minimumPixels: pending.minimumPixels)
+            if parsed.isByteVC2, deadline.timeIntervalSinceNow >= 2 {
+                let expectedId = info["video_id"].string ?? pending.videoId
+                let expectedDur = info["video_duration"].number ?? pending.duration
+                if let hw = await CodecFallback.tryHardwareCodecFallback(
+                    fallbackURL: pending.fallbackURL,
+                    expectedVideoId: expectedId,
+                    expectedDuration: expectedDur,
+                    vid: vid,
+                    transport: transport,
+                    extraHeaders: extra,
+                    deadline: deadline,
+                    requireEncryptionMetadata: pending.requireEncryptionMetadata,
+                    minimumPixels: pending.minimumPixels
+                ) {
+                    return (hw, true)
+                }
             }
+            return (parsed, false)
+        } catch let error as AppSourceError where error.code == .noCompatibleSource && AppSource.containsByteVC2(info) {
+            if deadline.timeIntervalSinceNow >= 2 {
+                let expectedId = info["video_id"].string ?? pending.videoId
+                let expectedDur = info["video_duration"].number ?? pending.duration
+                if let hw = await CodecFallback.tryHardwareCodecFallback(
+                    fallbackURL: pending.fallbackURL,
+                    expectedVideoId: expectedId,
+                    expectedDuration: expectedDur,
+                    vid: vid,
+                    transport: transport,
+                    extraHeaders: extra,
+                    deadline: deadline,
+                    requireEncryptionMetadata: pending.requireEncryptionMetadata,
+                    minimumPixels: pending.minimumPixels
+                ) {
+                    return (hw, true)
+                }
+            }
+            throw error
         }
-        return (parsed, false)
     }
 
     private enum Channel {
@@ -549,7 +592,7 @@ public actor AuthenticatedPlaybackSource {
                     body: req.body,
                     deadline: deadline
                 )
-                if (reply["Code"].number ?? reply["code"].number ?? 0) != 0 {
+                if !reply["Code"].isZeroOrMissingStatusCode || !reply["code"].isZeroOrMissingStatusCode {
                     throw AppSourceError(.businessRejected, "App 接口暂未提供本集播放信息")
                 }
                 response = reply
@@ -573,8 +616,13 @@ public actor AuthenticatedPlaybackSource {
         }
 
         let data = response["data"]
-        if !data["1004"].isNull { return data["1004"] }
-        if !data["video_model_data"].isNull { return data["video_model_data"] }
+        var merged: [String: JSONValue] = [:]
+        for key in ["video_model_data", "1001", "1004"] {
+            if let obj = data[key].object {
+                for (k, v) in obj { merged[k] = v }
+            }
+        }
+        if !merged.isEmpty { return .object(merged) }
         return data
     }
 
@@ -600,13 +648,30 @@ public actor AuthenticatedPlaybackSource {
         let expiresAt = VideoModelDiskCache.computeExpiry(
             serverExpireTime: entry["expire_time"].number ?? model["expire_time"].number
         )
-        let inline = !(model["video_list"].object?.isEmpty ?? true)
+        let inline = !(model["video_list"].object?.isEmpty ?? true) || !(model["video_list"].array?.isEmpty ?? true)
         if inline {
             do {
                 let resolved = try AppSource.parsePlayModel(model, vid: vid, inline: true)
+                if resolved.isByteVC2,
+                   let fallback = AppSource.parseFallback(model["fallback_api"]), !fallback.isEmpty {
+                    pendingFallbacks[vid] = PendingFallback(fallbackURL: fallback, videoId: model["video_id"].string,
+                                                            duration: model["video_duration"].number,
+                                                            minimumPixels: 0, requireEncryptionMetadata: false,
+                                                            expiresAt: expiresAt)
+                    return
+                }
                 storeCached(vid: vid, info: resolved, expiresAt: expiresAt, expectedEpoch: epoch)
                 return
             } catch let error as AppSourceError {
+                if error.code == .noCompatibleSource,
+                   AppSource.containsByteVC2(model),
+                   let fallback = AppSource.parseFallback(model["fallback_api"]), !fallback.isEmpty {
+                    pendingFallbacks[vid] = PendingFallback(fallbackURL: fallback, videoId: model["video_id"].string,
+                                                            duration: model["video_duration"].number,
+                                                            minimumPixels: 0, requireEncryptionMetadata: false,
+                                                            expiresAt: expiresAt)
+                    return
+                }
                 if error.incompleteEncryptionMetadata,
                    let videoId = model["video_id"].string, !videoId.isEmpty,
                    let duration = model["video_duration"].number, duration.isFinite, duration > 0,
@@ -622,7 +687,8 @@ public actor AuthenticatedPlaybackSource {
             }
         }
         if let fallback = AppSource.parseFallback(model["fallback_api"]), !fallback.isEmpty {
-            pendingFallbacks[vid] = PendingFallback(fallbackURL: fallback, videoId: nil, duration: nil,
+            pendingFallbacks[vid] = PendingFallback(fallbackURL: fallback, videoId: model["video_id"].string,
+                                                    duration: model["video_duration"].number,
                                                     minimumPixels: 0, requireEncryptionMetadata: false, expiresAt: expiresAt)
         }
     }

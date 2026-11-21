@@ -28,7 +28,10 @@ public enum AccountDataAccess {
     ]
 
     /// Whether a login is saved on this device (the core checks it with the website separately).
-    public static var hasSavedLogin: Bool { ((try? KeychainCredentialStore().load()) ?? nil) != nil }
+    public static var hasSavedLogin: Bool {
+        guard !MacTestRunner.isActive else { return false }
+        return !PersistentAppDevice.authHeaders().isEmpty
+    }
 
     public struct Profile: Equatable, Sendable {
         public var name: String
@@ -76,8 +79,8 @@ public enum AccountDataAccess {
         public var category: String
     }
 
-    static func categoryLabel(contentType: Int, genre: String = "") -> String {
-        if genre.localizedCaseInsensitiveContains("ai剧") { return "AI剧" }
+    static func categoryLabel(contentType: Int, aiUsageType: Int = 0, genre: String = "") -> String {
+        if aiUsageType > 0 || genre.localizedCaseInsensitiveContains("ai剧") { return "AI剧" }
         switch contentType {
         case 5: return "高光"
         case 1004: return "漫剧"
@@ -135,29 +138,33 @@ public enum AccountDataAccess {
     public static func bookshelfVideos() async throws -> [BookshelfVideo] {
         var all: [BookshelfVideo] = []
         var offset = 0
-        for _ in 0..<4 {
+        for _ in 0..<12 {
             let data = try checked(try await get(path: "/reading/bookapi/bookshelf/video/info/v1/", values: [
                 ("offset", String(offset)), ("count", "60"),
             ]))
             let rows = data["video_shelf_info"].array ?? []
             for row in rows {
                 let video = row["video_data"]
-                let id = (video["series_id"].idString ?? row["series_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
+                let id = video["series_id"].nonZeroIdString ?? row["series_id"].nonZeroIdString ?? ""
                 guard id.matchesDigits(min: 1, max: 30) else { continue }
-                let title = AccountService.cleanText(row["series_title"].string ?? row["book_name"].string)
-                let rawCover = row["series_cover_url"].string ?? video["cover"].string ?? row["cover"].string ?? ""
+                let title = AccountService.cleanText(
+                    row["series_title"].nonEmptyString ?? row["book_name"].nonEmptyString
+                    ?? video["series_title"].nonEmptyString ?? video["title"].nonEmptyString
+                )
+                let rawCover = row["series_cover_url"].nonEmptyString ?? video["cover"].nonEmptyString ?? row["cover"].nonEmptyString ?? ""
                 let cleaned = AccountService.cleanCover(rawCover)
                 let cover = cleaned.isEmpty ? normalizeHTTPSURL(rawCover) : cleaned
-                let total = max(0, (video["episode_cnt"].number ?? row["episode_cnt"].number).map(Int.init) ?? 0)
-                let watched = max(0, (video["vid_index"].number ?? row["vid_index"].number).map(Int.init) ?? 0)
+                let total = max(0, video["episode_cnt"].signedInt ?? row["episode_cnt"].signedInt ?? 0)
+                let watched = max(0, video["vid_index"].signedInt ?? row["vid_index"].signedInt ?? 0)
                 let collectTime = row["collect_time"].number ?? row["last_operate_time"].number ?? 0
-                let ct = Int(row["content_type"].number ?? video["content_type"].number ?? 0)
+                let ct = row["content_type"].signedInt.flatMap { $0 > 0 ? $0 : nil } ?? video["content_type"].signedInt ?? 0
+                let aiUsage = max(row["ai_usage_type"].signedInt ?? 0, video["ai_usage_type"].signedInt ?? 0)
                 all.append(BookshelfVideo(seriesId: id, title: title.isEmpty ? "剧集 \(id)" : title,
                                           cover: cover, episodeCount: total, watchedEpisode: watched,
-                                          collectTime: collectTime, category: categoryLabel(contentType: ct)))
+                                          collectTime: collectTime, category: categoryLabel(contentType: ct, aiUsageType: aiUsage)))
             }
             let hasMore = data["has_more"].bool == true
-            let nextOffset = data["next_offset"].number.map(Int.init) ?? 0
+            let nextOffset = data["next_offset"].signedInt ?? 0
             guard hasMore, !rows.isEmpty, nextOffset > offset else { break }
             offset = nextOffset
         }
@@ -181,7 +188,9 @@ public enum AccountDataAccess {
         var all: [Reservation] = []
         var offset = 0
         var sessionId = ""
-        for _ in 0..<4 {
+        var shanghaiCalendar = Calendar(identifier: .gregorian)
+        shanghaiCalendar.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+        for _ in 0..<12 {
             var values: [(String, String)] = [
                 ("offset", String(offset)), ("limit", "50"), ("is_online", isOnline ? "true" : "false"),
             ]
@@ -191,19 +200,19 @@ public enum AccountDataAccess {
             for row in rows {
                 let subData = row["subscribe_data"]
                 let subDetail = subData["video_detail"]
-                let id = (subData["series_id"].idString
-                    ?? subDetail["series_id_str"].idString
-                    ?? subDetail["series_id"].idString
-                    ?? row["series_id"].idString
-                    ?? row["item_id"].idString
-                    ?? row["book_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
+                let id = subData["series_id"].nonZeroIdString
+                    ?? subDetail["series_id_str"].nonZeroIdString
+                    ?? subDetail["series_id"].nonZeroIdString
+                    ?? row["series_id"].nonZeroIdString
+                    ?? row["item_id"].nonZeroIdString
+                    ?? row["book_id"].nonZeroIdString ?? ""
                 guard id.matchesDigits(min: 1, max: 30) else { continue }
                 let title = AccountService.cleanText(
-                    subDetail["series_title"].string
-                    ?? subData["title"].string
-                    ?? row["name"].string
-                    ?? row["series_title"].string
-                    ?? row["book_name"].string
+                    subDetail["series_title"].nonEmptyString
+                    ?? subData["title"].nonEmptyString
+                    ?? row["name"].nonEmptyString
+                    ?? row["series_title"].nonEmptyString
+                    ?? row["book_name"].nonEmptyString
                 )
                 let rawCover = [
                     subDetail["series_cover"].string,
@@ -217,8 +226,8 @@ public enum AccountDataAccess {
                 let cover = cleaned.isEmpty ? normalizeHTTPSURL(rawCover) : cleaned
                 let rowOnline = row["is_online"].bool ?? isOnline
                 let tagText = AccountService.cleanText(row["tag_info"]["text"].string)
-                let recText = AccountService.cleanText(row["expected_rec_text"].string ?? row["recommend_info"].string)
-                let cats = (row["categories"].array ?? []).compactMap(\.string).filter { !$0.isEmpty }
+                let recText = AccountService.cleanText(row["expected_rec_text"].nonEmptyString ?? row["recommend_info"].nonEmptyString)
+                let cats = (row["categories"].array ?? []).compactMap(\.nonEmptyString)
                 let catLine = cats.isEmpty ? AccountService.cleanText(row["category"].string) : cats.prefix(2).joined(separator: "·")
                 let releaseText: String
                 if !recText.isEmpty {
@@ -229,7 +238,7 @@ public enum AccountDataAccess {
                     releaseText = "已上线"
                 } else if let ts = row["schedule_publish_time"].number ?? row["expected_publish_time"].number, ts > 1_000_000_000 {
                     let date = Date(timeIntervalSince1970: ts > 1e12 ? ts / 1000 : ts)
-                    let comps = Calendar.current.dateComponents([.month, .day], from: date)
+                    let comps = shanghaiCalendar.dateComponents([.month, .day], from: date)
                     releaseText = "\(comps.month ?? 1)月\(comps.day ?? 1)日上线"
                 } else {
                     releaseText = "待上线"
@@ -237,24 +246,27 @@ public enum AccountDataAccess {
                 let subtitle = rowOnline ? (catLine.isEmpty ? releaseText : catLine) : releaseText
                 let heatText: String = {
                     let infos = subDetail["secondary_infos"].array ?? []
-                    if let hit = infos.first(where: { Int($0["data_type"].number ?? 0) == 27 })?["content"].string
+                    if let hit = infos.first(where: { $0["data_type"].signedInt == 27 })?["content"].string
                         ?? infos.first(where: { ($0["content"].string ?? "").contains("热度") })?["content"].string {
                         return AccountService.cleanText(hit)
                     }
                     return ""
                 }()
-                let ct = Int(subData["content_type"].number ?? subDetail["content_type"].number ?? 0)
-                let desc = AccountService.cleanText(subDetail["series_intro"].string ?? subData["video_desc"].string ?? row["item_desc"].string)
-                let subItemId = (row["item_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
-                all.append(Reservation(seriesId: id, subscribeItemId: subItemId.isEmpty ? id : subItemId,
+                let ct = subData["content_type"].signedInt.flatMap { $0 > 0 ? $0 : nil }
+                    ?? subDetail["content_type"].signedInt.flatMap { $0 > 0 ? $0 : nil }
+                    ?? row["content_type"].signedInt ?? 0
+                let aiUsage = max(subData["ai_usage_type"].signedInt ?? 0, subDetail["ai_usage_type"].signedInt ?? 0)
+                let desc = AccountService.cleanText(subDetail["series_intro"].nonEmptyString ?? subData["video_desc"].nonEmptyString ?? row["item_desc"].nonEmptyString)
+                let subItemId = row["item_id"].nonZeroIdString ?? id
+                all.append(Reservation(seriesId: id, subscribeItemId: subItemId,
                                        title: title.isEmpty ? "剧集 \(id)" : title,
                                        cover: cover, isOnline: rowOnline, releaseText: releaseText,
                                        subtitle: subtitle, heatText: heatText,
-                                       category: categoryLabel(contentType: ct), description: desc))
+                                       category: categoryLabel(contentType: ct, aiUsageType: aiUsage), description: desc))
             }
             let hasMore = data["has_more"].bool == true
-            let nextOffset = data["next_offset"].number.map(Int.init) ?? 0
-            if let sid = data["session_id"].string, !sid.isEmpty { sessionId = sid }
+            let nextOffset = data["next_offset"].signedInt ?? 0
+            if let sid = data["session_id"].nonEmptyString { sessionId = sid }
             guard hasMore, !rows.isEmpty, nextOffset > offset else { break }
             offset = nextOffset
         }
@@ -266,7 +278,7 @@ public enum AccountDataAccess {
         var all: [LikedVideo] = []
         var offset = 0
         let objectTypes = (1...35).map(String.init).joined(separator: ",")
-        for _ in 0..<4 {
+        for _ in 0..<12 {
             var values: [(String, String)] = [
                 ("offset", String(offset)), ("count", "50"), ("action_type", "3"),
                 ("object_type_list", objectTypes),
@@ -277,28 +289,29 @@ public enum AccountDataAccess {
             for row in rows {
                 let video = row["video_data"]
                 let detailObj = video["video_detail"]
-                let id = (video["series_id"].idString ?? detailObj["series_id_str"].idString ?? detailObj["series_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
+                let id = video["series_id"].nonZeroIdString ?? detailObj["series_id_str"].nonZeroIdString ?? detailObj["series_id"].nonZeroIdString ?? ""
                 guard id.matchesDigits(min: 1, max: 30) else { continue }
-                let vid = (video["vid"].idString ?? "").trimmingCharacters(in: .whitespaces)
-                let title = AccountService.cleanText(detailObj["series_title"].string ?? video["title"].string)
+                let vid = video["vid"].nonZeroIdString ?? ""
+                let title = AccountService.cleanText(detailObj["series_title"].nonEmptyString ?? video["title"].nonEmptyString)
                 let rawCover = [detailObj["series_cover"].string, video["cover"].string, video["scene_cover"].string]
                     .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
                     .first { !$0.isEmpty } ?? ""
                 let cleaned = AccountService.cleanCover(rawCover)
                 let cover = cleaned.isEmpty ? normalizeHTTPSURL(rawCover) : cleaned
-                let total = max(0, (video["episode_cnt"].number ?? detailObj["episode_cnt"].number).map(Int.init) ?? 0)
-                let ep = max(0, video["vid_index"].number.map(Int.init) ?? 0)
-                let diggs = max(0, video["digged_count"].number.map(Int.init) ?? 0)
-                let ct = Int(video["content_type"].number ?? detailObj["content_type"].number ?? 0)
+                let total = max(0, video["episode_cnt"].signedInt ?? detailObj["episode_cnt"].signedInt ?? 0)
+                let ep = max(0, video["vid_index"].signedInt ?? 0)
+                let diggs = max(0, video["digged_count"].signedInt ?? 0)
+                let ct = video["content_type"].signedInt.flatMap { $0 > 0 ? $0 : nil } ?? detailObj["content_type"].signedInt ?? 0
+                let aiUsage = max(video["ai_usage_type"].signedInt ?? 0, detailObj["ai_usage_type"].signedInt ?? 0)
                 let detail = ep > 0 ? "第\(ep)集" : (total > 0 ? "全\(total)集" : "已赞")
                 all.append(LikedVideo(seriesId: id, vid: vid, title: title.isEmpty ? "剧集 \(id)" : title,
                                       cover: cover, episodeIndex: ep, episodeCount: total,
                                       diggedCount: diggs,
-                                      category: categoryLabel(contentType: ct),
+                                      category: categoryLabel(contentType: ct, aiUsageType: aiUsage),
                                       detail: detail))
             }
             let hasMore = data["has_more"].bool == true
-            let nextOffset = data["next_offset"].number.map(Int.init) ?? 0
+            let nextOffset = data["next_offset"].signedInt ?? 0
             guard hasMore, !rows.isEmpty, nextOffset > offset else { break }
             offset = nextOffset
         }
@@ -362,7 +375,7 @@ public enum AccountDataAccess {
     }
 
     /// Adds (`op_type=1`) or cancels (`op_type=2`) an upcoming release reminder (`/reading/user/remind/op/v1/`).
-    public static func setReservationRemind(itemId: String, reserved: Bool) async throws {
+    public static func setReservationRemind(accountId: String? = nil, itemId: String, reserved: Bool) async throws {
         guard itemId.matchesDigits(min: 1, max: 30) else { throw HongguoError(.input, "预约 ID 无效") }
         let body: [String: Any] = [
             "remind_item_type": "online",
@@ -370,7 +383,7 @@ public enum AccountDataAccess {
             "op_type": reserved ? 1 : 2,
         ]
         _ = try checkedWrite(path: "/reading/user/remind/op/v1/",
-                             try await post(path: "/reading/user/remind/op/v1/", body: body))
+                             try await post(accountId: accountId, path: "/reading/user/remind/op/v1/", body: body))
     }
 
     /// Deletes an entry from the user's reservation list (`/reading/user/subscribe/delete/v1/`).
@@ -446,7 +459,7 @@ public enum AccountDataAccess {
     }
 
     private static func checkedWrite(path: String, _ payload: JSONValue) throws -> JSONValue {
-        let code = Int(payload["code"].number ?? payload["err_no"].number ?? -1)
+        let code = payload["code"].signedInt ?? payload["err_no"].signedInt ?? -1
         let msg = AccountService.cleanText(payload["message"].string ?? payload["err_tips"].string ?? payload["msg"].string)
         onWriteLog?("sync POST \(path) code=\(code) msg=\(msg.prefix(80))")
         guard code == 0 else {
@@ -456,7 +469,7 @@ public enum AccountDataAccess {
     }
 
     private static func checked(_ payload: JSONValue) throws -> JSONValue {
-        let code = Int(payload["code"].number ?? -1)
+        let code = payload["code"].signedInt ?? payload["err_no"].signedInt ?? -1
         guard code == 0 else {
             let msg = AccountService.cleanText(payload["message"].string ?? payload["err_tips"].string)
             throw HongguoError(.upstream, msg.isEmpty ? "账号接口暂时不可用" : msg)
@@ -466,7 +479,7 @@ public enum AccountDataAccess {
 
     /// One signed GET with the saved login. Throws when signed out.
     public static func get(path: String, values: [(String, String)] = []) async throws -> JSONValue {
-        guard let saved = try KeychainCredentialStore().load() else { throw HongguoError(.input, "未登录") }
+        guard !MacTestRunner.isActive, let saved = try KeychainCredentialStore().load() else { throw HongguoError(.input, "未登录") }
         let transport = AppTransport(http: .shared)
         let (identity, dToken) = try await PersistentAppDevice.dataIdentity(transport: transport)
         let now = Int64(Date().timeIntervalSince1970 * 1000)
@@ -477,13 +490,16 @@ public enum AccountDataAccess {
             return try await transport.requestJSON(signed.url, headers: signed.headers + [("Cookie", saved.cookie)],
                                                    deadline: Date().addingTimeInterval(12))
         } catch let error as AppSourceError {
+            if error.status == 401 {
+                Task { await AccountService.shared.notifyPossibleAuthFailure() }
+            }
             throw error.hongguoError
         }
     }
 
     /// One signed POST with JSON body and the saved login. Throws when signed out.
     public static func post(accountId: String? = nil, path: String, values: [(String, String)] = [], body: [String: Any]) async throws -> JSONValue {
-        guard let saved = try KeychainCredentialStore().load() else { throw HongguoError(.input, "未登录") }
+        guard !MacTestRunner.isActive, let saved = try KeychainCredentialStore().load() else { throw HongguoError(.input, "未登录") }
         if let accountId, saved.profile?.id != accountId { throw HongguoError(.cancelled, "账号已切换") }
         try Task.checkCancellation()
         let encoded = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
@@ -499,6 +515,9 @@ public enum AccountDataAccess {
                                                    body: payload,
                                                    deadline: Date().addingTimeInterval(12))
         } catch let error as AppSourceError {
+            if error.status == 401 {
+                Task { await AccountService.shared.notifyPossibleAuthFailure() }
+            }
             onWriteLog?("sync POST \(path) error=\(error.message.prefix(100))")
             throw error.hongguoError
         }

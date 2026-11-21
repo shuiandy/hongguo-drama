@@ -47,7 +47,7 @@ final class ClientIdentityLiveTests: XCTestCase {
         var commentId = ""
         await step("comments") {
             let p = try await EpisodeSocialService.commentsPage(seriesId: sid, vid: vid)
-            commentId = p.comments.first { ($0.replyCount ?? 0) > 0 }?.id ?? p.comments.first?.id ?? ""
+            commentId = p.comments.first { $0.replyCount > 0 }?.id ?? p.comments.first?.id ?? ""
             return "\(p.comments.count) comments total=\(p.total.map(String.init) ?? "-")"
         }
         await step("replies") {

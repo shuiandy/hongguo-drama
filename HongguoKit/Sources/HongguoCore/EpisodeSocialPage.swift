@@ -183,7 +183,9 @@ public enum EpisodeSocialService {
             throw HongguoError(.unavailable, "剧集信息和评论暂时取不到，请稍后重试")
         }
         let result = social(seriesId: seriesId, vid: vid, detail: detail, stats: stats, comments: appComments)
-        await cache.set(key, result, ttl: 60)
+        if detail != nil && appComments != nil {
+            await cache.set(key, result, ttl: 60)
+        }
         return result
     }
 
@@ -233,9 +235,10 @@ public enum EpisodeSocialService {
     /// One page of the App comment list (`data`): episode comments, or series reviews with their
     /// score out of 10 (`comment.expand.score`).
     static func commentPage(from data: JSONValue) -> CommentPage {
+        let rawList = data["data_list"].array ?? []
         var seen = Set<String>()
         var parsed: [EpisodeSocial.Comment] = []
-        for row in data["data_list"].array ?? [] {
+        for row in rawList {
             let c = row["comment"]
             let common = c["common"]
             guard let rawText = common["content"]["text"].string,
@@ -263,7 +266,7 @@ public enum EpisodeSocialService {
         }
         let listInfo = data["common_list_info"]
         let nextCursor = listInfo["cursor"].string ?? listInfo["cursor"].idString ?? ""
-        let hasMore = listInfo["has_more"].bool == true && !nextCursor.isEmpty && !parsed.isEmpty
+        let hasMore = listInfo["has_more"].bool == true && !nextCursor.isEmpty && !rawList.isEmpty
         return CommentPage(comments: parsed, total: integer(listInfo["total"]), cursor: nextCursor, hasMore: hasMore)
     }
 
@@ -342,9 +345,8 @@ public enum EpisodeSocialService {
 
     /// Counts and times arrive as numbers or as digit strings.
     static func integer(_ value: JSONValue) -> Int? {
-        if let number = value.number, number.isFinite, number >= 0 { return Int(number) }
-        if let text = value.string, let parsed = Int(text), parsed >= 0 { return parsed }
-        return nil
+        guard let parsed = value.signedInt, parsed >= 0 else { return nil }
+        return parsed
     }
 
     static func date(_ value: JSONValue) -> Date? {

@@ -18,7 +18,8 @@ public struct ResumePoint: Equatable, Sendable {
     public static func from(_ record: WatchRecord?, episodeCount: Int) -> ResumePoint {
         guard let record, record.episodeIndex >= 1 else { return ResumePoint(episodeIndex: 1, position: 0) }
         let total = max(episodeCount, record.total)
-        let nearEnd = record.duration > 0 && record.position >= record.duration - endSlack
+        let nearEnd = (record.duration > 0 && record.position >= record.duration - endSlack)
+            || (record.completedEpisode >= record.episodeIndex && record.position <= 0)
         if nearEnd {
             if total == 0 || record.episodeIndex < total { return ResumePoint(episodeIndex: record.episodeIndex + 1, position: 0) }
             return ResumePoint(episodeIndex: record.episodeIndex, position: 0)

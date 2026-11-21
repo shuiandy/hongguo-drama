@@ -71,7 +71,7 @@ public enum URLGuard {
 
     /// The registrable domains this app talks to: its APIs, pages, covers and video CDN.
     public static let serviceDomains = [
-        "fqnovel.com", "fqnovelpic.com", "fqnovelstatic.com", "qznovelvod.com",
+        "fqnovel.com", "fqnovelpic.com", "fqnovelstatic.com", "qznovelvod.com", "fqnovelvod.com",
         "snssdk.com", "hongguoduanju.com", "byteimg.com", "douyinpic.com",
         "toutiaovod.com", "douyinvod.com",
     ]

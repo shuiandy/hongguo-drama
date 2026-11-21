@@ -20,14 +20,17 @@ actor TTLCache<Value: Sendable> {
 
     func get(_ key: String) -> Value? {
         guard let (value, expires) = entries[key], expires > Date() else {
-            entries[key] = nil
+            if entries.removeValue(forKey: key) != nil {
+                order.removeAll { $0 == key }
+            }
             return nil
         }
         return value
     }
 
     func set(_ key: String, _ value: Value, ttl: TimeInterval) {
-        if entries[key] == nil { order.append(key) }
+        order.removeAll { $0 == key }
+        order.append(key)
         entries[key] = (value, Date().addingTimeInterval(ttl))
         while order.count > limit {
             entries[order.removeFirst()] = nil

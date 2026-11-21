@@ -3,12 +3,23 @@ import Foundation
 /// Raw access to `/reading/bookapi/bookmall/tab/v/` with `AppLegacySigner`'s metadata signing
 /// profile (read-only) and the persistent device.
 public enum AppBookMallAccess {
-    /// GET /reading/bookapi/bookmall/tab/v/ with query values.
+    /// Allowed paths for bookmall/discovery legacy signing.
+    static let allowedPaths: Set<String> = [
+        "/reading/bookapi/bookmall/tab/v/",
+        "/reading/bookapi/bookmall/cell/change/v",
+        "/reading/bookapi/plan/v/",
+        "/reading/user/subscribe/list/v1/",
+        "/reading/bookapi/search/suggest/v/",
+    ]
+
+    /// GET a bookmall/discovery endpoint with query values. Anonymous by default so login cookies
+    /// are never leaked outside account-scoped endpoints.
     public static func tab(
         values: [(String, String)],
         host: String? = nil,
         path: String = "/reading/bookapi/bookmall/tab/v/",
-        timeout: TimeInterval = 10
+        timeout: TimeInterval = 10,
+        authenticated: Bool = false
     ) async throws -> JSONValue {
         let transport = AppTransport(http: .shared)
         do {
@@ -21,10 +32,11 @@ public enum AppBookMallAccess {
                 dToken: device.dToken,
                 nowMillis: Int64(Date().timeIntervalSince1970 * 1000)
             )
+            let extraHeaders = authenticated ? PersistentAppDevice.authHeaders() : []
             return try await transport.requestJSON(
                 signed.url,
                 method: "GET",
-                headers: signed.headers + PersistentAppDevice.authHeaders(),
+                headers: signed.headers + extraHeaders,
                 body: nil,
                 deadline: Date().addingTimeInterval(timeout)
             )
@@ -43,6 +55,13 @@ extension AppLegacySigner {
         dToken: String = "",
         nowMillis: Int64
     ) throws -> Signed {
+        guard AppBookMallAccess.allowedPaths.contains(path) else {
+            throw HongguoError(.security, "不支持的书城接口路径")
+        }
+        guard identity.deviceId.matchesDigits(min: 6, max: 30),
+              identity.iid.matchesDigits(min: 6, max: 30) else {
+            throw HongguoError(.input, "设备编号无效")
+        }
         let devId = identity.deviceId
         var devicePairs: [(String, String)] = [("iid", identity.iid), ("device_id", devId)]
         if !identity.cdid.isEmpty { devicePairs.append(("cdid", identity.cdid)) }

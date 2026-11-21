@@ -94,6 +94,10 @@ public enum SeriesMetadata {
         if bytes.starts(with: [0xFF, 0xD8, 0xFF]) { return "jpg" }
         if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return "png" }
         if bytes.count >= 12, bytes[0...3] == [0x52, 0x49, 0x46, 0x46], bytes[8...11] == [0x57, 0x45, 0x42, 0x50] { return "webp" }
+        if bytes.count >= 12, bytes[4...7] == [0x66, 0x74, 0x79, 0x70] {
+            let brand = String(decoding: bytes[8...11], as: UTF8.self)
+            if ["heic", "heix", "hevc", "mif1", "msf1"].contains(brand) { return "heic" }
+        }
         return nil
     }
 }
