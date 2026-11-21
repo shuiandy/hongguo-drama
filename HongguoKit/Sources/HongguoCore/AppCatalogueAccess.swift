@@ -7,7 +7,7 @@ import Foundation
 /// through unchanged. It adds no endpoint: any other path is still refused by the signer.
 /// Both calls are read-only lists made with the persistent device.
 public enum AppCatalogueAccess {
-    /// POST /reading/distribution/category/landpage/v/ with a JSON body.
+    /// POST /reading/distribution/category/landpage/v1/ with a JSON body.
     public static func landpage(body: Data, timeout: TimeInterval = 8) async throws -> JSONValue {
         try await request(path: AppLegacySigner.metadataPaths[0], values: [], payload: Array(body), timeout: timeout)
     }

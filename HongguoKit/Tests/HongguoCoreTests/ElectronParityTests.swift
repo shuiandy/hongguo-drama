@@ -108,12 +108,14 @@ final class ElectronParityTests: XCTestCase {
         XCTAssertEqual(UpdateChecker.availableRelease(release, currentVersion: "7.5.0")?.asset?.name, "HongguoDrama-9.0.0-universal.zip")
     }
 
+    #if os(macOS)
     func testUpdateArchiveDigest() throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("hongguo-digest-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: file) }
         try Data("abc".utf8).write(to: file)
         XCTAssertEqual(try AppUpdateInstaller.sha256(of: file), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
     }
+    #endif
 
     func testCommentsAsDanmaku() {
         let comments = EpisodeComments(seriesId: "1", vid: "2",
@@ -128,6 +130,7 @@ final class ElectronParityTests: XCTestCase {
         XCTAssertEqual(spread.map(\.time), [1, 9])
     }
 
+    #if os(macOS)
     func testByteVC2Arguments() {
         let args = ByteVC2Converter.arguments(input: URL(fileURLWithPath: "/tmp/in.mp4"), output: URL(fileURLWithPath: "/tmp/out.mp4"),
                                               key: Array(0..<16), encoder: "libx264", fast: false)
@@ -140,6 +143,7 @@ final class ElectronParityTests: XCTestCase {
         XCTAssertFalse(plain.contains("-decryption_key"))
         XCTAssertEqual(plain[plain.firstIndex(of: "-threads:v")! + 1], "4")
     }
+    #endif
 
     func testMergeOutputName() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("hongguo-merge-\(UUID().uuidString)")

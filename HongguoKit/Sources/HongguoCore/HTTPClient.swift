@@ -1,7 +1,8 @@
 import Foundation
 
 public enum UserAgents {
-    public static let web = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    /// Product name for this client’s requests to public web resources.
+    public static let web = "HongguoDrama"
 }
 
 public struct HTTPResponse: Sendable {

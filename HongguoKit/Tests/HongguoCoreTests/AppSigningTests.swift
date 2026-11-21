@@ -84,6 +84,7 @@ final class AppSigningTests: XCTestCase {
         let gz = try AppCrypto.gzip(payload)
         XCTAssertEqual(Array(gz[0..<3]), [0x1f, 0x8b, 8])
         XCTAssertEqual(try AppCrypto.gunzip(gz), payload)
+        #if os(macOS)
         // System gunzip must accept it too (the server decompresses this body).
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("hg-\(UUID().uuidString).gz")
         try Data(gz).write(to: file)
@@ -97,6 +98,7 @@ final class AppSigningTests: XCTestCase {
         let out = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         XCTAssertEqual(Array(out), payload)
+        #endif
     }
 
     func testCheckedURL() {

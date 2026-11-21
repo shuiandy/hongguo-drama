@@ -80,6 +80,8 @@ final class AccountServiceTests: XCTestCase {
         XCTAssertTrue(poll.0.query!.contains("token=tok"))
         XCTAssertTrue(poll.0.query!.contains("aid=513755"))
 
+        XCTAssertTrue(web.requests.allSatisfy { $0.1["User-Agent"] == "HongguoDrama" })
+
         let history = try await account.history()
         XCTAssertEqual(history.map(\.seriesId), ["7200000000000000004", "7200000000000000001"])
         let first = history[1]
