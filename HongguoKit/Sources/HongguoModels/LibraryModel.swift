@@ -117,7 +117,10 @@ public final class LibraryModel {
             self.libraryChanged()
         }
         Task { @MainActor [weak self] in
-            let deadline = Date().addingTimeInterval(1.2)
+            // Yield cold-start network capacity until the opening video's first frame lands
+            // (or 5s cap if offline/slow), so device renewal and 5-way account sync never
+            // compete with a cold feed fetch or first-clip resolution.
+            let deadline = Date().addingTimeInterval(5.0)
             while self != nil, !firstFrameReady(), Date() < deadline {
                 try? await Task.sleep(for: .milliseconds(50))
             }

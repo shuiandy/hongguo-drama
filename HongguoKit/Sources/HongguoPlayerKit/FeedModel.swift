@@ -348,7 +348,8 @@ public final class FeedModel {
                 try? await Task.sleep(for: .milliseconds(50))
                 guard !Task.isCancelled, self.loadMoreGeneration == gen, targetTab == tab else { return }
             }
-            guard !Task.isCancelled, self.loadMoreGeneration == gen, targetTab == tab else { return }
+            guard !Task.isCancelled, self.loadMoreGeneration == gen, targetTab == tab,
+                  self.loadMoreTask == nil, items.count < 4 else { return }
             let context = requestContext(isRefresh: isRefresh)
             var cursor: AppFeedCursor? = initialCursor
             var known = Set(items.map(\.seriesId))
@@ -368,7 +369,7 @@ public final class FeedModel {
                 appended += allowed.filter { !seen.contains($0.seriesId) }
                 cursor = page.next
             }
-            guard !Task.isCancelled, self.loadMoreGeneration == gen, targetTab == tab else { return }
+            guard !Task.isCancelled, self.loadMoreGeneration == gen, targetTab == tab, items.count < 4 else { return }
             let toAdd = appended.isEmpty ? fallback : appended
             guard !toAdd.isEmpty || cursor != initialCursor else { return }
             let hadOnlyOne = items.count <= 1
@@ -787,6 +788,16 @@ public final class FeedModel {
         batchPrefetch?.cancel()
         batchPrefetch = nil
         prefetch = Task {
+            // Yield resolver and network sockets to the foreground clip until its first frame
+            // renders (capped at 4s). Otherwise a cold foreground `engine.load` immediately cancels
+            // upcoming[0]'s prefetch (`prefetch cancelled ms=3`), leaving `LandingCache` without a
+            // resolved source or 5 MiB disk prefix for the next cold launch.
+            let fgDeadline = Date().addingTimeInterval(4.0)
+            while !engine.hasFirstFrame, Date() < fgDeadline {
+                try? await Task.sleep(for: .milliseconds(50))
+                guard !Task.isCancelled else { return }
+            }
+            guard !Task.isCancelled else { return }
             await engine.hooks.convertedStreams?.yieldAhead(keeping: keeping)
             var startedTailBatch = false
             @MainActor func launchTailBatchIfNeeded() {

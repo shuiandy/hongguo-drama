@@ -34,9 +34,10 @@ public struct LandingCache: Codable {
     public var sourceExpiresAt: Date?
 
     public static let currentVersion = 3
-    /// The clips are worth showing for half a day; legacy records without `sourceExpiresAt` fall
-    /// back to `EpisodeResolver.lifetime` (15 min) rather than trusting an expired signed URL for 2h.
-    public static let rowsLifetime: TimeInterval = 12 * 3600
+    /// Keep the saved landing clip metadata across overnight/multi-day gaps so cold starts open
+    /// directly onto a clip (and reuse its disk media prefix) instead of waiting 3-4s on the feed
+    /// API. Signed playback URLs are still checked independently via `freshSource()` (`sourceExpiresAt`).
+    public static let rowsLifetime: TimeInterval = 7 * 24 * 3600
     public static let legacySourceLifetime: TimeInterval = EpisodeResolver.lifetime
 
     private static var file: URL? {
