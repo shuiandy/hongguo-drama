@@ -217,6 +217,85 @@ final class SearchSuggestionTests: XCTestCase {
         XCTAssertEqual(DiscoveryAccess.parseSuggestions(payload), ["家里家外", "家里来了个活爹"])
         XCTAssertEqual(DiscoveryAccess.parseSuggestions(try JSONValue.parse(#"{"code":1}"#)), [])
     }
+
+    func testParsesSearchLandingLynxDataForGuessAndHotTopics() throws {
+        let inner = #"""
+        [
+          {
+            "cell_id_str": "7379204038375505982",
+            "show_type": 483,
+            "cell_name": "猜你想搜",
+            "session_id": "2026112100001",
+            "next_offset": 3,
+            "video_data": [
+              {
+                "series_id": "7688692318190177304",
+                "title": "过海",
+                "cover": "https://p3-novel.byteimg.com/example.jpg",
+                "episode_cnt": 58,
+                "rec_text": "2947万热度",
+                "sub_title": "全58集"
+              }
+            ]
+          },
+          {
+            "cell_id_str": "6976950893023330335",
+            "show_type": 624,
+            "cell_data": [
+              {
+                "cell_id_str": "7611744712180891710",
+                "show_type": 619,
+                "cell_name": "热点话题榜",
+                "video_topic": [
+                  {
+                    "topic_id": "7708986770972525098",
+                    "hg_topic_type": 1,
+                    "title": "鉴宝剧花小钱捡漏真古董赚大发了",
+                    "url": "dragon8662://search?source=1&directQueryWord=%E9%89%B4%E5%AE%9D%E5%89%A7%E6%8D%A1%E6%BC%8F&directSearchSourceId=topic_board#1795242219#7708986770972525098##",
+                    "secondary_info_list": [{"content": "5.3万热度"}],
+                    "tag_info": {"text": "热"}
+                  },
+                  {
+                    "topic_id": "7708986770972525098",
+                    "title": "重复话题应去重"
+                  },
+                  {
+                    "topic_id": "7708986604438536746",
+                    "title": "重生剧恶女搞事业比恋爱更带感",
+                    "url": "",
+                    "secondary_info_list": [{"content": "4.9万热度"}]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+        """#
+        let escaped = inner
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "")
+        let payload = try JSONValue.parse("""
+        {"code":0,"data":[{"show_type":473,"cell_id_str":"1"},{"show_type":554,"lynx_data":"\(escaped)"}]}
+        """)
+        let landing = try DiscoveryAccess.parseSearchLanding(payload)
+        XCTAssertEqual(landing.guessItems.count, 1)
+        XCTAssertEqual(landing.guessItems[0].seriesId, "7688692318190177304")
+        XCTAssertEqual(landing.guessItems[0].recommendText, "2947万热度")
+        XCTAssertEqual(landing.guessItems[0].metaLine, "全58集")
+        XCTAssertEqual(landing.guessSessionId, "2026112100001")
+        XCTAssertEqual(landing.guessNextOffset, 3)
+
+        XCTAssertEqual(landing.hotTopicCellId, "7611744712180891710")
+        XCTAssertEqual(landing.hotTopics.count, 2)
+        XCTAssertEqual(landing.hotTopics[0].topicId, "7708986770972525098")
+        XCTAssertEqual(landing.hotTopics[0].title, "鉴宝剧花小钱捡漏真古董赚大发了")
+        XCTAssertEqual(landing.hotTopics[0].query, "鉴宝剧捡漏")
+        XCTAssertEqual(landing.hotTopics[0].heatText, "5.3万热度")
+        XCTAssertEqual(landing.hotTopics[0].badgeText, "热")
+        XCTAssertEqual(landing.hotTopics[1].query, "重生剧恶女搞事业比恋爱更带感")
+        XCTAssertThrowsError(try DiscoveryAccess.parseSearchLanding(try JSONValue.parse(#"{"code":1}"#)))
+    }
 }
 
 final class OfficialHostTests: XCTestCase {

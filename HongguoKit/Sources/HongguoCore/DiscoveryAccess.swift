@@ -4,6 +4,8 @@
 // 2. Release calendar (`/reading/user/subscribe/list/v1/` with `tab_type=5`, `target_date=YYYYMMDD`)
 // 3. New drama recommendations by gender (`/reading/distribution/category/landpage/v/`)
 // 4. Search keyword suggestions (`/reading/bookapi/search/suggest/v/`)
+// 5. Search landing modules (`/reading/bookapi/plan/v/` with `scene=10`, `from=search_input_page`,
+//    `new_search_middle_page=1`, `search_middle_page_version=5`): 猜你想搜 & 热点话题榜
 import Foundation
 
 public enum DiscoveryAccess {
@@ -237,6 +239,52 @@ public enum DiscoveryAccess {
         public var totalPages: Int
         public init(items: [SeriesSummary], genres: [Genre], hasMore: Bool, totalPages: Int) {
             self.items = items; self.genres = genres; self.hasMore = hasMore; self.totalPages = totalPages
+        }
+    }
+
+    // MARK: - Search Landing Models (猜你想搜 / 热点话题榜)
+
+    public struct HotTopicItem: Identifiable, Equatable, Sendable {
+        public var topicId: String
+        public var title: String
+        /// Search keyword from `url`'s `directQueryWord` parameter, falling back to `title`.
+        public var query: String
+        /// Heat text from `secondary_info_list` (e.g. `5.3万热度`).
+        public var heatText: String
+        public var badgeText: String
+        public var cover: String
+        public var darkCover: String
+        public var topicType: Int
+        public var id: String { topicId.isEmpty ? title : topicId }
+        public init(topicId: String, title: String, query: String = "", heatText: String = "",
+                    badgeText: String = "", cover: String = "", darkCover: String = "", topicType: Int = 1) {
+            self.topicId = topicId
+            self.title = title
+            self.query = query.isEmpty ? title : query
+            self.heatText = heatText
+            self.badgeText = badgeText
+            self.cover = cover
+            self.darkCover = darkCover
+            self.topicType = topicType
+        }
+    }
+
+    public struct SearchLanding: Equatable, Sendable {
+        public var guessItems: [RankItem]
+        public var guessCellId: String
+        public var guessSessionId: String
+        public var guessNextOffset: Int
+        public var hotTopics: [HotTopicItem]
+        public var hotTopicCellId: String
+        public var hotSearchPreview: [RankItem]
+        public var subscribePreview: [RankItem]
+        public init(guessItems: [RankItem] = [], guessCellId: String = "", guessSessionId: String = "",
+                    guessNextOffset: Int = 0, hotTopics: [HotTopicItem] = [], hotTopicCellId: String = "",
+                    hotSearchPreview: [RankItem] = [], subscribePreview: [RankItem] = []) {
+            self.guessItems = guessItems; self.guessCellId = guessCellId
+            self.guessSessionId = guessSessionId; self.guessNextOffset = guessNextOffset
+            self.hotTopics = hotTopics; self.hotTopicCellId = hotTopicCellId
+            self.hotSearchPreview = hotSearchPreview; self.subscribePreview = subscribePreview
         }
     }
 
@@ -536,6 +584,138 @@ public enum DiscoveryAccess {
         return out
     }
 
+    // MARK: - Search Landing (猜你想搜 / 热点话题榜)
+
+    /// Fetches the official search landing page (`/reading/bookapi/plan/v/` with `scene=10`,
+    /// `from=search_input_page`, `new_search_middle_page=1`, `search_middle_page_version=5`),
+    /// returning 猜你想搜 (`show_type=483`) and 热点话题榜 (`show_type=619`, `video_topic`)
+    /// from the `show_type=554` module's `lynx_data` JSON payload.
+    public static func searchLanding(timeout: TimeInterval = 10) async throws -> SearchLanding {
+        let isLoggedIn = !PersistentAppDevice.authHeaders().isEmpty
+        let payload = try await AppBookMallAccess.tab(
+            values: [
+                ("scene", "10"),
+                ("from", "search_input_page"),
+                ("new_search_middle_page", "1"),
+                ("search_middle_page_version", "5"),
+                ("user_is_login", isLoggedIn ? "1" : "0"),
+            ],
+            host: defaultHost,
+            path: "/reading/bookapi/plan/v/",
+            timeout: timeout
+        )
+        return try parseSearchLanding(payload)
+    }
+
+    /// Convenience wrapper returning only the 热点话题榜 items from `searchLanding`.
+    public static func hotTopics(timeout: TimeInterval = 10) async throws -> [HotTopicItem] {
+        try await searchLanding(timeout: timeout).hotTopics
+    }
+
+    static func parseSearchLanding(_ payload: JSONValue) throws -> SearchLanding {
+        guard payload["code"].isZeroOrMissingStatusCode else {
+            throw HongguoError(.upstream, "搜索发现页暂时不可用")
+        }
+        var modules: [JSONValue] = []
+        func collectModules(_ node: JSONValue) {
+            if let arr = node.array {
+                for item in arr { collectModules(item) }
+                return
+            }
+            guard node.object != nil else { return }
+            if let raw = node["lynx_data"].nonEmptyString,
+               let data = raw.data(using: .utf8),
+               let decoded = try? JSONValue.parse(data) {
+                collectModules(decoded)
+            }
+            modules.append(node)
+            if let subCells = node["cell_data"].array {
+                for sub in subCells { collectModules(sub) }
+            }
+        }
+        collectModules(payload["data"])
+
+        var result = SearchLanding()
+        var seenGuess = Set<String>()
+        var seenHotSearch = Set<String>()
+        var seenSubscribe = Set<String>()
+        var seenTopics = Set<String>()
+
+        for mod in modules {
+            let showType = mod["show_type"].signedInt ?? 0
+            let cellName = AccountService.cleanText(mod["cell_name"].string)
+            let cellId = mod["cell_id_str"].nonEmptyString ?? mod["cell_id"].nonZeroIdString ?? ""
+
+            if showType == 483 || cellName == "猜你想搜", let videos = mod["video_data"].array, !videos.isEmpty {
+                for video in videos {
+                    if let item = parseRankVideo(video, seen: &seenGuess) {
+                        result.guessItems.append(item)
+                    }
+                }
+                if result.guessCellId.isEmpty { result.guessCellId = cellId }
+                if result.guessSessionId.isEmpty { result.guessSessionId = mod["session_id"].string ?? "" }
+                if result.guessNextOffset == 0 { result.guessNextOffset = max(0, mod["next_offset"].signedInt ?? 0) }
+            }
+
+            if showType == 619 || cellName == "热点话题榜" || (mod["video_topic"].array?.isEmpty == false) {
+                if let topics = mod["video_topic"].array {
+                    for topic in topics {
+                        let title = AccountService.cleanText(topic["title"].nonEmptyString ?? topic["name"].nonEmptyString)
+                        guard !title.isEmpty else { continue }
+                        let topicId = topic["topic_id"].nonZeroIdString ?? topic["id"].nonZeroIdString ?? ""
+                        let dedupKey = topicId.isEmpty ? title : topicId
+                        guard seenTopics.insert(dedupKey).inserted else { continue }
+                        let query = extractTopicQuery(from: topic["url"].string ?? "", fallback: title)
+                        let heatText = (topic["secondary_info_list"].array ?? [])
+                            .compactMap { AccountService.cleanText($0["content"].string) }
+                            .first { !$0.isEmpty } ?? ""
+                        let badgeText = AccountService.cleanText(topic["tag_info"]["text"].string)
+                        let cover = normalizedCover(topic["cover"].string ?? "")
+                        let darkCover = normalizedCover(topic["dark_cover"].string ?? "")
+                        let topicType = topic["hg_topic_type"].signedInt ?? 1
+                        result.hotTopics.append(HotTopicItem(
+                            topicId: topicId, title: title, query: query, heatText: heatText,
+                            badgeText: badgeText, cover: cover, darkCover: darkCover, topicType: topicType
+                        ))
+                    }
+                    if result.hotTopicCellId.isEmpty { result.hotTopicCellId = cellId }
+                }
+            }
+
+            if showType == 388, let videos = mod["video_data"].array, !videos.isEmpty {
+                for video in videos {
+                    if let item = parseRankVideo(video, seen: &seenHotSearch) {
+                        result.hotSearchPreview.append(item)
+                    }
+                }
+            }
+
+            if showType == 618, let videos = mod["video_data"].array, !videos.isEmpty {
+                for video in videos {
+                    if let item = parseRankVideo(video, seen: &seenSubscribe) {
+                        result.subscribePreview.append(item)
+                    }
+                }
+            }
+        }
+        return result
+    }
+
+    /// Extracts the decoded `directQueryWord` from an official `dragon8662://search?...` schema URL,
+    /// falling back to `fallback` when absent or empty.
+    static func extractTopicQuery(from schemaURL: String, fallback: String) -> String {
+        let trimmed = schemaURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return fallback }
+        // Strip any trailing `#...` fragment (which may contain extra `#` characters) before parsing query items.
+        let withoutFragment = trimmed.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? trimmed
+        if let components = URLComponents(string: withoutFragment),
+           let raw = components.queryItems?.first(where: { $0.name == "directQueryWord" })?.value {
+            let cleaned = AccountService.cleanText(raw)
+            if !cleaned.isEmpty { return cleaned }
+        }
+        return fallback
+    }
+
     // MARK: - Parsers
 
     static func parseRankPlan(_ payload: JSONValue) throws -> RankPage {
@@ -612,37 +792,46 @@ public enum DiscoveryAccess {
         var items: [RankItem] = []
         for row in rows {
             for video in row["video_data"].array ?? [] {
-                let id = (video["series_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
-                let title = AccountService.cleanText(video["title"].string ?? video["series_title"].string)
-                guard id.matchesDigits(min: 1, max: 30), !title.isEmpty, seen.insert(id).inserted else { continue }
-                let rawCover = video["cover"].string ?? video["video_detail"]["series_cover"].string ?? ""
-                let cover = normalizedCover(rawCover)
-                let epCount = max(0, Int(video["episode_cnt"].number ?? 0))
-                let recText = AccountService.cleanText(
-                    video["rec_text_item"]["RecommendText"].string ?? video["recommend_text"].string
-                )
-                let subParts = (video["sub_title_list"].array ?? [])
-                    .compactMap { AccountService.cleanText($0["content"].string) }
-                    .filter { !$0.isEmpty }
-                let metaLine = subParts.joined(separator: "·")
-                let intro = AccountService.cleanText(video["video_desc"].string ?? video["video_detail"]["series_intro"].string)
-                let metrics = (video["secondary_info_list"].array ?? [])
-                    .compactMap { AccountService.cleanText($0["content"].string) }
-                    .filter { !$0.isEmpty }
-                let badge = AccountService.cleanText(video["tag_info"]["text"].string)
-                let subItem = video["subscribe_item"]
-                let hasSubItem = subItem.object != nil
-                let subItemId = (subItem["item_id"].idString ?? id).trimmingCharacters(in: .whitespaces)
-                let playable = video["disable_play"].bool != true && !hasSubItem && epCount > 0
-                items.append(RankItem(
-                    seriesId: id, title: title, cover: cover, episodeCount: epCount,
-                    recommendText: recText, metaLine: metaLine, intro: intro,
-                    metricTags: Array(metrics.prefix(2)), badgeText: badge, playable: playable,
-                    subscribeItemId: subItemId
-                ))
+                if let item = parseRankVideo(video, seen: &seen) {
+                    items.append(item)
+                }
             }
         }
         return items
+    }
+
+    private static func parseRankVideo(_ video: JSONValue, seen: inout Set<String>) -> RankItem? {
+        let id = (video["series_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
+        let title = AccountService.cleanText(video["title"].string ?? video["series_title"].string)
+        guard id.matchesDigits(min: 1, max: 30), !title.isEmpty, seen.insert(id).inserted else { return nil }
+        let rawCover = video["cover"].string ?? video["video_detail"]["series_cover"].string ?? ""
+        let cover = normalizedCover(rawCover)
+        let epCount = max(0, Int(video["episode_cnt"].number ?? 0))
+        let recText = AccountService.cleanText(
+            video["rec_text_item"]["RecommendText"].string
+            ?? video["recommend_text"].string
+            ?? video["rec_text"].string
+        )
+        let subParts = (video["sub_title_list"].array ?? [])
+            .compactMap { AccountService.cleanText($0["content"].string) }
+            .filter { !$0.isEmpty }
+        let fallbackSub = AccountService.cleanText(video["sub_title"].nonEmptyString ?? video["card_tips"].nonEmptyString)
+        let metaLine = subParts.isEmpty ? fallbackSub : subParts.joined(separator: "·")
+        let intro = AccountService.cleanText(video["video_desc"].string ?? video["video_detail"]["series_intro"].string)
+        let metrics = (video["secondary_info_list"].array ?? [])
+            .compactMap { AccountService.cleanText($0["content"].string) }
+            .filter { !$0.isEmpty }
+        let badge = AccountService.cleanText(video["tag_info"]["text"].string)
+        let subItem = video["subscribe_item"]
+        let hasSubItem = subItem.object != nil
+        let subItemId = (subItem["item_id"].idString ?? id).trimmingCharacters(in: .whitespaces)
+        let playable = video["disable_play"].bool != true && !hasSubItem && epCount > 0
+        return RankItem(
+            seriesId: id, title: title, cover: cover, episodeCount: epCount,
+            recommendText: recText, metaLine: metaLine, intro: intro,
+            metricTags: Array(metrics.prefix(2)), badgeText: badge, playable: playable,
+            subscribeItemId: subItemId
+        )
     }
 
     static func parseCalendar(_ payload: JSONValue, requestedOffset: Int = 0) throws -> CalendarPage {

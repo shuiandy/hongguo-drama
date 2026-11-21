@@ -41,6 +41,11 @@ final class EndpointReachabilityLiveTests: XCTestCase {
             try need(!s.isEmpty, "suggestions")
             return "\(s.count): \(s.prefix(3).joined(separator: "、"))"
         }
+        await check("plan/v (search_input_page: 猜你想搜 & 热点话题榜)") {
+            let landing = try await DiscoveryAccess.searchLanding()
+            try need(!landing.hotTopics.isEmpty, "hotTopics")
+            return "\(landing.hotTopics.count) topics, \(landing.guessItems.count) guesses"
+        }
         await check("video_tab/multi_video_detail (detail)") {
             let d = try await OfficialSeriesDetail.load(sid, force: true); vid = d.episodes.first?.vid ?? ""
             try need(!d.episodes.isEmpty, "episodes"); return "\(d.episodes.count) eps"
