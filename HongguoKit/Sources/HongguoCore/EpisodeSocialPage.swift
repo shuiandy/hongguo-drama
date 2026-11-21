@@ -371,7 +371,8 @@ public enum EpisodeSocialService {
             throw HongguoError(.cancelled, "账号已切换")
         }
         try Task.checkCancellation()
-        guard let url = URL(string: "https://reading.snssdk.com/reading/reader/upload/picture/?aid=8662&app_name=dragon_app&version_code=74532") else {
+        let device = try? await PersistentAppDevice.dataIdentity(transport: AppTransport(http: http))
+        guard let url = commentImageUploadURL(identity: device?.identity) else {
             throw HongguoError(.input, "上传地址无效")
         }
         let boundary = "Boundary-\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
@@ -385,6 +386,9 @@ public enum EpisodeSocialService {
         options.headers["Content-Type"] = "multipart/form-data; boundary=\(boundary)"
         options.headers["Accept"] = "application/json"
         options.headers["Cookie"] = saved.cookie
+        if let dToken = device?.dToken, !dToken.isEmpty {
+            options.headers["x-tt-dt"] = dToken
+        }
         for (name, value) in PersistentAppDevice.authHeaders() {
             options.headers[name] = value
         }
@@ -405,6 +409,27 @@ public enum EpisodeSocialService {
                 Task { await AccountService.shared.notifyPossibleAuthFailure() }
             }
         )
+    }
+
+    /// Builds the official 7.4.3 upload URL (`needcommonParams = YES`) with `device_id` and `iid`
+    /// when a registered persistent device is available.
+    static func commentImageUploadURL(identity: PlaybackIdentity?) -> URL? {
+        var components = URLComponents(string: "https://reading.snssdk.com/reading/reader/upload/picture/")
+        var queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "aid", value: "8662"),
+            URLQueryItem(name: "app_name", value: "dragon_app"),
+            URLQueryItem(name: "version_code", value: "74532"),
+        ]
+        if let identity {
+            if !identity.deviceId.isEmpty {
+                queryItems.append(URLQueryItem(name: "device_id", value: identity.deviceId))
+            }
+            if !identity.iid.isEmpty {
+                queryItems.append(URLQueryItem(name: "iid", value: identity.iid))
+            }
+        }
+        components?.queryItems = queryItems
+        return components?.url
     }
 
     static func buildMultipartPictureBody(jpegData: Data, boundary: String) -> Data {
@@ -486,6 +511,7 @@ public enum EpisodeSocialService {
                 "/novel/commentapi/comment/add/v1/",
                 body: body,
                 headers: [("Comment-Source", "4"), ("Server-Channel", "18"), ("Cookie", saved.cookie)],
+                retryTransient: false,
                 http: http
             )
         } catch let error as HTTPStatusError where error.status == 401 {
@@ -617,6 +643,7 @@ public enum EpisodeSocialService {
                 "/novel/commentapi/reply/add/v1/",
                 body: body,
                 headers: [("Comment-Source", "4"), ("Server-Channel", "18"), ("Cookie", saved.cookie)],
+                retryTransient: false,
                 http: http
             )
         } catch let error as HTTPStatusError where error.status == 401 {

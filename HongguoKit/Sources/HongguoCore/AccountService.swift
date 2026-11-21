@@ -130,7 +130,6 @@ public actor AccountService {
     public static let shared = AccountService()
 
     static let webBase = "https://hongguoduanju.com"
-    static let webUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
     static let webQuery: [(String, String)] = [
         ("aid", "513755"), ("passport_jssdk_version", "3.4.10"), ("passport_jssdk_type", "normal"),
         ("account_sdk_source", "web"), ("is_from_ttaccountsdk", "1"), ("language", "zh"),
@@ -342,7 +341,7 @@ public actor AccountService {
             if let at = items.firstIndex(where: { $0.0 == name }) { items[at].1 = value } else { items.append((name, value)) }
         }
         components.percentEncodedQuery = items.map { "\(AppCrypto.urlEncode($0.0))=\(AppCrypto.urlEncode($0.1))" }.joined(separator: "&")
-        var headers = ["User-Agent": Self.webUA, "Referer": Self.webBase + "/", "Origin": Self.webBase,
+        var headers = ["User-Agent": UserAgents.web, "Referer": Self.webBase + "/", "Origin": Self.webBase,
                        "Accept": "application/json, text/javascript"]
         let cookie = jar.header
         if !cookie.isEmpty { headers["Cookie"] = cookie }
@@ -360,7 +359,7 @@ public actor AccountService {
             guard url.scheme == "https", let host = url.host?.lowercased(), host == "hongguoduanju.com" || host.hasSuffix(".hongguoduanju.com") else {
                 throw HongguoError(.security, "登录确认跳转到了不支持的站点")
             }
-            let response = try await webRequest(url, ["User-Agent": Self.webUA, "Referer": Self.webBase + "/", "Cookie": jar.header])
+            let response = try await webRequest(url, ["User-Agent": UserAgents.web, "Referer": Self.webBase + "/", "Cookie": jar.header])
             jar.absorb(response)
             if [301, 302, 303, 307, 308].contains(response.status), let location = response.header("Location"),
                let next = URL(string: location, relativeTo: url)?.absoluteURL {

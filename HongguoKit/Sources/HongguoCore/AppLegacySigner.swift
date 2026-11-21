@@ -487,7 +487,7 @@ struct AppLegacySigner {
         throw HongguoError(.format, "无法生成账号请求签名")
     }
 
-    static let metadataPaths = ["/reading/distribution/category/landpage/v/", "/reading/bookapi/bookmall/cell/change/v"]
+    static let metadataPaths = ["/reading/distribution/category/landpage/v1/", "/reading/bookapi/bookmall/cell/change/v"]
 
     /// Port of `signedMetadataRequest` (catalogue lists), signed for the persistent device.
     func metadata(path: String, values: [(String, String)], payload: [UInt8]?, identity: PlaybackIdentity,

@@ -398,26 +398,31 @@ public enum AccountDataAccess {
                              try await post(accountId: accountId, path: "/reading/user/subscribe/delete/v1/", body: body))
     }
 
-    /// Reports negative recommendation feedback ("不感兴趣") or recall ("撤销") to the official
-    /// user event endpoint (`/reading/user/event/report`). Best-effort when signed in.
+    /// Reports negative recommendation feedback ("不感兴趣", `op_type=0`) or recall ("撤销", `op_type=1`)
+    /// to the official 7.4.3 `SSUserEventReportRequest` (`/reading/user/event/report`, `report_type=4`,
+    /// `book_feed_dislike_data`). Best-effort when signed in.
     public static func reportNotInterested(accountId: String? = nil, seriesId: String, recall: Bool = false) async throws {
         guard seriesId.matchesDigits(min: 1, max: 30) else { throw HongguoError(.input, "剧集 ID 无效") }
-        let nowSec = Int64(Date().timeIntervalSince1970)
-        let eventName = recall ? "dislike_recall" : "rt_dislike"
-        let body: [String: Any] = [
-            "event_type": eventName,
-            "events": [
-                [
-                    "event_type": eventName,
-                    "book_id": seriesId,
-                    "book_type": 2,
-                    "scene": "video_feed",
-                    "timestamp": nowSec,
-                ]
-            ],
-        ]
+        let body = reportNotInterestedBody(seriesId: seriesId, recall: recall)
         _ = try checkedWrite(path: "/reading/user/event/report",
                              try await post(accountId: accountId, path: "/reading/user/event/report", body: body))
+    }
+
+    /// Official 7.4.3 `SSUserEventReportRequest` JSON payload (`report_type=4` + `SSBookFeedDislikeData`),
+    /// verified from `SSBizStoreBlockManager` (`requestWithParams:config:selectIndex:` / `recallDislikeWithParamsMaker:`).
+    static func reportNotInterestedBody(seriesId: String, recall: Bool = false) -> [String: Any] {
+        [
+            "report_type": 4,
+            "book_feed_dislike_data": [
+                "book_id": seriesId,
+                "group_id": seriesId,
+                "op_type": recall ? 1 : 0,
+                "reason": "",
+                "reason_id": 0,
+                "recommend_info": "",
+                "target_id": 0,
+            ] as [String: Any],
+        ]
     }
 
     /// Uploads or soft-deletes a watch history entry (`/reading/bookapi/read_history/update/v1/`).
@@ -477,10 +482,7 @@ public enum AccountDataAccess {
     }
 
     static func shouldRetryTransientRead(_ error: AppSourceError) -> Bool {
-        switch error.code {
-        case .network, .timeout: return true
-        default: return false
-        }
+        TransientReadRetry.shouldRetry(error)
     }
 
     /// One signed GET with the saved login (retrying once on transient network/timeout errors).

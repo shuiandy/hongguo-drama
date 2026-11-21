@@ -44,30 +44,35 @@ struct OfficialSeriesDetail: Sendable, Equatable {
 
     static func load(_ seriesId: String, force: Bool = false, http: HTTPClient = .shared) async throws -> OfficialSeriesDetail {
         guard seriesId.matchesDigits(min: 6, max: 30) else { throw HongguoError(.input, "无效的剧集编号") }
-        if !force, let cached = await cache.get(seriesId) { return cached }
-        let json = try await request(seriesId, http: http)
-        let videoList = json["data"]["video_detail_data"][seriesId]["video_data"]["video_list"].array
-        let detail: OfficialSeriesDetail
-        if (videoList == nil || videoList?.isEmpty == true),
-           json["code"].isZeroOrMissingStatusCode,
-           let album = try await OfficialAlbumDetail.load(seriesId, http: http) {
-            // A creator's collection or single creator video: the series read answers its id without episodes.
-            detail = album
-        } else {
-            detail = try parse(json, seriesId: seriesId)
+        let fetchDetail: @Sendable () async throws -> OfficialSeriesDetail = {
+            let json = try await request(seriesId, http: http)
+            let videoList = json["data"]["video_detail_data"][seriesId]["video_data"]["video_list"].array
+            if (videoList == nil || videoList?.isEmpty == true),
+               json["code"].isZeroOrMissingStatusCode,
+               let album = try await OfficialAlbumDetail.load(seriesId, http: http) {
+                // A creator's collection or single creator video: the series read answers its id without episodes.
+                return album
+            }
+            return try parse(json, seriesId: seriesId)
         }
-        await cache.set(seriesId, detail, ttl: 60)
-        return detail
+        if force {
+            let detail = try await fetchDetail()
+            await cache.set(seriesId, detail, ttl: 60)
+            return detail
+        }
+        return try await cache.load(seriesId, ttl: 60, loader: fetchDetail)
     }
 
     static func request(_ seriesId: String, http: HTTPClient = .shared) async throws -> JSONValue {
         let transport = AppTransport(http: http)
         let (identity, dToken) = try await PersistentAppDevice.dataIdentity(transport: transport)
-        let signed = try AppLegacySigner.shared.videoTab(
-            path: path, values: [("video_series_id", seriesId), ("vs_id_type", "0"), ("source", "0")],
-            identity: identity, dToken: dToken, nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
         do {
-            return try await transport.requestJSON(signed.url, headers: signed.headers, deadline: Date().addingTimeInterval(8))
+            return try await TransientReadRetry.run {
+                let signed = try AppLegacySigner.shared.videoTab(
+                    path: path, values: [("video_series_id", seriesId), ("vs_id_type", "0"), ("source", "0")],
+                    identity: identity, dToken: dToken, nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
+                return try await transport.requestJSON(signed.url, headers: signed.headers, deadline: Date().addingTimeInterval(10))
+            }
         } catch let error as AppSourceError {
             throw error.hongguoError
         }

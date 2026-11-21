@@ -2,7 +2,7 @@ import Foundation
 import HongguoCore
 
 /// Row parsing shared by the home feed (`BookMallFeed`, the official 首页视频流) and the App
-/// category list (`landpage/v/` rows): each row already names episode 1 (`vid` or
+/// category list (`landpage/v1/` rows): each row already names episode 1 (`vid` or
 /// `video_detail.first_vid`), so a clip can start without first fetching the series' episode list.
 public struct AppFeedCursor: Equatable, Sendable {
     public var offset: Int
@@ -98,7 +98,7 @@ public enum AppFeed {
         return AppFeedPage(entries: entries, next: next)
     }
 
-    /// Parses one `video_data` row shared by `landpage/v/`, `bookmall/tab/v/` (both flat
+    /// Parses one `video_data` row shared by `landpage/v1/`, `bookmall/tab/v/` (both flat
     /// `show_type=507` rows and nested `show_type=407` rows carrying `video_detail`), and
     /// `bookmall/cell/change/v`.
     static func parseEntry(

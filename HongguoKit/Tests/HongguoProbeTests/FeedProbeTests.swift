@@ -321,15 +321,15 @@ final class SeriesTabProbeTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["HONGGUO_PROBE"] == "catalog" else {
             throw XCTSkip("set HONGGUO_PROBE=catalog")
         }
-        // 1. Episodes + synopsis (the website's series pages)
+        // 1. Episodes and synopsis from the App detail service.
         let eps = try await SeriesService().episodes(seriesId: "7675312158082616345")
         let intro = try await SeriesService().publicDetails(seriesId: "7675312158082616345").description
         print("PROBE episodes: count=\(eps.episodes.count) source=\(eps.source) title=\(eps.title) introLen=\(intro.count)")
         XCTAssertGreaterThan(eps.episodes.count, 50)
-        XCTAssertEqual(eps.source, .web)
+        XCTAssertEqual(eps.source, .api)
         XCTAssertFalse(intro.isEmpty)
 
-        // 2. Reviews on website-404 drama (S3 7692377412511730713) falls back to App detail
+        // 2. Reviews on a series whose website page was unavailable.
         let rev = try await EpisodeSocialService.reviews(seriesId: "7692377412511730713")
         print("PROBE reviews(S3): heat='\(rev.heatText)' fav=\(rev.favoriteCount as Any) record='\(rev.recordNumber)' rating=\(rev.rating as Any)")
         XCTAssertFalse(rev.heatText.isEmpty)

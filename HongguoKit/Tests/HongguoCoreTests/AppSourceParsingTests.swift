@@ -6,6 +6,7 @@ final class AppSourceParsingTests: XCTestCase {
     // Key material produced by scripts/gen-signing-vectors.cjs (encodedKey of 00112233…eeff).
     let spade = "kLMT9VuyEvtZshL5X7UR+0G2DvlfqSbQXakm0luuJdClrA=="
 
+    #if os(macOS)
     // These cases describe a Mac without the ByteVC2 helper, whatever is installed on the build machine.
     override func setUp() { ByteVC2Converter.setExecutableForTesting(nil) }
     override func tearDown() { ByteVC2Converter.setExecutableForTesting(nil) }
@@ -26,6 +27,8 @@ final class AppSourceParsingTests: XCTestCase {
         XCTAssertThrowsError(try AppSource.parsePlayModel(only, vid: "1", inline: true))
         ByteVC2Converter.configure(enabled: true, fast: false)
     }
+
+    #endif
 
     func model(_ list: [String: Any], extra: [String: Any] = [:]) throws -> JSONValue {
         var object: [String: Any] = ["video_list": list, "video_id": "v01", "video_duration": 60.5]

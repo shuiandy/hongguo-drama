@@ -91,14 +91,18 @@ public final class AppSearchService: Sendable {
             throw HongguoError(.unavailable, "App 搜索暂不可用")
         }
         guard Date() < deadline else { throw HongguoError(.timeout, "App 搜索超时") }
-        let signed = try signer().search(keyword: kw, page: page,
-                                         cursor: cursor.map { .init(searchId: $0.searchId, passback: $0.passback, nextOffset: $0.nextOffset) },
-                                         identity: device.identity, dToken: device.dToken,
-                                         nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
+        let searchCursor = cursor.map { AppLegacySigner.SearchCursor(searchId: $0.searchId, passback: $0.passback, nextOffset: $0.nextOffset) }
+        let signer = self.signer
+        let transport = self.transport
         let payload: JSONValue
         do {
             // Signed out on purpose (`user_is_login=0` in the query), as before: no website Cookie.
-            payload = try await transport.requestJSON(signed.url, headers: signed.headers, deadline: deadline)
+            payload = try await TransientReadRetry.run(deadline: deadline) {
+                let signed = try signer().search(keyword: kw, page: page, cursor: searchCursor,
+                                                 identity: device.identity, dToken: device.dToken,
+                                                 nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
+                return try await transport.requestJSON(signed.url, headers: signed.headers, deadline: deadline)
+            }
         } catch let error as AppSourceError {
             throw error.hongguoError
         }

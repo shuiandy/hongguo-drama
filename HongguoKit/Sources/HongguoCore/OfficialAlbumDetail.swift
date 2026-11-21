@@ -81,11 +81,13 @@ enum OfficialAlbumDetail {
             object["need_video_detail_info"] = true
         }
         let payload = Array(try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))
-        let signed = try AppSource.modelRequest(base: url, payload: payload, identity: identity)
         let reply: JSONValue
         do {
-            reply = try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers + dToken, body: signed.body,
-                                                    deadline: Date().addingTimeInterval(8))
+            reply = try await TransientReadRetry.run {
+                let signed = try AppSource.modelRequest(base: url, payload: payload, identity: identity)
+                return try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers + dToken, body: signed.body,
+                                                       deadline: Date().addingTimeInterval(10))
+            }
         } catch let error as AppSourceError {
             throw error.hongguoError
         }

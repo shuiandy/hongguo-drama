@@ -107,7 +107,7 @@ final class EndpointReachabilityLiveTests: XCTestCase {
         var commentId = ""
         await check("commentapi/comment/list/<vid> (comments)") {
             let p = try await EpisodeSocialService.commentsPage(seriesId: sid, vid: vid)
-            commentId = p.comments.first { ($0.replyCount ?? 0) > 0 }?.id ?? ""
+            commentId = p.comments.first { $0.replyCount > 0 }?.id ?? ""
             try need(!p.comments.isEmpty, "comments"); return "\(p.comments.count)"
         }
         await check("commentapi/reply/list (replies)") {

@@ -2,7 +2,7 @@
 // Read-only discovery endpoints using the core's anonymous metadata signing profile:
 // 1. Official ranking boards & multi-level filters (`/reading/bookapi/plan/v/` + `bookmall/cell/change/v`)
 // 2. Release calendar (`/reading/user/subscribe/list/v1/` with `tab_type=5`, `target_date=YYYYMMDD`)
-// 3. New drama recommendations by gender (`/reading/distribution/category/landpage/v/`)
+// 3. New drama recommendations by gender (`/reading/distribution/category/landpage/v1/`)
 // 4. Search keyword suggestions (`/reading/bookapi/search/suggest/v/`)
 // 5. Search landing modules (`/reading/bookapi/plan/v/` with `scene=10`, `from=search_input_page`,
 //    `new_search_middle_page=1`, `search_middle_page_version=5`): 猜你想搜 & 热点话题榜
@@ -422,7 +422,7 @@ public enum DiscoveryAccess {
         return try parseNewDramaPage(payload, requestedOffset: offset)
     }
 
-    /// Official App category browsing (`/reading/distribution/category/landpage/v/`) for
+    /// Official App category browsing (`/reading/distribution/category/landpage/v1/`) for
     /// 真人剧 / 漫剧 / AI剧 (with server-driven `category_dim_theme` filter chips), and
     /// official ranking boards for ranking `CatalogKind` cases.
     public static func catalog(

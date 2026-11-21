@@ -71,7 +71,13 @@ final class AppSearchSigningTests: XCTestCase {
             let raw = try XCTUnwrap(item["values"].object)
             let order = ["offset", "limit", "genre", "a"].filter { raw[$0] != nil }
             let body = item["body"].string.map { Array($0.utf8) }
-            let signed = try signer.metadata(path: item["apiPath"].string!, values: order.map { ($0, raw[$0]!.string!) },
+            let path = try XCTUnwrap(item["apiPath"].string)
+            if path == "/reading/distribution/category/landpage/v/" {
+                XCTAssertEqual(AppLegacySigner.metadataPaths.first, "/reading/distribution/category/landpage/v1/")
+                XCTAssertThrowsError(try signer.metadata(path: path, values: [], payload: body, identity: device, nowMillis: 0))
+                continue
+            }
+            let signed = try signer.metadata(path: path, values: order.map { ($0, raw[$0]!.string!) },
                                              payload: body, identity: device, nowMillis: Int64(item["now"].number!),
                                              version: try referenceVersion(item))
             XCTAssertEqual(signed.url, url)

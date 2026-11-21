@@ -24,25 +24,28 @@ public enum AppBookMallAccess {
         authenticated: Bool = true
     ) async throws -> JSONValue {
         let transport = AppTransport(http: .shared)
+        let deadline = Date().addingTimeInterval(timeout)
         do {
             let device = try await PersistentAppDevice.dataIdentity(transport: transport)
-            let signed = try AppLegacySigner.shared.bookMallTab(
-                host: host ?? AppLegacySigner.metadataHost,
-                path: path,
-                values: values,
-                identity: device.identity,
-                dToken: device.dToken,
-                nowMillis: Int64(Date().timeIntervalSince1970 * 1000)
-            )
             let base = host ?? AppLegacySigner.metadataHost
             let extraHeaders = authenticated && isOfficialHost(base) ? PersistentAppDevice.authHeaders() : []
-            return try await transport.requestJSON(
-                signed.url,
-                method: "GET",
-                headers: signed.headers + extraHeaders,
-                body: nil,
-                deadline: Date().addingTimeInterval(timeout)
-            )
+            return try await TransientReadRetry.run(deadline: deadline) {
+                let signed = try AppLegacySigner.shared.bookMallTab(
+                    host: base,
+                    path: path,
+                    values: values,
+                    identity: device.identity,
+                    dToken: device.dToken,
+                    nowMillis: Int64(Date().timeIntervalSince1970 * 1000)
+                )
+                return try await transport.requestJSON(
+                    signed.url,
+                    method: "GET",
+                    headers: signed.headers + extraHeaders,
+                    body: nil,
+                    deadline: deadline
+                )
+            }
         } catch let error as AppSourceError {
             throw error.hongguoError
         }

@@ -5,8 +5,7 @@
 //   and never the website login Cookie: since 2026-11-20 a play request carrying it comes back
 //   empty on every path (the account's own requests still use it),
 // - caches resolved `PlayInfo` on disk respecting server `expire_time`,
-// - targets official iOS 7.4.3 `mGetVideoModelV2` (`/novel/player/multi_video_model/player/v1/`)
-//   on both hosts, with the plain iOS `/multi_video_model/v1/` (`mGetVideoModel`) asked first,
+// - targets official iOS 7.4.3 `mGetVideoModel` (`/novel/player/multi_video_model/v1/`),
 // - proactively upgrades ByteVC2-only episodes to H.264/HEVC via `CodecFallback` when available,
 // - self-heals on empty replies with one BDInstall renewal of the persistent device, nothing else.
 // There is no other source: no Android profile, website channel or web page.
@@ -67,10 +66,21 @@ public final class VideoModelDiskCache: @unchecked Sendable {
     }
 
     public func store(vid: String, info: PlayInfo, expiresAt: Date, now: Date = Date()) {
-        guard expiresAt > now, let archive = PlayInfoArchive.encode(info) else { return }
+        storeBatch([(vid: vid, info: info, expiresAt: expiresAt)], now: now)
+    }
+
+    /// Persists multiple resolved `PlayInfo` entries in a single lock acquisition and atomic write.
+    public func storeBatch(_ items: [(vid: String, info: PlayInfo, expiresAt: Date)], now: Date = Date()) {
+        let encoded: [(String, Entry)] = items.compactMap { item in
+            guard item.expiresAt > now, let archive = PlayInfoArchive.encode(item.info) else { return nil }
+            return (item.vid, Entry(archive: archive, expiresAt: item.expiresAt, cachedAt: now))
+        }
+        guard !encoded.isEmpty else { return }
         lock.withLock {
             loadLockedIfNeeded()
-            entries[vid] = Entry(archive: archive, expiresAt: expiresAt, cachedAt: now)
+            for (vid, entry) in encoded {
+                entries[vid] = entry
+            }
             pruneLocked(now: now)
             saveLocked()
         }
@@ -272,12 +282,18 @@ public actor AuthenticatedPlaybackSource {
                 )
                 guard !Task.isCancelled else { return }
                 var fallbacksToWarm: [(String, PendingFallback)] = []
+                var diskBatch: [(vid: String, info: PlayInfo, expiresAt: Date)] = []
                 for vid in chunk {
                     guard let epoch = epochs[vid], (self.vidEpochs[vid] ?? 0) == epoch else { continue }
-                    self.ingestBatchEntry(entries[vid], vid: vid, epoch: epoch)
+                    if let cachedItem = self.ingestBatchEntry(entries[vid], vid: vid, epoch: epoch) {
+                        diskBatch.append(cachedItem)
+                    }
                     if let fb = self.pendingFallbacks[vid], fallbacksToWarm.count < 3 {
                         fallbacksToWarm.append((vid, fb))
                     }
+                }
+                if !diskBatch.isEmpty {
+                    self.diskCache.storeBatch(diskBatch)
                 }
                 // Eagerly resolve fallback_api for the first 3 upcoming episodes so tapping them
                 // hits `auth-mem`/`auth-disk` in 0 ms instead of paying a 2nd RTT.
@@ -642,9 +658,9 @@ public actor AuthenticatedPlaybackSource {
         return entry["video_model"]
     }
 
-    private func ingestBatchEntry(_ entry: JSONValue, vid: String, epoch: UInt64) {
+    private func ingestBatchEntry(_ entry: JSONValue, vid: String, epoch: UInt64) -> (vid: String, info: PlayInfo, expiresAt: Date)? {
         let model = extractModel(from: entry)
-        guard model.object != nil else { return }
+        guard model.object != nil else { return nil }
         let expiresAt = VideoModelDiskCache.computeExpiry(
             serverExpireTime: entry["expire_time"].number ?? model["expire_time"].number
         )
@@ -658,10 +674,11 @@ public actor AuthenticatedPlaybackSource {
                                                             duration: model["video_duration"].number,
                                                             minimumPixels: 0, requireEncryptionMetadata: false,
                                                             expiresAt: expiresAt)
-                    return
+                    return nil
                 }
-                storeCached(vid: vid, info: resolved, expiresAt: expiresAt, expectedEpoch: epoch)
-                return
+                guard (vidEpochs[vid] ?? 0) == epoch else { return nil }
+                storeMemory(vid: vid, info: resolved, expiresAt: expiresAt)
+                return (vid: vid, info: resolved, expiresAt: expiresAt)
             } catch let error as AppSourceError {
                 if error.code == .noCompatibleSource,
                    AppSource.containsByteVC2(model),
@@ -670,7 +687,7 @@ public actor AuthenticatedPlaybackSource {
                                                             duration: model["video_duration"].number,
                                                             minimumPixels: 0, requireEncryptionMetadata: false,
                                                             expiresAt: expiresAt)
-                    return
+                    return nil
                 }
                 if error.incompleteEncryptionMetadata,
                    let videoId = model["video_id"].string, !videoId.isEmpty,
@@ -681,9 +698,9 @@ public actor AuthenticatedPlaybackSource {
                                                             minimumPixels: error.minimumPixels, requireEncryptionMetadata: true,
                                                             expiresAt: expiresAt)
                 }
-                return
+                return nil
             } catch {
-                return
+                return nil
             }
         }
         if let fallback = AppSource.parseFallback(model["fallback_api"]), !fallback.isEmpty {
@@ -691,6 +708,7 @@ public actor AuthenticatedPlaybackSource {
                                                     duration: model["video_duration"].number,
                                                     minimumPixels: 0, requireEncryptionMetadata: false, expiresAt: expiresAt)
         }
+        return nil
     }
 
     private func storeMemory(vid: String, info: PlayInfo, expiresAt: Date) {

@@ -186,6 +186,27 @@ final class PersistentPlaybackTests: XCTestCase {
         XCTAssertNotNil(cache.load(vid: "100003", now: checkTime))
     }
 
+    func testDiskCacheStoreBatchPersistsValidEntriesAndRespectsLimit() {
+        let file = temporaryCacheFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let now = Date()
+        let cache = VideoModelDiskCache(fileURL: file, maxEntries: 3)
+        cache.storeBatch([
+            (vid: "200001", info: samplePlayInfo(vid: "200001"), expiresAt: now.addingTimeInterval(600)),
+            (vid: "200002", info: samplePlayInfo(vid: "200002"), expiresAt: now.addingTimeInterval(-10)),
+            (vid: "200003", info: samplePlayInfo(vid: "200003"), expiresAt: now.addingTimeInterval(600)),
+            (vid: "200004", info: samplePlayInfo(vid: "200004"), expiresAt: now.addingTimeInterval(600)),
+        ], now: now)
+
+        let reloaded = VideoModelDiskCache(fileURL: file, maxEntries: 3)
+        let checkTime = now.addingTimeInterval(5)
+        XCTAssertEqual(reloaded.load(vid: "200001", now: checkTime)?.vid, "200001")
+        XCTAssertNil(reloaded.load(vid: "200002", now: checkTime), "expired entry must not be stored")
+        XCTAssertEqual(reloaded.load(vid: "200003", now: checkTime)?.vid, "200003")
+        XCTAssertEqual(reloaded.load(vid: "200004", now: checkTime)?.vid, "200004")
+    }
+
     // MARK: - PlayBackupURLs & PlayInfoArchive Backup Persistence
 
     func testBackupURLsRegisterDeduplicateAndPersistInArchive() throws {
