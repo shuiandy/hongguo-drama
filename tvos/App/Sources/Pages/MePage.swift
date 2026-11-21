@@ -72,6 +72,7 @@ struct MePage: View {
             } else {
                 Button("扫码登录", systemImage: "qrcode") { app.showsLogin = true }
             }
+            Button("切换账号", systemImage: "person.2") { app.showsAccountPicker = true }
         }
         .focusSection()
     }
@@ -142,6 +143,7 @@ struct MePage: View {
             Toggle("弹幕", isOn: $library.settings.danmaku.enabled)
             Toggle("自动连播", isOn: $library.settings.autoNext)
             Toggle("云端观看记录", isOn: $library.settings.cloudHistorySync)
+            Button("切换账号", systemImage: "person.2") { app.showsAccountPicker = true }
             Text("数据来源：\(app.backend.isOffline ? "内置示例（离线）" : "红果官方")").font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: 1100, alignment: .leading)

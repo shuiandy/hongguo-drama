@@ -13,6 +13,8 @@ struct LaunchOptions: Sendable {
         case recommend, theater, ranking, following, search, me
         case detail, player
         case playerControls = "player-controls", playerEpisodes = "player-episodes"
+        /// 选择账号 (with made-up accounts in sample runs).
+        case accounts
     }
 
     var arguments: LaunchArguments

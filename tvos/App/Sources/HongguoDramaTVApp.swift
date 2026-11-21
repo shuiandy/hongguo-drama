@@ -43,6 +43,8 @@ final class TVAppModel: PlayerHost {
     let backend: any DramaBackend
     let account: AccountModel
     let library: LibraryModel
+    /// The accounts signed in on this Apple TV.
+    let roster: AccountRoster
     var player = PlayerEngine()
     var playerHandoff: PlayerHandoff?
     var selectedTab: LaunchOptions.Route
@@ -52,14 +54,28 @@ final class TVAppModel: PlayerHost {
     var playerTarget: PlayerTarget?
     /// 扫码登录, over the tabs.
     var showsLogin = false
+    /// 选择账号, over everything; shown at launch when accounts are saved on this Apple TV.
+    var showsAccountPicker = false
 
     init(launch: LaunchOptions) {
         self.launch = launch
         backend = launch.offlineFixtures ? FixtureBackend() : LiveBackend()
         account = AccountModel(mode: launch.arguments.accountMode)
         library = LibraryModel(offline: launch.offlineFixtures, account: account, backend: backend)
+        // Live: the saved accounts (an earlier single login becomes the first). Sample runs: an
+        // empty roster in memory, or made-up accounts with `-HongguoRoute accounts`.
+        if launch.offlineFixtures {
+            roster = launch.route == .accounts ? AccountRoster.samples()
+                : AccountRoster(defaults: UserDefaults(suiteName: "HongguoDrama.sampleRoster.\(UUID().uuidString)") ?? .standard,
+                                vault: MemoryVault(), current: MemoryVault.Current())
+        } else {
+            roster = AccountRoster()
+            roster.migrateIfNeeded()
+        }
+        // Accounts saved: choose one first; none: straight to 推荐.
+        showsAccountPicker = launch.route == .accounts || (!roster.entries.isEmpty && launch.route == .recommend)
         // The series page and player routes open over 推荐.
-        selectedTab = [.detail, .player, .playerControls, .playerEpisodes].contains(launch.route) ? .recommend : launch.route
+        selectedTab = [.detail, .player, .playerControls, .playerEpisodes, .accounts].contains(launch.route) ? .recommend : launch.route
         showsLogin = launch.arguments.showsLogin
         player.isMuted = launch.muted
         // A muted run (automated tests on a Mac) must not claim the audio output at all.
@@ -105,6 +121,19 @@ final class TVAppModel: PlayerHost {
     }
 
     func closePlayer() { playerTarget = nil }
+
+    /// An account was chosen (or 不登录使用): on to 推荐, which starts playing.
+    func finishAccountChoice() {
+        showsAccountPicker = false
+        selectedTab = .recommend
+    }
+
+    /// After a QR sign-in: the account joins the roster as the current one.
+    func signedIn() {
+        roster.rememberCurrent(avatar: account.avatar)
+        showsLogin = false
+        if showsAccountPicker { finishAccountChoice() }
+    }
 }
 
 /// The shell: the system's top tab bar, nothing drawn by hand. The series page and the player
@@ -137,12 +166,8 @@ struct RootView: View {
                     MePage()
                 }
             }
-            .disabled(app.detailTarget != nil || app.playerTarget != nil || app.showsLogin)
+            .disabled(app.detailTarget != nil || app.playerTarget != nil || app.showsLogin || app.showsAccountPicker)
 
-            if app.showsLogin {
-                LoginPage()
-                    .transition(.opacity)
-            }
 
             if let series = app.detailTarget {
                 DetailPage(series: series)
@@ -155,9 +180,23 @@ struct RootView: View {
                     .id(target.id)
                     .transition(.opacity)
             }
+            if app.showsAccountPicker {
+                AccountPickerPage()
+                    .disabled(app.showsLogin)
+                    .transition(.opacity)
+            }
+            if app.showsLogin {
+                LoginPage()
+                    .transition(.opacity)
+            }
         }
         .animation(.easeInOut(duration: 0.25), value: app.detailTarget?.seriesId)
         .animation(.easeInOut(duration: 0.25), value: app.playerTarget?.id)
+        .animation(.easeInOut(duration: 0.25), value: app.showsAccountPicker)
+        .onChange(of: app.account.avatar) { _, avatar in
+            // The picture and name arrive after a sign-in or switch: keep the roster's entry current.
+            if let profile = app.account.profile { app.roster.update(id: profile.id, nickname: profile.nickname, avatar: avatar) }
+        }
         .onChange(of: scenePhase) { _, phase in
             // As in the iOS app: back in front, warm the App source up and sync the account (at
             // most once a minute, then every 3 minutes); in the background, stop the loop.

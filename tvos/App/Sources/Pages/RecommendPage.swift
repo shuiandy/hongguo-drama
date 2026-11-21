@@ -35,7 +35,8 @@ private struct RecommendContent: View {
     @FocusState private var mainFocused: Bool
 
     private var visible: Bool {
-        app.selectedTab == .recommend && app.playerTarget == nil && app.detailTarget == nil && scenePhase == .active
+        app.selectedTab == .recommend && app.playerTarget == nil && app.detailTarget == nil && !app.showsAccountPicker
+            && !app.showsLogin && scenePhase == .active
     }
 
     var body: some View {

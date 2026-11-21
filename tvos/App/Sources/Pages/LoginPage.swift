@@ -37,7 +37,7 @@ struct LoginPage: View {
         .onDisappear { login?.abandon() }
         .task(id: "\(login?.round ?? -1)|\(scenePhase == .active)") {
             guard app.account.canSignIn, scenePhase == .active, let login else { return }
-            await login.run { app.showsLogin = false }
+            await login.run { app.signedIn() }
         }
     }
 
