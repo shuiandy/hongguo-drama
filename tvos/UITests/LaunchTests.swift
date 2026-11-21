@@ -11,7 +11,8 @@ final class LaunchTests: XCTestCase {
     }
 
     func testSixTopTabs() {
-        let app = launch(route: "recommend")
+        // 剧场 keeps the tab bar on screen (on 推荐 it fades while a clip plays).
+        let app = launch(route: "theater")
         for title in ["推荐", "剧场", "排行", "追剧", "搜索", "我的"] {
             XCTAssertTrue(app.tabBars.buttons[title].waitForExistence(timeout: 10), "missing tab \(title)")
         }

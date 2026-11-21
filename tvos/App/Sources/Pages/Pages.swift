@@ -56,35 +56,6 @@ struct CatalogShelvesPage: View {
     }
 }
 
-struct RecommendPage: View {
-    @Environment(TVAppModel.self) private var app
-
-    var body: some View {
-        if app.launch.offlineFixtures {
-            let first = FixtureBackend.summary(1)
-            ZStack {
-                AmbientBackground(tint: PlaceholderTint.color(for: first.seriesId))
-                HStack(spacing: 80) {
-                    // Where the 9:16 player goes: full height, centred, never cropped.
-                    PosterImage(series: first)
-                        .aspectRatio(9 / 16, contentMode: .fit)
-                        .clipShape(RoundedRectangle(cornerRadius: 24))
-                        .frame(maxHeight: 760)
-                    VStack(alignment: .leading, spacing: 20) {
-                        Text(first.title).font(.title2.weight(.bold))
-                        Text("\(first.episodeLabel) · \(first.heat)").foregroundStyle(.secondary)
-                        Text("离线样例，没有视频画面").font(.callout).foregroundStyle(.tertiary)
-                        Button("观看完整剧集", systemImage: "play.fill") {}
-                    }
-                    .frame(maxWidth: 640, alignment: .leading)
-                }
-            }
-        } else {
-            LoadStateView(state: .empty("推荐刷剧即将上线"))
-        }
-    }
-}
-
 struct MePage: View {
     @Environment(TVAppModel.self) private var app
 

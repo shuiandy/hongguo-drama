@@ -56,7 +56,8 @@ final class TVAppModel: PlayerHost {
         backend = launch.offlineFixtures ? FixtureBackend() : LiveBackend()
         account = AccountModel(mode: launch.arguments.accountMode)
         library = LibraryModel(offline: launch.offlineFixtures, account: account, backend: backend)
-        selectedTab = launch.route
+        // The series page and player routes open over 推荐.
+        selectedTab = [.detail, .player, .playerControls, .playerEpisodes].contains(launch.route) ? .recommend : launch.route
         player.isMuted = launch.muted
         // A muted run (automated tests on a Mac) must not claim the audio output at all.
         if !launch.muted { try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback) }

@@ -27,7 +27,7 @@ final class PlayerTests: XCTestCase {
         XCTAssertTrue(app.buttons["选集"].waitForExistence(timeout: 5), "the click shows the controls")
         remote.press(.menu)
         XCTAssertTrue(app.tabBars.buttons["推荐"].waitForExistence(timeout: 5), "back closes the player")
-        XCTAssertFalse(app.staticTexts["离线示例，没有视频画面"].exists)
+        XCTAssertFalse(app.buttons["选集"].exists, "the player's controls are gone")
     }
 
     func testRightClickGoesForwardTenSeconds() throws {
