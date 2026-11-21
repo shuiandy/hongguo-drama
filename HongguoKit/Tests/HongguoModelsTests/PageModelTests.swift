@@ -136,3 +136,21 @@ final class CommentListModelTests: XCTestCase {
         XCTAssertTrue(model.replyThreads.isEmpty)
     }
 }
+
+@MainActor
+final class EpisodePanelModelTests: XCTestCase {
+    func testRangeFollowsTheEpisodeAndMoreSeasons() async {
+        let model = EpisodePanelModel(episode: 45, total: 80)
+        XCTAssertEqual(model.range(total: 80), 31...60)
+        model.rangeIndex = 0
+        XCTAssertEqual(model.range(total: 80), 1...30)
+        model.follow(episode: 70, total: 80)
+        XCTAssertEqual(model.range(total: 80), 61...80)
+        model.rangeIndex = 9
+        XCTAssertEqual(model.range(total: 80), 61...80, "clamped")
+        await model.loadTags(seriesId: "fixture-1", vid: "fixture-1-ep1", using: FixtureBackend())
+        XCTAssertEqual(model.tags, ["都市", "逆袭"])
+        await model.loadMore(seriesId: "fixture-search-1", title: "重生之我在豪门当保姆", using: FixtureBackend())
+        XCTAssertEqual(model.more.count, 5)
+    }
+}
