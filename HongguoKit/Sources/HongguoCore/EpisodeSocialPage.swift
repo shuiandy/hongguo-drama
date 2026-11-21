@@ -5,6 +5,22 @@ import Foundation
 /// detail (`OfficialSeriesDetail`); the first-shown date from the App's book_pack_fields read
 /// (`OfficialSeriesStats`). Read-only.
 public struct EpisodeSocial: Sendable, Equatable {
+    public struct CommentImage: Sendable, Equatable, Hashable {
+        public var url: String
+        public var thumbnailUrl: String
+        public var width: Int
+        public var height: Int
+        public var format: String
+
+        public init(url: String, thumbnailUrl: String = "", width: Int = 0, height: Int = 0, format: String = "jpeg") {
+            self.url = url
+            self.thumbnailUrl = thumbnailUrl.isEmpty ? url : thumbnailUrl
+            self.width = width
+            self.height = height
+            self.format = format
+        }
+    }
+
     public struct Comment: Sendable, Equatable, Identifiable {
         public var id: String
         public var author: String
@@ -16,10 +32,23 @@ public struct EpisodeSocial: Sendable, Equatable {
         public var rating: Int?
         /// Number of replies on this comment (`stat.reply_count`).
         public var replyCount: Int
+        /// Images attached to the comment (`content.image_data_list.image_data`).
+        public var images: [CommentImage]
 
-        public init(id: String, author: String, avatar: String, content: String, createdAt: Date?, likes: Int, rating: Int? = nil, replyCount: Int = 0) {
+        public init(
+            id: String,
+            author: String,
+            avatar: String,
+            content: String,
+            createdAt: Date?,
+            likes: Int,
+            rating: Int? = nil,
+            replyCount: Int = 0,
+            images: [CommentImage] = []
+        ) {
             self.id = id; self.author = author; self.avatar = avatar; self.content = content
-            self.createdAt = createdAt; self.likes = likes; self.rating = rating; self.replyCount = replyCount
+            self.createdAt = createdAt; self.likes = likes; self.rating = rating
+            self.replyCount = replyCount; self.images = images
         }
     }
 
@@ -248,10 +277,28 @@ public enum EpisodeSocialService {
         return CommentPage(comments: parsed, total: integer(listInfo["total"]), cursor: nextCursor, hasMore: hasMore)
     }
 
+    public struct CommentImageAttachment: Sendable, Equatable {
+        public static let maxUploadBytes = 2 * 1024 * 1024
+
+        public var jpegData: Data
+        public var width: Int
+        public var height: Int
+        public var format: String
+
+        public init(jpegData: Data, width: Int, height: Int, format: String = "jpeg") {
+            self.jpegData = jpegData
+            self.width = width
+            self.height = height
+            self.format = format
+        }
+    }
+
     static func parseComment(_ c: JSONValue) -> EpisodeSocial.Comment? {
         let common = c["common"].isNull ? c["Common"] : c["common"]
-        guard let rawText = common["content"]["text"].string,
-              !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let contentObj = common["content"]
+        let rawText = contentObj["text"].string ?? ""
+        let images = parseCommentImages(contentObj["image_data_list"]["image_data"])
+        guard !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty else { return nil }
         let base = common["user_info"]["base_info"]
         let author = String((base["user_name"].string ?? "").prefix(200))
         let rawAvatar = [base["user_avatar"].string, base["expand_user_avatar"].string]
@@ -259,7 +306,8 @@ public enum EpisodeSocialService {
             .first { !$0.isEmpty } ?? ""
         let created = date(common["create_timestamp"])
         let content = String(rawText.prefix(20000))
-        let cid = c["comment_id"].idString ?? DownloadNaming.sha256Prefix("\(author)\u{0}\(created?.timeIntervalSince1970 ?? 0)\u{0}\(content)", 32)
+        let imageSeed = images.first?.url ?? ""
+        let cid = c["comment_id"].idString ?? DownloadNaming.sha256Prefix("\(author)\u{0}\(created?.timeIntervalSince1970 ?? 0)\u{0}\(content)\u{0}\(imageSeed)", 32)
         let score = integer(c["expand"]["score"]) ?? integer(common["expand"]["score"])
         return .init(
             id: cid,
@@ -269,17 +317,143 @@ public enum EpisodeSocialService {
             createdAt: created,
             likes: integer(c["stat"]["digg_count"]) ?? 0,
             rating: score.flatMap { (1...10).contains($0) ? $0 : nil },
-            replyCount: integer(c["stat"]["reply_count"]) ?? 0
+            replyCount: integer(c["stat"]["reply_count"]) ?? 0,
+            images: images
+        )
+    }
+
+    static func parseCommentImages(_ list: JSONValue) -> [EpisodeSocial.CommentImage] {
+        (list.array ?? []).compactMap { item -> EpisodeSocial.CommentImage? in
+            let fullCandidates = [
+                item["dynamic_url"].string,
+                item["expand_web_url"].string,
+                item["web_url"].string,
+                item["web_uri"].string.flatMap { $0.hasPrefix("http") ? $0 : nil },
+            ]
+            guard let rawFull = fullCandidates
+                .compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines) })
+                .first(where: { !$0.isEmpty }) else { return nil }
+            let thumbObj = item["thumb_nails"].array?.first
+            let thumbCandidates = [
+                thumbObj?["dynamic_url"].string,
+                thumbObj?["web_url"].string,
+                thumbObj?["web_uri"].string.flatMap { $0.hasPrefix("http") ? $0 : nil },
+                item["web_url"].string,
+            ]
+            let rawThumb = thumbCandidates
+                .compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines) })
+                .first(where: { !$0.isEmpty }) ?? rawFull
+            return EpisodeSocial.CommentImage(
+                url: secure(rawFull),
+                thumbnailUrl: secure(rawThumb),
+                width: integer(item["width"]) ?? 0,
+                height: integer(item["height"]) ?? 0,
+                format: (item["format"].string ?? "jpeg").trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+    }
+
+    /// Uploads a JPEG image via official 7.4.3 `POST https://reading.snssdk.com/reading/reader/upload/picture/`
+    /// (multipart field `picture`, filename `temp.jpeg`, `image/jpeg`, max 2 MiB) and returns its uploaded image metadata.
+    public static func uploadCommentImage(
+        _ attachment: CommentImageAttachment,
+        accountId: String? = nil,
+        http: HTTPClient = .shared
+    ) async throws -> EpisodeSocial.CommentImage {
+        guard !attachment.jpegData.isEmpty else { throw HongguoError(.input, "图片数据为空") }
+        guard attachment.jpegData.count <= CommentImageAttachment.maxUploadBytes else {
+            throw HongguoError(.input, "图片不能超过 2 MB")
+        }
+        guard !MacTestRunner.isActive, let saved = try KeychainCredentialStore().load() else {
+            throw HongguoError(.input, "请先登录再上传图片")
+        }
+        if let accountId, saved.profile?.id != accountId {
+            throw HongguoError(.cancelled, "账号已切换")
+        }
+        try Task.checkCancellation()
+        guard let url = URL(string: "https://reading.snssdk.com/reading/reader/upload/picture/?aid=8662&app_name=dragon_app&version_code=74532") else {
+            throw HongguoError(.input, "上传地址无效")
+        }
+        let boundary = "Boundary-\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let body = buildMultipartPictureBody(jpegData: attachment.jpegData, boundary: boundary)
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = body
+        var options = HTTPClient.Options()
+        options.timeout = 30
+        options.maxRedirects = 0
+        options.headers["Content-Type"] = "multipart/form-data; boundary=\(boundary)"
+        options.headers["Accept"] = "application/json"
+        options.headers["Cookie"] = saved.cookie
+        for (name, value) in PersistentAppDevice.authHeaders() {
+            options.headers[name] = value
+        }
+        let response: HTTPResponse
+        do {
+            response = try await http.send(request, options: options)
+        } catch let error as HTTPStatusError where error.status == 401 {
+            Task { await AccountService.shared.notifyPossibleAuthFailure() }
+            throw HongguoError(.unavailable, "登录已过期，请重新扫码登录")
+        }
+        let payload = try JSONValue.parse(response.data)
+        return try parseUploadedImage(
+            payload,
+            width: attachment.width,
+            height: attachment.height,
+            format: attachment.format,
+            onAuthExpired: {
+                Task { await AccountService.shared.notifyPossibleAuthFailure() }
+            }
+        )
+    }
+
+    static func buildMultipartPictureBody(jpegData: Data, boundary: String) -> Data {
+        var data = Data()
+        data.append(Data("--\(boundary)\r\n".utf8))
+        data.append(Data("Content-Disposition: form-data; name=\"picture\"; filename=\"temp.jpeg\"\r\n".utf8))
+        data.append(Data("Content-Type: image/jpeg\r\n\r\n".utf8))
+        data.append(jpegData)
+        data.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        return data
+    }
+
+    static func parseUploadedImage(
+        _ payload: JSONValue,
+        width: Int,
+        height: Int,
+        format: String = "jpeg",
+        onAuthExpired: (() -> Void)? = nil
+    ) throws -> EpisodeSocial.CommentImage {
+        let code = payload["code"].signedInt ?? -1
+        let msg = AccountService.cleanText(payload["message"].string ?? payload["msg"].string)
+        if code == 103_006 {
+            onAuthExpired?()
+            throw HongguoError(.unavailable, "登录已过期，请重新扫码登录")
+        }
+        guard code == 0 else {
+            throw HongguoError(.upstream, msg.isEmpty ? "图片上传失败" : msg)
+        }
+        let uri = (payload["data"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !uri.isEmpty else {
+            throw HongguoError(.upstream, "图片上传未返回地址")
+        }
+        let cleanFormat = format.trimmingCharacters(in: .whitespacesAndNewlines)
+        return EpisodeSocial.CommentImage(
+            url: secure(uri),
+            width: max(0, width),
+            height: max(0, height),
+            format: cleanFormat.isEmpty ? "jpeg" : cleanFormat
         )
     }
 
     /// Publishes an episode comment to `/novel/commentapi/comment/add/v1/` (signed in).
     /// Matches official 7.4.3 `FQCRpcAddCommentRequest` (`commit_source=10`, `group_type=30`,
-    /// `data_type=4`, `comment_type=0`, `business_param.book_id`, `business_param.offset`).
+    /// `data_type=4`, `comment_type=0`, `image_data`, `business_param.book_id`, `business_param.offset`).
     public static func postComment(
         seriesId: String,
         vid: String,
         text: String,
+        images: [CommentImageAttachment] = [],
         offsetMs: Int64 = 0,
         accountId: String? = nil,
         http: HTTPClient = .shared
@@ -288,8 +462,9 @@ public enum EpisodeSocialService {
             throw HongguoError(.input, "剧集编号无效")
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw HongguoError(.input, "评论内容不能为空") }
+        guard !trimmed.isEmpty || !images.isEmpty else { throw HongguoError(.input, "请输入评论内容或选择图片") }
         guard trimmed.count <= 1000 else { throw HongguoError(.input, "评论内容不能超过 1000 字") }
+        guard images.count <= 3 else { throw HongguoError(.input, "单条评论最多上传 3 张图片") }
         guard !MacTestRunner.isActive, let saved = try KeychainCredentialStore().load() else {
             throw HongguoError(.input, "请先登录再发表评论")
         }
@@ -297,7 +472,14 @@ public enum EpisodeSocialService {
             throw HongguoError(.cancelled, "账号已切换")
         }
         try Task.checkCancellation()
-        let body = postCommentBody(seriesId: seriesId, vid: vid, text: trimmed, offsetMs: offsetMs)
+        var uploaded: [EpisodeSocial.CommentImage] = []
+        for attachment in images {
+            try Task.checkCancellation()
+            let image = try await uploadCommentImage(attachment, accountId: accountId, http: http)
+            uploaded.append(image)
+        }
+        try Task.checkCancellation()
+        let body = postCommentBody(seriesId: seriesId, vid: vid, text: trimmed, images: uploaded, offsetMs: offsetMs)
         let payload: JSONValue
         do {
             payload = try await AppCommentClient.post(
@@ -313,6 +495,7 @@ public enum EpisodeSocialService {
         let posted = try parsePostedComment(
             payload,
             fallbackText: trimmed,
+            fallbackImages: uploaded,
             fallbackAuthor: saved.profile?.nickname ?? "",
             fallbackAvatar: "",
             onAuthExpired: {
@@ -323,8 +506,14 @@ public enum EpisodeSocialService {
         return posted
     }
 
-    static func postCommentBody(seriesId: String, vid: String, text: String, offsetMs: Int64 = 0) -> [String: Any] {
-        [
+    static func postCommentBody(
+        seriesId: String,
+        vid: String,
+        text: String,
+        images: [EpisodeSocial.CommentImage] = [],
+        offsetMs: Int64 = 0
+    ) -> [String: Any] {
+        var body: [String: Any] = [
             "aid": 8662,
             "commit_source": 10,
             "group_id": vid,
@@ -337,11 +526,23 @@ public enum EpisodeSocialService {
                 "offset": max(0, offsetMs),
             ],
         ]
+        if !images.isEmpty {
+            body["image_data"] = images.map { image in
+                [
+                    "web_uri": image.url,
+                    "width": max(0, image.width),
+                    "height": max(0, image.height),
+                    "format": image.format.isEmpty ? "jpeg" : image.format,
+                ] as [String: Any]
+            }
+        }
+        return body
     }
 
     static func parsePostedComment(
         _ payload: JSONValue,
         fallbackText: String,
+        fallbackImages: [EpisodeSocial.CommentImage] = [],
         fallbackAuthor: String,
         fallbackAvatar: String,
         now: Date = Date(),
@@ -361,18 +562,20 @@ public enum EpisodeSocialService {
             if parsed.author.isEmpty { parsed.author = fallbackAuthor }
             if parsed.avatar.isEmpty { parsed.avatar = secure(fallbackAvatar) }
             if parsed.createdAt == nil { parsed.createdAt = now }
+            if parsed.images.isEmpty && !fallbackImages.isEmpty { parsed.images = fallbackImages }
             return parsed
         }
         let cid = info["comment_id"].idString
             ?? payload["data"]["comment_id"].idString
-            ?? DownloadNaming.sha256Prefix("\(fallbackAuthor)\u{0}\(now.timeIntervalSince1970)\u{0}\(fallbackText)", 32)
+            ?? DownloadNaming.sha256Prefix("\(fallbackAuthor)\u{0}\(now.timeIntervalSince1970)\u{0}\(fallbackText)\u{0}\(fallbackImages.first?.url ?? "")", 32)
         return .init(
             id: cid,
             author: fallbackAuthor,
             avatar: secure(fallbackAvatar),
             content: fallbackText,
             createdAt: now,
-            likes: 0
+            likes: 0,
+            images: fallbackImages
         )
     }
 

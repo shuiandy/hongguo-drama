@@ -298,4 +298,68 @@ final class EpisodeSocialTests: XCTestCase {
             XCTFail("unexpected error \(error)")
         }
     }
+
+    func testCommentImagesParsingUploadAndPostBody() throws {
+        let img = EpisodeSocial.CommentImage(
+            url: "https://p0-reading-private.snssdk.com/tos-cn-i-1yzifmftcy/demo.jpeg",
+            width: 800,
+            height: 600,
+            format: "jpeg"
+        )
+        let body = EpisodeSocialService.postCommentBody(
+            seriesId: Self.sid,
+            vid: "7000000000000000011",
+            text: "",
+            images: [img],
+            offsetMs: 4200
+        )
+        let imageData = body["image_data"] as? [[String: Any]]
+        XCTAssertEqual(imageData?.count, 1)
+        XCTAssertEqual(imageData?.first?["web_uri"] as? String, img.url)
+        XCTAssertEqual(imageData?.first?["width"] as? Int, 800)
+        XCTAssertEqual(imageData?.first?["height"] as? Int, 600)
+        XCTAssertEqual(imageData?.first?["format"] as? String, "jpeg")
+
+        let multipart = EpisodeSocialService.buildMultipartPictureBody(jpegData: Data([0xFF, 0xD8, 0xFF]), boundary: "TESTBOUNDARY")
+        let multipartText = String(decoding: multipart, as: UTF8.self)
+        XCTAssertTrue(multipartText.contains("name=\"picture\"; filename=\"temp.jpeg\""))
+        XCTAssertTrue(multipartText.contains("Content-Type: image/jpeg"))
+
+        let uploadJSON = try JSONValue.parse(#"{"code":0,"message":"SUCCESS","data":"http://p0-reading-private.snssdk.com/tos/img.jpeg"}"#)
+        let uploaded = try EpisodeSocialService.parseUploadedImage(uploadJSON, width: 640, height: 480)
+        XCTAssertEqual(uploaded.url, "https://p0-reading-private.snssdk.com/tos/img.jpeg")
+        XCTAssertEqual(uploaded.width, 640)
+        XCTAssertEqual(uploaded.height, 480)
+
+        let imageOnlyComment = try JSONValue.parse(#"""
+        {
+          "comment_id": "99010",
+          "common": {
+            "content": {
+              "text": "",
+              "image_data_list": {
+                "image_data": [{
+                  "web_url": "http://img.example.com/full.jpeg",
+                  "thumb_nails": [{"web_url": "http://img.example.com/thumb.jpeg"}],
+                  "width": 1080,
+                  "height": 1440,
+                  "format": "jpeg"
+                }]
+              }
+            },
+            "create_timestamp": 1763600000,
+            "user_info": {"base_info": {"user_name": "图评用户"}}
+          },
+          "stat": {"digg_count": 3, "reply_count": 0}
+        }
+        """#)
+        let parsed = try XCTUnwrap(EpisodeSocialService.parseComment(imageOnlyComment))
+        XCTAssertEqual(parsed.id, "99010")
+        XCTAssertEqual(parsed.content, "")
+        XCTAssertEqual(parsed.images.count, 1)
+        XCTAssertEqual(parsed.images.first?.url, "https://img.example.com/full.jpeg")
+        XCTAssertEqual(parsed.images.first?.thumbnailUrl, "https://img.example.com/thumb.jpeg")
+        XCTAssertEqual(parsed.images.first?.width, 1080)
+        XCTAssertEqual(parsed.images.first?.height, 1440)
+    }
 }
