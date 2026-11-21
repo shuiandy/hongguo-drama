@@ -9,15 +9,20 @@ let package = Package(
     products: [
         .library(name: "HongguoCore", targets: ["HongguoCore"]),
         .library(name: "HongguoPlayback", targets: ["HongguoPlayback"]),
+        .library(name: "AppLogic", targets: ["AppLogic"]),
     ],
     targets: [
         // Models, signing, App and website sources, identity, CDN candidates, caches.
         .target(name: "HongguoCore", path: "Sources/HongguoCore"),
         // Hongguo episode resolving and the decrypt-while-streaming loader (from the iOS app).
         .target(name: "HongguoPlayback", dependencies: ["HongguoCore"], path: "Sources/HongguoPlayback"),
+        // The apps' pure rules with no UI or network (from the iOS app's Logic/): feed and series
+        // advance, gesture math, sleep timer, sync and merge rules.
+        .target(name: "AppLogic", path: "Sources/AppLogic"),
         .testTarget(name: "HongguoCoreTests", dependencies: ["HongguoCore"],
                     path: "Tests/HongguoCoreTests", exclude: ["Fixtures"]),
         .testTarget(name: "HongguoPlaybackTests", dependencies: ["HongguoPlayback"], path: "Tests/HongguoPlaybackTests"),
+        .testTarget(name: "AppLogicTests", dependencies: ["AppLogic"], path: "Tests/AppLogicTests"),
         // Live probes of the App catalogue and playback, skipped unless HONGGUO_PROBE is set.
         .testTarget(name: "HongguoProbeTests", dependencies: ["HongguoCore", "HongguoPlayback"], path: "Tests/HongguoProbeTests"),
     ]
