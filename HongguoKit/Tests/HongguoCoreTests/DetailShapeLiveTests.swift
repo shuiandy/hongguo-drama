@@ -186,7 +186,7 @@ final class DetailShapeLiveTests: XCTestCase {
 
         func legacyGET(host: String, path: String, values: [(String, String)]) throws -> (url: String, headers: [(String, String)]) {
             let signer = AppLegacySigner.shared
-            let device = AppLegacySigner.merged(AppLegacySigner.versioned("72232", "7.2.2.32"),
+            let device = AppLegacySigner.merged(AppLegacySigner.versioned(AppLegacySigner.currentVersionCode, AppLegacySigner.currentVersionName),
                                                 [("iid", identity.iid), ("device_id", identity.deviceId), ("cdid", identity.cdid)])
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             let ts = UInt32(now / 1000)
@@ -197,13 +197,13 @@ final class DetailShapeLiveTests: XCTestCase {
                 let url = "https://\(host)\(path)?\(query)"
                 guard AppLegacySigner.branch(querySm3: AppCrypto.sm3(Array(query.utf8)), bodyMd5: [UInt8](repeating: 0, count: 16), ts: ts) == 0 else { continue }
                 return (url, [
-                    ("User-Agent", AppLegacySigner.searchUA), ("Accept", "application/json; charset=utf-8,application/x-protobuf"),
+                    ("User-Agent", AppLegacySigner.currentSearchUA), ("Accept", "application/json; charset=utf-8,application/x-protobuf"),
                     ("x-ss-req-ticket", ticket), ("x-tt-request-tag", "t=0;n=0"), ("sdk-version", "2"),
                     ("passport-sdk-version", "50561"), ("x-xs-from-web", "0"), ("x-khronos", String(ts)),
                     ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
                     ("x-gorgon", AppLegacySigner.xGorgon(query: query, body: nil, ts: ts, random: signer.random32() >> 16)),
                     ("x-helios", signer.helios(ts: ts)),
-                    ("x-medusa", try signer.medusa(url: url, body: nil, ts: ts, deviceId: identity.deviceId, versionName: "7.2.2.32", nowMillis: now)),
+                    ("x-medusa", try signer.medusa(url: url, body: nil, ts: ts, deviceId: identity.deviceId, versionName: AppLegacySigner.currentVersionName, nowMillis: now)),
                     ("x-tt-dt", dTokenValue),
                 ])
             }

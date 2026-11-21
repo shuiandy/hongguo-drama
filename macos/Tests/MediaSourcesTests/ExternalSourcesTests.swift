@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import XCTest
 @testable import HongguoCore
+@testable import MediaSources
 
 final class ExternalSourcesTests: XCTestCase {
     final class Log: @unchecked Sendable {

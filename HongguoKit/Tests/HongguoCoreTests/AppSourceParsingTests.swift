@@ -86,8 +86,8 @@ final class AppSourceParsingTests: XCTestCase {
             "video_1": row("bytevc1", 1080, 1920, url: "https:\\/\\/a.fqnovelvod.com\\/x.mp4?a=1\\u0026b=2", encrypt: false),
             "video_2": row("h264", 540, 960, url: "https://a.qznovelvod.com/low.mp4", encrypt: false),
         ])
-        // HEVC wins only because H.264 is ranked first globally; here H.264 exists, so it is chosen.
-        XCTAssertEqual(try AppSource.parsePlayModel(info, vid: "1", inline: true).url.lastPathComponent, "low.mp4")
+        // Higher resolution hardware-decodable stream (1080p HEVC) beats lower resolution H.264 (540p).
+        XCTAssertEqual(try AppSource.parsePlayModel(info, vid: "1", inline: true).url.lastPathComponent, "x.mp4")
         let hevcOnly = try model(["video_1": row("bytevc1", 1080, 1920, url: "https:\\/\\/a.fqnovelvod.com\\/x.mp4?a=1\\u0026b=2", encrypt: 0)])
         let play = try AppSource.parsePlayModel(hevcOnly, vid: "1", inline: true)
         XCTAssertEqual(play.codec, "hevc")
@@ -154,5 +154,15 @@ final class AppSourceParsingTests: XCTestCase {
         let payload = try JSONValue.parse(Data(try AppSource.modelPayload(vids: ["1"])))
         XCTAssertEqual(payload["dr_scene"].string, "player")
         XCTAssertEqual(payload["mixed_video_id_map"]["1004"].array?.count, 1)
+    }
+
+    func testEmptyKeySeedDoesNotBreakPlainURL() throws {
+        let info = try model(
+            ["video_1": row("hevc", 1080, 1920, url: "https://a.fqnovelvod.com/plain.mp4", encrypt: false)],
+            extra: ["key_seed": ""]
+        )
+        let play = try AppSource.parsePlayModel(info, vid: "1", inline: true)
+        XCTAssertEqual(play.url.absoluteString, "https://a.fqnovelvod.com/plain.mp4")
+        XCTAssertEqual(play.codec, "hevc")
     }
 }

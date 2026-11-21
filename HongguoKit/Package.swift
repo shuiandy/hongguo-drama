@@ -19,6 +19,6 @@ let package = Package(
                     path: "Tests/HongguoCoreTests", exclude: ["Fixtures"]),
         .testTarget(name: "HongguoPlaybackTests", dependencies: ["HongguoPlayback"], path: "Tests/HongguoPlaybackTests"),
         // Live probes of the App catalogue and playback, skipped unless HONGGUO_PROBE is set.
-        .testTarget(name: "HongguoProbeTests", dependencies: ["HongguoCore"], path: "Tests/HongguoProbeTests"),
+        .testTarget(name: "HongguoProbeTests", dependencies: ["HongguoCore", "HongguoPlayback"], path: "Tests/HongguoProbeTests"),
     ]
 )

@@ -14,18 +14,44 @@ public struct EpisodeSocial: Sendable, Equatable {
         public var likes: Int
         /// Series reviews carry a score out of 10; episode comments do not.
         public var rating: Int?
+        /// Number of replies on this comment (`stat.reply_count`).
+        public var replyCount: Int
 
-        public init(id: String, author: String, avatar: String, content: String, createdAt: Date?, likes: Int, rating: Int? = nil) {
+        public init(id: String, author: String, avatar: String, content: String, createdAt: Date?, likes: Int, rating: Int? = nil, replyCount: Int = 0) {
             self.id = id; self.author = author; self.avatar = avatar; self.content = content
-            self.createdAt = createdAt; self.likes = likes; self.rating = rating
+            self.createdAt = createdAt; self.likes = likes; self.rating = rating; self.replyCount = replyCount
         }
     }
 
-    public struct CastMember: Sendable, Equatable, Identifiable {
+    public struct Reply: Sendable, Equatable, Identifiable {
+        public var id: String
+        public var author: String
+        public var avatar: String
+        public var content: String
+        public var createdAt: Date?
+        public var likes: Int
+        /// Nickname of the user being replied to when replying to another reply; "" for direct replies to the comment.
+        public var replyToAuthor: String
+
+        public init(id: String, author: String, avatar: String, content: String, createdAt: Date?, likes: Int, replyToAuthor: String = "") {
+            self.id = id; self.author = author; self.avatar = avatar; self.content = content
+            self.createdAt = createdAt; self.likes = likes; self.replyToAuthor = replyToAuthor
+        }
+    }
+
+    public struct CastMember: Sendable, Hashable, Identifiable {
         public var id: String
         public var name: String
         public var role: String
         public var avatar: String
+        /// The actor's own introduction, "" when there is none.
+        public var intro: String = ""
+        /// `encrypted_celebrity_id`, the key of the official actor panel's works read
+        /// (`/reading/user/celebrity/works/v1/`, not used: the home page has more); "" when none.
+        public var encryptedId: String = ""
+        /// The actor's own 红果 account (`uid` in `schema`, `sslocal://guest_profile?uid=…`), whose
+        /// user profile is the official actor home page; "" when the entry has none.
+        public var profileUserId: String = ""
     }
 
     public var seriesId: String
@@ -124,6 +150,16 @@ public enum EpisodeSocialService {
         }
     }
 
+    public struct ReplyPage: Sendable, Equatable {
+        public var replies: [EpisodeSocial.Reply]
+        public var total: Int?
+        public var cursor: String
+        public var hasMore: Bool
+        public init(replies: [EpisodeSocial.Reply], total: Int?, cursor: String, hasMore: Bool) {
+            self.replies = replies; self.total = total; self.cursor = cursor; self.hasMore = hasMore
+        }
+    }
+
     private static let cache = TTLCache<EpisodeSocial>(limit: 64)
 
     /// One episode's social panel: series facts, collect count, cast, tags and the episode's like
@@ -147,7 +183,9 @@ public enum EpisodeSocialService {
             throw HongguoError(.unavailable, "剧集信息和评论暂时取不到，请稍后重试")
         }
         let result = social(seriesId: seriesId, vid: vid, detail: detail, stats: stats, comments: appComments)
-        await cache.set(key, result, ttl: 60)
+        if detail != nil && appComments != nil {
+            await cache.set(key, result, ttl: 60)
+        }
         return result
     }
 
@@ -197,9 +235,10 @@ public enum EpisodeSocialService {
     /// One page of the App comment list (`data`): episode comments, or series reviews with their
     /// score out of 10 (`comment.expand.score`).
     static func commentPage(from data: JSONValue) -> CommentPage {
+        let rawList = data["data_list"].array ?? []
         var seen = Set<String>()
         var parsed: [EpisodeSocial.Comment] = []
-        for row in data["data_list"].array ?? [] {
+        for row in rawList {
             let c = row["comment"]
             let common = c["common"]
             guard let rawText = common["content"]["text"].string,
@@ -221,20 +260,93 @@ public enum EpisodeSocialService {
                 content: content,
                 createdAt: created,
                 likes: integer(c["stat"]["digg_count"]) ?? 0,
-                rating: score.flatMap { (1...10).contains($0) ? $0 : nil }
+                rating: score.flatMap { (1...10).contains($0) ? $0 : nil },
+                replyCount: integer(c["stat"]["reply_count"]) ?? 0
             ))
         }
         let listInfo = data["common_list_info"]
         let nextCursor = listInfo["cursor"].string ?? listInfo["cursor"].idString ?? ""
-        let hasMore = listInfo["has_more"].bool == true && !nextCursor.isEmpty && !parsed.isEmpty
+        let hasMore = listInfo["has_more"].bool == true && !nextCursor.isEmpty && !rawList.isEmpty
         return CommentPage(comments: parsed, total: integer(listInfo["total"]), cursor: nextCursor, hasMore: hasMore)
+    }
+
+    /// Fetches one page of replies for an episode comment from the official App comment API
+    /// (`/novel/commentapi/reply/list/<commentId>/v1/`, `comment_source=504, server_channel=18, comment_type=4`).
+    public static func repliesPage(
+        seriesId: String,
+        vid: String,
+        commentId: String,
+        cursor: String = "",
+        count: Int = 10,
+        http: HTTPClient = .shared
+    ) async throws -> ReplyPage {
+        guard seriesId.matchesDigits(min: 6, max: 30),
+              vid.matchesDigits(min: 6, max: 30),
+              commentId.matchesDigits(min: 1, max: 30) else {
+            throw HongguoError(.input, "评论回复请求参数无效")
+        }
+        let pageSize = min(max(count, 1), 20)
+        let payload = try await AppCommentClient.post("/novel/commentapi/reply/list/\(commentId)/v1/", body: [
+            "comment_source": 504,
+            "server_channel": 18,
+            "group_id": vid,
+            "group_type": 30,
+            "comment_id": commentId,
+            "comment_type": 4,
+            "count": pageSize,
+            "cursor": cursor,
+            "aid": 8662,
+            "compliance_status": 0,
+            "business_param": ["book_id": seriesId],
+        ], headers: [("Comment-Source", "504"), ("Server-Channel", "18")] + PersistentAppDevice.authHeaders(), http: http)
+        guard Int(payload["code"].number ?? -1) == 0 else { throw HongguoError(.upstream, "评论回复接口暂时不可用") }
+        return replyPage(from: payload["data"])
+    }
+
+    /// One page of replies (`data`): rows live under `reply_list` with a capitalised `Common` block
+    /// and pagination metadata in `comment_list_info`.
+    static func replyPage(from data: JSONValue) -> ReplyPage {
+        let rawList = data["reply_list"].array ?? []
+        var seen = Set<String>()
+        var parsed: [EpisodeSocial.Reply] = []
+        for row in rawList {
+            let common = row["Common"].isNull ? row["common"] : row["Common"]
+            guard let rawText = common["content"]["text"].string,
+                  !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            let base = common["user_info"]["base_info"]
+            let author = String((base["user_name"].string ?? "").prefix(200))
+            let rawAvatar = [base["user_avatar"].string, base["expand_user_avatar"].string]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first { !$0.isEmpty } ?? ""
+            let created = date(common["create_timestamp"])
+            let content = String(rawText.prefix(20000))
+            let rid = row["reply_id"].idString ?? DownloadNaming.sha256Prefix("\(author)\u{0}\(created?.timeIntervalSince1970 ?? 0)\u{0}\(content)", 32)
+            guard seen.insert(rid).inserted else { continue }
+            let toReplyId = row["reply_to_reply_id"].idString ?? ""
+            let rawReplyToAuthor = (!toReplyId.isEmpty && toReplyId != "0")
+                ? (row["reply_to_user_info"]["base_info"]["user_name"].string ?? "")
+                : ""
+            let replyToAuthor = String(rawReplyToAuthor.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
+            parsed.append(.init(
+                id: rid,
+                author: author,
+                avatar: secure(rawAvatar),
+                content: content,
+                createdAt: created,
+                likes: integer(row["stat"]["digg_count"]) ?? 0,
+                replyToAuthor: replyToAuthor
+            ))
+        }
+        let listInfo = data["comment_list_info"].isNull ? data["common_list_info"] : data["comment_list_info"]
+        let nextCursor = listInfo["cursor"].string ?? listInfo["cursor"].idString ?? ""
+        let hasMore = listInfo["has_more"].bool == true && !nextCursor.isEmpty && !rawList.isEmpty
+        return ReplyPage(replies: parsed, total: integer(listInfo["total"]), cursor: nextCursor, hasMore: hasMore)
     }
 
     /// Counts and times arrive as numbers or as digit strings.
     static func integer(_ value: JSONValue) -> Int? {
-        if let number = value.number, number.isFinite, number >= 0 { return Int(number) }
-        if let text = value.string, let parsed = Int(text), parsed >= 0 { return parsed }
-        return nil
+        guard let parsed = value.signedInt, parsed >= 0 else { return nil }
+        return parsed
     }
 
     static func date(_ value: JSONValue) -> Date? {
@@ -256,7 +368,18 @@ public enum EpisodeSocialService {
             guard seen.insert(id).inserted else { return nil }
             let subtitle = (person["sub_title"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return .init(id: id, name: name, role: subtitle.isEmpty ? (person["role_name"].string ?? "") : subtitle,
-                         avatar: secure(person["avatar"].string ?? ""))
+                         avatar: secure(person["avatar"].string ?? ""),
+                         intro: String((person["intro"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(2000)),
+                         encryptedId: (person["encrypted_celebrity_id"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
+                         profileUserId: profileUserId(person["schema"].string))
         }
+    }
+
+    /// `uid` of a `sslocal://guest_profile?uid=…` link; "" for anything else.
+    static func profileUserId(_ schema: String?) -> String {
+        guard let text = schema?.trimmingCharacters(in: .whitespacesAndNewlines), let parts = URLComponents(string: text),
+              parts.host == "guest_profile",
+              let uid = parts.queryItems?.first(where: { $0.name == "uid" })?.value, uid.matchesDigits(min: 6, max: 30) else { return "" }
+        return uid
     }
 }

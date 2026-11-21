@@ -59,6 +59,23 @@ public enum CodecFallback {
         return parts.string ?? fallback
     }
 
+    static func extractEntries(from data: JSONValue) -> [JSONValue] {
+        var result: [JSONValue] = []
+        for key in ["1004", "1001", "video_model_data"] {
+            if let obj = data[key].object, !obj.isEmpty { result.append(data[key]) }
+        }
+        if let obj = data.object, !obj.isEmpty { result.append(data) }
+        return result
+    }
+
+    static func lookupEntry(vid: String, in data: JSONValue) -> JSONValue {
+        for bucket in extractEntries(from: data) {
+            let entry = bucket[vid]
+            if !entry.isNull { return entry }
+        }
+        return .null
+    }
+
     /// The play model as the core asks for it, and the fallback address inside it.
     private static func model(vid: String, transport: AppTransport) async throws -> JSONValue {
         let payload = try AppSource.modelPayload(vids: [vid])
@@ -67,12 +84,10 @@ public enum CodecFallback {
         let signed = try AppSource.modelRequest(base: AppSource.playerAPI, payload: payload, identity: identity)
         let response = try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers + dToken, body: signed.body,
                                                        deadline: Date().addingTimeInterval(12))
-        guard (response["Code"].number ?? response["code"].number ?? 0) == 0 else {
+        guard response["Code"].isZeroOrMissingStatusCode && response["code"].isZeroOrMissingStatusCode else {
             throw HongguoError(.upstream, "App 接口暂未提供本集播放信息")
         }
-        let data = response["data"]
-        let entries = !data["1004"].isNull ? data["1004"] : (!data["video_model_data"].isNull ? data["video_model_data"] : data)
-        let entry = entries[vid]
+        let entry = lookupEntry(vid: vid, in: response["data"])
         if let text = entry["video_model"].string { return (try? JSONValue.parse(text)) ?? .null }
         return entry["video_model"]
     }
@@ -81,7 +96,8 @@ public enum CodecFallback {
         guard let fallback = AppSource.parseFallback(model["fallback_api"]), !fallback.isEmpty else {
             throw HongguoError(.upstream, "App 接口未返回备用片源地址")
         }
-        return try await fetchFallback(fallback, variant: variant, transport: transport, extraHeaders: [],
+        let dToken = await PersistentAppDevice.shared.dTokenHeaders()
+        return try await fetchFallback(fallback, variant: variant, transport: transport, extraHeaders: dToken,
                                        deadline: Date().addingTimeInterval(12))
     }
 
@@ -92,7 +108,8 @@ public enum CodecFallback {
             headers: [("User-Agent", AppSource.iosPlayerUA)] + extraHeaders,
             deadline: deadline
         )
-        for value in [outer, outer["video_info"]] where (value["Code"].number ?? value["code"].number ?? 0) != 0 {
+        for value in [outer, outer["video_info"]]
+        where !value["Code"].isZeroOrMissingStatusCode || !value["code"].isZeroOrMissingStatusCode {
             throw HongguoError(.upstream, "备用片源接口没有给出播放信息")
         }
         return outer["video_info"]["data"]
@@ -108,7 +125,9 @@ public enum CodecFallback {
         vid: String,
         transport: AppTransport,
         extraHeaders: [(String, String)],
-        deadline: Date
+        deadline: Date,
+        requireEncryptionMetadata: Bool = false,
+        minimumPixels: Int = 0
     ) async -> PlayInfo? {
         for variant in [Variant.forceH264, .codecTypeZero] {
             guard deadline.timeIntervalSinceNow >= 1 else { break }
@@ -124,7 +143,13 @@ public enum CodecFallback {
                    abs(otherDur - expectedDur) > 0.5 {
                     continue
                 }
-                let parsed = try AppSource.parsePlayModel(info, vid: vid, inline: false)
+                let parsed = try AppSource.parsePlayModel(
+                    info,
+                    vid: vid,
+                    inline: false,
+                    requireEncryptionMetadata: requireEncryptionMetadata,
+                    minimumPixels: minimumPixels
+                )
                 if !parsed.isByteVC2 {
                     return parsed
                 }
@@ -153,7 +178,12 @@ public enum CodecFallback {
                     if length > 0, otherLength > 0, abs(length - otherLength) > 0.5 {
                         throw HongguoError(.upstream, "备用片源时长对不上")
                     }
-                    return try AppSource.parsePlayModel(info, vid: vid, inline: false)
+                    let parsed = try AppSource.parsePlayModel(info, vid: vid, inline: false)
+                    guard !parsed.isByteVC2 else {
+                        last = HongguoError(.upstream, "备用片源仍然只有 ByteVC2")
+                        continue
+                    }
+                    return parsed
                 } catch {
                     last = error
                 }

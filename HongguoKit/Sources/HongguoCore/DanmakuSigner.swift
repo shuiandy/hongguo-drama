@@ -57,10 +57,13 @@ public enum DanmakuSigner {
 
     // MARK: Query
 
-    static func baseParams(deviceId: String, installId: String) -> [(String, String)] {
+    /// The query of the comment client, on the same Android version as every legacy-signed request
+    /// (`AppLegacySigner.currentVersionName`); the signing test replays its vectors on theirs.
+    static func baseParams(deviceId: String, installId: String,
+                           version: AppLegacySigner.ClientVersion = .current) -> [(String, String)] {
         [
-            ("aid", "8662"), ("app_name", "novelread"), ("version_code", "73532"), ("version_name", "7.3.5.32"),
-            ("manifest_version_code", "73532"), ("update_version_code", "73532"), ("channel", "update_64"),
+            ("aid", "8662"), ("app_name", "novelread"), ("version_code", version.code), ("version_name", version.name),
+            ("manifest_version_code", version.code), ("update_version_code", version.code), ("channel", "update_64"),
             ("device_platform", "android"), ("os", "android"), ("ssmix", "a"), ("device_type", "25053RT47C"),
             ("device_brand", "Redmi"), ("language", "zh"), ("os_api", "36"), ("os_version", "16"),
             ("resolution", "1280*2772"), ("dpi", "520"), ("ac", "wifi"), ("device_id", deviceId), ("iid", installId),
@@ -82,7 +85,11 @@ public enum DanmakuSigner {
 
     /// Keys sorted bytewise, like Go `url.Values.Encode`.
     public static func buildQuery(stampMs: Int64, deviceId: String, installId: String) -> String {
-        var params = baseParams(deviceId: deviceId, installId: installId)
+        buildQuery(stampMs: stampMs, deviceId: deviceId, installId: installId, version: .current)
+    }
+
+    static func buildQuery(stampMs: Int64, deviceId: String, installId: String, version: AppLegacySigner.ClientVersion) -> String {
+        var params = baseParams(deviceId: deviceId, installId: installId, version: version)
         params.append(("_rticket", String(stampMs)))
         params.sort { Array($0.0.utf8).lexicographicallyPrecedes(Array($1.0.utf8)) }
         return params.map { "\(quotePlus($0.0))=\(quotePlus($0.1))" }.joined(separator: "&")
@@ -90,13 +97,16 @@ public enum DanmakuSigner {
 
     // MARK: X-Gorgon
 
-    static func gorgon(rawQuery: String, stamp: Int64, nonce: [UInt8]) -> String {
+    static func gorgon(rawQuery: String, stamp: Int64, nonce: [UInt8], bodyMd5: [UInt8]? = nil) -> String {
         let head2 = UInt8(truncatingIfNeeded: ((Int(nonce[0]) % 7) + 1) << 5)
         let head3 = 0xE0 | (nonce[1] & 0x0F)
 
         var seed = [UInt8](repeating: 0, count: 20)
         let digest = AppCrypto.md5(Array(rawQuery.utf8))
         seed.replaceSubrange(0..<4, with: digest[0..<4])
+        if let bodyMd5, bodyMd5.count >= 4 {
+            seed.replaceSubrange(4..<8, with: bodyMd5[0..<4])
+        }
         seed.replaceSubrange(12..<16, with: [0, 1, 7, 4])
         seed.replaceSubrange(16..<20, with: AppCrypto.be32Bytes(UInt32(truncatingIfNeeded: stamp)))
 
@@ -153,7 +163,10 @@ public enum DanmakuSigner {
 
     // MARK: X-Argus
 
-    static func argus(rawQuery: String, timestamp: Int64, nonce: [UInt8]) throws -> String {
+    /// `appVersion` is field 7 of the Argus record: the app version the SDK reports.
+    static func argus(rawQuery: String, timestamp: Int64, nonce: [UInt8],
+                      appVersion: String = AppLegacySigner.currentVersionName,
+                      bodyMd5: [UInt8]? = nil) throws -> String {
         let key = argusKey
         var parts: [UInt8] = []
         func varint(_ field: UInt64, _ value: UInt64) {
@@ -170,12 +183,12 @@ public enum DanmakuSigner {
         varint(3, UInt64(AppCrypto.readLE32(nonce, 6)))
         bytesField(4, Array("3019".utf8))
         bytesField(6, Array("1611921764".utf8))
-        bytesField(7, Array("6.8.1.32".utf8))
+        bytesField(7, Array(appVersion.utf8))
         bytesField(8, Array("v04.07.01-ml-android".utf8))
         varint(9, 135_135_744)
         bytesField(10, [UInt8](repeating: 0, count: 8))
         varint(12, UInt64(bitPattern: timestamp &* 2))
-        let bodyHash = AppCrypto.sm3([UInt8](repeating: 0, count: 16))
+        let bodyHash = AppCrypto.sm3(bodyMd5 ?? [UInt8](repeating: 0, count: 16))
         let queryHash = AppCrypto.sm3(Array(rawQuery.utf8))
         bytesField(13, Array(bodyHash[0..<6]))
         bytesField(14, Array(queryHash[0..<6]))
@@ -224,15 +237,27 @@ public enum DanmakuSigner {
     // MARK: Headers
 
     /// All signing headers, in the reference's order. `stamp` is in seconds and must match the
-    /// `_rticket` (milliseconds) inside `rawQuery`.
-    public static func headers(rawQuery: String, stamp: Int64, nonce: [UInt8], aid: String = "8662") throws -> [(String, String)] {
+    /// `_rticket` (milliseconds) inside `rawQuery`. When `stampMs` and `body` are supplied on live
+    /// POST requests, `X-SS-Req-Ticket` matches `_rticket` to the millisecond and `X-SS-STUB` /
+    /// Gorgon / Argus include the body digest.
+    public static func headers(rawQuery: String, stamp: Int64, nonce: [UInt8], aid: String = "8662",
+                               stampMs: Int64? = nil, body: Data? = nil) throws -> [(String, String)] {
+        try headers(rawQuery: rawQuery, stamp: stamp, nonce: nonce, aid: aid,
+                    argusVersion: AppLegacySigner.currentVersionName, stampMs: stampMs, body: body)
+    }
+
+    static func headers(rawQuery: String, stamp: Int64, nonce: [UInt8], aid: String = "8662",
+                        argusVersion: String, stampMs: Int64? = nil, body: Data? = nil) throws -> [(String, String)] {
         guard nonce.count == nonceBytes else { throw HongguoError(.input, "弹幕签名随机数长度无效") }
+        let bodyMd5: [UInt8]? = body.flatMap { $0.isEmpty ? nil : AppCrypto.md5(Array($0)) }
+        let stub = bodyMd5.map { AppCrypto.hex($0, uppercase: true) } ?? ""
+        let ticket = String(stampMs ?? (stamp * 1000))
         return [
-            ("X-Gorgon", gorgon(rawQuery: rawQuery, stamp: stamp, nonce: nonce)),
+            ("X-Gorgon", gorgon(rawQuery: rawQuery, stamp: stamp, nonce: nonce, bodyMd5: bodyMd5)),
             ("X-Khronos", String(stamp)),
-            ("X-SS-Req-Ticket", String(stamp * 1000)),
-            ("X-SS-STUB", ""),
-            ("X-Argus", try argus(rawQuery: rawQuery, timestamp: stamp, nonce: nonce)),
+            ("X-SS-Req-Ticket", ticket),
+            ("X-SS-STUB", stub),
+            ("X-Argus", try argus(rawQuery: rawQuery, timestamp: stamp, nonce: nonce, appVersion: argusVersion, bodyMd5: bodyMd5)),
             ("X-Ladon", ladon(aid: aid, timestamp: stamp, prefix: Array(nonce[2..<6]))),
         ]
     }

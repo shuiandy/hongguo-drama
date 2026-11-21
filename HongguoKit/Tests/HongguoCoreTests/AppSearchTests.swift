@@ -36,6 +36,13 @@ final class AppSearchSigningTests: XCTestCase {
         }
     }
 
+    /// The client version a reference vector was signed with (requests use `ClientVersion.current`).
+    private func referenceVersion(_ item: JSONValue) throws -> AppLegacySigner.ClientVersion {
+        let query = String(try XCTUnwrap(item["url"].string).split(separator: "?")[1])
+        return .init(code: try XCTUnwrap(AppCrypto.queryParam(query, "version_code")),
+                     name: try XCTUnwrap(AppCrypto.queryParam(query, "version_name")))
+    }
+
     func testSearchRequestMatchesReference() throws {
         let identity = Self.fixture["identity"]
         let id = PlaybackIdentity(deviceId: identity["device_id"].string!, iid: identity["iid"].string!, cdid: identity["cdid"].string!)
@@ -46,7 +53,7 @@ final class AppSearchSigningTests: XCTestCase {
                                              nextOffset: c["next_offset"]?.number.map(Int.init))
             }
             let signed = try signer.search(keyword: item["keyword"].string!, page: Int(item["page"].number!), cursor: cursor,
-                                           identity: id, nowMillis: Int64(item["now"].number!))
+                                           identity: id, nowMillis: Int64(item["now"].number!), version: try referenceVersion(item))
             XCTAssertEqual(signed.url, item["url"].string)
             assertHeaders(signed, item)
             XCTAssertEqual(queue.values.count, randoms(item).count - Int(item["used"].number!), "same number of random draws")
@@ -65,7 +72,8 @@ final class AppSearchSigningTests: XCTestCase {
             let order = ["offset", "limit", "genre", "a"].filter { raw[$0] != nil }
             let body = item["body"].string.map { Array($0.utf8) }
             let signed = try signer.metadata(path: item["apiPath"].string!, values: order.map { ($0, raw[$0]!.string!) },
-                                             payload: body, identity: device, nowMillis: Int64(item["now"].number!))
+                                             payload: body, identity: device, nowMillis: Int64(item["now"].number!),
+                                             version: try referenceVersion(item))
             XCTAssertEqual(signed.url, url)
             assertHeaders(signed, item)
         }
@@ -78,7 +86,8 @@ final class AppSearchSigningTests: XCTestCase {
             let (signer, _) = signer(randoms(item))
             let raw = item["values"].object ?? [:]
             let values = (item["valueOrder"].array ?? []).map { ($0.string!, raw[$0.string!]!.string!) }
-            let signed = try signer.account(path: item["apiPath"].string!, values: values, identity: id, nowMillis: Int64(item["now"].number!))
+            let signed = try signer.account(path: item["apiPath"].string!, values: values, identity: id, nowMillis: Int64(item["now"].number!),
+                                            version: try referenceVersion(item))
             XCTAssertEqual(signed.url, item["url"].string)
             assertHeaders(signed, item)
         }
@@ -90,6 +99,29 @@ final class AppSearchSigningTests: XCTestCase {
         XCTAssertEqual(gorgon.count, 52)
         XCTAssertThrowsError(try AppLegacySigner.shared.metadata(path: "/other", values: [], payload: nil,
                                                                  identity: PlaybackIdentity(deviceId: "1", iid: "1", cdid: ""), nowMillis: 0))
+    }
+
+    func testAccountReadAndWriteUseCurrentClientVersion() throws {
+        let id = PlaybackIdentity(deviceId: "1234567890123456789", iid: "2234567890123456789", cdid: "01234567-89ab-cdef-0123-456789abcdef")
+        let read = try AppLegacySigner.shared.accountRead(
+            path: "/reading/bookapi/bookmall/tab/v/",
+            values: [("tab_type", "39"), ("bottom_tab_type", "7")],
+            identity: id,
+            nowMillis: 1_763_430_000_000
+        )
+        XCTAssertTrue(read.query.contains("version_code=\(AppLegacySigner.currentVersionCode)"))
+        XCTAssertTrue(read.query.contains("version_name=\(AppLegacySigner.currentVersionName)"))
+        XCTAssertEqual(read.headers.first { $0.0 == "User-Agent" }?.1, AppLegacySigner.currentSearchUA)
+
+        let write = try AppLegacySigner.shared.accountWrite(
+            path: "/reading/user/event/report",
+            values: [],
+            payload: Array("{}".utf8),
+            identity: id,
+            nowMillis: 1_763_430_000_000
+        )
+        XCTAssertTrue(write.query.contains("version_code=\(AppLegacySigner.currentVersionCode)"))
+        XCTAssertTrue(write.query.contains("version_name=\(AppLegacySigner.currentVersionName)"))
     }
 }
 
@@ -172,5 +204,28 @@ final class NewReleaseTests: XCTestCase {
         XCTAssertTrue(first.partial)
         let second = try await service.list()
         XCTAssertFalse(second.cached)
+    }
+}
+
+final class SearchSuggestionTests: XCTestCase {
+    func testReadsShortDramaNamesFromQueryResultV2() throws {
+        let payload = try JSONValue.parse(#"""
+        {"code":0,"data":{"query_key":"家里","query_result":["家里家外","家里来了个活爹"],
+          "query_result_v2":[{"name":"家里家外","word_type_str":"short_play_name"},{"name":"家里来了个活爹","word_type_str":"short_play_name"},
+                             {"name":"家里家外","word_type_str":"short_play_name"},{"name":"","word_type_str":"x"}]}}
+        """#)
+        XCTAssertEqual(DiscoveryAccess.parseSuggestions(payload), ["家里家外", "家里来了个活爹"])
+        XCTAssertEqual(DiscoveryAccess.parseSuggestions(try JSONValue.parse(#"{"code":1}"#)), [])
+    }
+}
+
+final class OfficialHostTests: XCTestCase {
+    func testLoginCookieGoesOnlyToOfficialHosts() {
+        XCTAssertTrue(AppBookMallAccess.isOfficialHost("https://reading.snssdk.com"))
+        XCTAssertTrue(AppBookMallAccess.isOfficialHost("https://api5-normal-sinfonlineb.fqnovel.com"))
+        XCTAssertFalse(AppBookMallAccess.isOfficialHost("http://reading.snssdk.com"))
+        XCTAssertFalse(AppBookMallAccess.isOfficialHost("https://snssdk.com.example.com"))
+        XCTAssertFalse(AppBookMallAccess.isOfficialHost("https://evilsnssdk.com"))
+        XCTAssertFalse(AppBookMallAccess.isOfficialHost("https://reading.snssdk.com:8443"))
     }
 }

@@ -1,5 +1,6 @@
 import SwiftUI
 import HongguoCore
+import MediaSources
 
 /// Keyword search. A pasted share link, `series_id=...` text or a bare id opens the series directly.
 struct SearchView: View {
@@ -73,12 +74,17 @@ struct SearchView: View {
         .transparentToolbar()
         .onAppear {
             fieldFocused = true
-            if let pending = model.pendingSearch {
-                model.pendingSearch = nil
-                query = pending
-                Task { await submit() }
-            }
+            takePendingSearch()
         }
+        .onChange(of: model.pendingSearch) { takePendingSearch() }
+    }
+
+    /// A query handed over by another page (a header search field, a tag on a detail page).
+    private func takePendingSearch() {
+        guard let pending = model.pendingSearch else { return }
+        model.pendingSearch = nil
+        query = pending
+        Task { await submit() }
     }
 
     private var searchField: some View {
@@ -206,7 +212,7 @@ struct SearchView: View {
     private func searchOtherSources(_ keyword: String, token: UUID) async {
         others = []
         guard model.settings.searchOtherSources else { return }
-        let entries = model.settings.mediaSources.filter { $0.id != "hongguo" }
+        let entries = SourceSettingsStore.shared.value.mediaSources.filter { $0.id != "hongguo" }
         guard !entries.isEmpty else { return }
         othersLoading = true
         defer { if token == searchToken { othersLoading = false } }

@@ -16,9 +16,12 @@ final class DanmakuSigningTests: XCTestCase {
         XCTAssertEqual(cases.count, 3)
         for item in cases {
             let stampMs = try XCTUnwrap(item["stampMs"].number).toInt64
-            let query = DanmakuSigner.buildQuery(stampMs: stampMs, deviceId: item["deviceId"].string!, installId: item["installId"].string!)
+            // The vectors were made on the 7.3.5.32 query with Argus app version 6.8.1.32.
+            let query = DanmakuSigner.buildQuery(stampMs: stampMs, deviceId: item["deviceId"].string!, installId: item["installId"].string!,
+                                                 version: .init(code: "73532", name: "7.3.5.32"))
             XCTAssertEqual(query, item["rawQuery"].string)
-            let headers = try DanmakuSigner.headers(rawQuery: query, stamp: stampMs / 1000, nonce: AppCrypto.fromHex(item["nonce"].string!)!)
+            let headers = try DanmakuSigner.headers(rawQuery: query, stamp: stampMs / 1000, nonce: AppCrypto.fromHex(item["nonce"].string!)!,
+                                                    argusVersion: "6.8.1.32")
             let expected = try XCTUnwrap(item["headers"].object)
             XCTAssertEqual(headers.map(\.0), ["X-Gorgon", "X-Khronos", "X-SS-Req-Ticket", "X-SS-STUB", "X-Argus", "X-Ladon"])
             for (name, value) in headers {
@@ -177,7 +180,7 @@ final class DanmakuParsingTests: XCTestCase {
         let limited = await service(transport).fetch(seriesId: Self.series, vid: Self.vid, limit: 2)
         XCTAssertEqual(limited.items.count, 2)
         XCTAssertTrue(limited.truncated)
-        let bad = await service(transport).fetch(seriesId: "xifan:a:b", vid: Self.vid)
+        let bad = await service(transport).fetch(seriesId: "other:a:b", vid: Self.vid)
         XCTAssertEqual(bad.error, "仅红果来源的剧集支持弹幕")
     }
 }

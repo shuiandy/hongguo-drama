@@ -59,7 +59,7 @@ struct AppTransport: Sendable {
     static let apiDomains = ["fqnovel.com", "snssdk.com"]
 
     func requestJSON(_ start: String, method: String = "GET", headers: [(String, String)], body: [UInt8]? = nil,
-                     deadline: Date) async throws -> JSONValue {
+                     deadline: Date, maxBytes: Int = 8 * 1024 * 1024) async throws -> JSONValue {
         var url = try AppSource.checkedURL(start, domains: Self.apiDomains)
         for _ in 0..<4 {
             try Task.checkCancellationAsApp()
@@ -70,7 +70,7 @@ struct AppTransport: Sendable {
             if let body { request.httpBody = Data(body) }
             var options = HTTPClient.Options()
             options.timeout = remaining
-            options.maxBytes = 2 * 1024 * 1024
+            options.maxBytes = maxBytes
             options.maxRedirects = 0
             options.acceptStatus = 100...599
             for (k, v) in headers { options.headers[k] = v }
@@ -116,18 +116,66 @@ struct AppTransport: Sendable {
         throw AppSourceError(.securityBlocked, "App 片源跳转次数过多")
     }
 
-    /// `URLRequest.timeoutInterval` is an idle timeout; this enforces the total budget.
+    /// `URLRequest.timeoutInterval` is an idle timeout; this enforces the total budget. It returns at
+    /// the deadline even when the operation is stuck somewhere that ignores cancellation (a system DNS
+    /// lookup): a task group would wait for that child, so the operation runs in its own task, which
+    /// is cancelled and left to finish on its own.
     func withDeadline<T: Sendable>(_ deadline: Date, _ operation: @escaping @Sendable () async throws -> T) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await operation() }
-            group.addTask {
-                let wait = max(0, deadline.timeIntervalSinceNow)
-                try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
-                throw AppSourceError(.timeout, "App 片源请求超时")
-            }
-            defer { group.cancelAll() }
-            return try await group.next()!
+        let race = DeadlineRace<T>()
+        race.setWork(Task {
+            do { race.finish(.success(try await operation())) } catch { race.finish(.failure(error)) }
+        })
+        let timer = Task {
+            try? await Task.sleep(nanoseconds: UInt64(max(0, deadline.timeIntervalSinceNow) * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            race.finish(.failure(AppSourceError(.timeout, "App 片源请求超时")))
         }
+        defer { timer.cancel() }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { race.attach($0) }
+        } onCancel: {
+            race.finish(.failure(AppSourceError(.cancelled, "已取消 App 片源请求")))
+        }
+    }
+}
+
+/// The first of an operation's result, its deadline and the caller's cancellation, delivered once;
+/// the operation's task is cancelled when it loses.
+final class DeadlineRace<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, Error>?
+    private var outcome: Result<T, Error>?
+    private var work: Task<Void, Never>?
+
+    func setWork(_ task: Task<Void, Never>) {
+        lock.lock()
+        let lost = outcome != nil
+        work = task
+        lock.unlock()
+        if lost { task.cancel() }
+    }
+
+    func attach(_ continuation: CheckedContinuation<T, Error>) {
+        lock.lock()
+        if let outcome {
+            lock.unlock()
+            continuation.resume(with: outcome)
+            return
+        }
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func finish(_ result: Result<T, Error>) {
+        lock.lock()
+        guard outcome == nil else { lock.unlock(); return }
+        outcome = result
+        let waiting = continuation
+        continuation = nil
+        let task = work
+        lock.unlock()
+        waiting?.resume(with: result)
+        task?.cancel()
     }
 }
 
@@ -157,13 +205,18 @@ enum AppSource {
         ("update_version_code", "74300"),
     ]
 
-    /// The JSON body of a play-model request for `vids` (at most 6).
+    /// The JSON body of a play-model request for `vids` (at most 6). `mixed_video_id_map` is keyed by
+    /// the video's content type, as the official client sends it: 1004 for series episodes, 1001 for
+    /// videos of a creator's collection (`UGCVideos`). One request may mix both; the reply is keyed by
+    /// vid either way.
     static func modelPayload(vids: [String]) throws -> [UInt8] {
+        var map: [String: [String]] = [:]
+        for vid in vids { map[UGCVideos.contains(vid) ? UGCVideos.modelKey : "1004", default: []].append(vid) }
         let object: [String: Any] = [
             "biz_param": ["detail_page_version": 0, "device_level": 3, "disable_digg_stat": false,
                           "disable_video_relate_book": false, "need_all_video_definition": true, "need_mp4_align": false,
                           "use_os_player": false, "use_server_dns": false, "video_platform": 1024],
-            "mixed_video_id_map": ["1004": vids],
+            "mixed_video_id_map": map,
             "dr_scene": "player",
         ]
         return Array(try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))
@@ -252,7 +305,8 @@ enum AppSource {
         let h2 = AppCrypto.sha512(AppCrypto.sha512(seed) + spadeConstants)
         var plain = try AppCrypto.aes128CBC(encrypt: false, key: Array(h2[0..<16]), iv: Array(h2[16..<32]),
                                             Array(raw[4..<(4 + cipherLength)]), pkcs7: false)
-        if let padding = plain.last, (1...16).contains(Int(padding)), Int(padding) <= plain.count {
+        if let padding = plain.last, (1...16).contains(Int(padding)), Int(padding) <= plain.count,
+           plain.suffix(Int(padding)).allSatisfy({ $0 == padding }) {
             plain.removeLast(Int(padding))
         }
         while plain.last == 0 { plain.removeLast() }
@@ -261,9 +315,14 @@ enum AppSource {
 
     struct Row { var item: JSONValue; var codec: String; var codecRank: Int; var pixels: Int; var width: Int; var height: Int }
 
-    /// Stream choice for "auto": H.264 > HEVC, then the highest tier. Every compatible encoding at the
-    /// best tier is tried before failing; lower tiers are never used silently. ByteVC2 is used last,
-    /// and only when the conversion helper is available.
+    static func containsByteVC2(_ info: JSONValue) -> Bool {
+        let items = info["video_list"].object.map { Array($0.values) } ?? info["video_list"].array ?? []
+        return items.contains { ($0["codec_type"].string ?? $0["video_meta"]["codec_type"].string)?.lowercased() == "bytevc2" }
+    }
+
+    /// Stream choice for "auto": among hardware-decodable streams (H.264 and HEVC/ByteVC1), pick
+    /// the highest resolution first and prefer H.264 over HEVC within the same tier. ByteVC2 is
+    /// strictly last, and only when the conversion helper is available.
     static func parsePlayModel(_ info: JSONValue, vid: String, inline: Bool, requireEncryptionMetadata: Bool? = nil,
                                minimumPixels: Int = 0) throws -> PlayInfo {
         let requireMetadata = requireEncryptionMetadata ?? inline
@@ -285,17 +344,24 @@ enum AppSource {
             let digits = quality.range(of: "[0-9]+", options: .regularExpression).map { Int(quality[$0]) ?? 0 } ?? 0
             let pixels = size.0 > 0 ? min(size.0, size.1) : digits
             return Row(item: item, codec: codec, codecRank: rank, pixels: pixels, width: size.0, height: size.1)
-        }.filter { $0.codecRank < 3 && (minimumPixels == 0 || min($0.width, $0.height) >= minimumPixels) }
-            .sorted { $0.codecRank != $1.codecRank ? $0.codecRank < $1.codecRank : $0.pixels > $1.pixels }
+        }.filter { $0.codecRank < 3 && (minimumPixels == 0 || $0.pixels >= minimumPixels) }
+            .sorted {
+                let lhsHw = $0.codecRank < 2
+                let rhsHw = $1.codecRank < 2
+                if lhsHw != rhsHw { return lhsHw }
+                if $0.pixels != $1.pixels { return $0.pixels > $1.pixels }
+                return $0.codecRank < $1.codecRank
+            }
         guard let best = rows.first else {
-            let onlyByteVC2 = items.contains { ($0["codec_type"].string ?? $0["video_meta"]["codec_type"].string)?.lowercased() == "bytevc2" }
+            let onlyByteVC2 = containsByteVC2(info)
             throw AppSourceError(.noCompatibleSource, onlyByteVC2
                 ? (ByteVC2Converter.executableURL == nil
                     ? "本集仅提供 ByteVC2 编码，未找到兼容转换组件，请重新安装完整版本"
                     : "本集仅提供 ByteVC2 编码，已在设置中关闭兼容转换；打开设置 > 下载 > ByteVC2 兼容转换后可播放")
                 : "本集暂未提供兼容的 H.264/HEVC 片源")
         }
-        let seed = info["key_seed"].string.map(AppCrypto.base64Decode)
+        let rawSeed = info["key_seed"].nonEmptyString.map(AppCrypto.base64Decode)
+        let seed = (rawSeed?.isEmpty == false) ? rawSeed : nil
         var lastError: Error?
         var incomplete = false
         /// First working stream among `tierRows` (already in codec preference order).
@@ -324,7 +390,16 @@ enum AppSource {
                     var validURLs: [URL] = []
                     for candidate in candidates.compactMap({ $0 }).filter({ !$0.isEmpty }) {
                         do {
-                            let media = try seed.map { try decryptSpadeURL(candidate, seed: $0) } ?? cleanURL(candidate)
+                            let cleaned = cleanURL(candidate)
+                            let alreadyPlain = cleaned.lowercased().hasPrefix("http://") || cleaned.lowercased().hasPrefix("https://")
+                            let media: String
+                            if alreadyPlain {
+                                media = cleaned
+                            } else if let seed {
+                                media = try decryptSpadeURL(candidate, seed: seed)
+                            } else {
+                                media = cleaned
+                            }
                             let url = try checkedURL(media, domains: mediaDomains)
                             guard URLGuard.isPublicURL(url) else { throw URLGuard.blocked() }
                             if !validURLs.contains(url) { validURLs.append(url) }
@@ -353,7 +428,7 @@ enum AppSource {
         var error = AppSourceError(.invalidResponse, "本集片源地址或密钥无法解析")
         if incomplete {
             error.incompleteEncryptionMetadata = true
-            error.minimumPixels = min(best.width, best.height)
+            error.minimumPixels = best.pixels
         }
         throw error
     }

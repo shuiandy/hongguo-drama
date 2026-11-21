@@ -254,11 +254,16 @@ struct GlassTag: View {
     let text: String
     var systemImage: String?
     var iconColor: Color?
+    /// A small symbol after the text, e.g. a chevron on a tag that can be clicked.
+    var trailingSystemImage: String?
 
     var body: some View {
         HStack(spacing: 4) {
             if let systemImage { Image(systemName: systemImage).foregroundStyle(iconColor.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.primary)) }
             Text(text)
+            if let trailingSystemImage {
+                Image(systemName: trailingSystemImage).font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
+            }
         }
         .font(.system(size: 12, weight: .medium))
         .foregroundStyle(.primary)

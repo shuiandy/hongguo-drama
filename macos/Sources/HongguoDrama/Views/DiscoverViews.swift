@@ -1,5 +1,6 @@
 import SwiftUI
 import HongguoCore
+import MediaSources
 
 /// 热播推荐 (port of DramaFeed + RandomDrama): one recommended series at a time from a Hongguo
 /// ranking or another source's catalogue, with the next few queued below, plus 摇一摇 which draws
@@ -24,7 +25,7 @@ struct FeedView: View {
     @State private var drawn: SeriesSummary?
     @State private var drawCount = 0
 
-    private var sources: [MediaSources.Entry] { model.settings.mediaSources }
+    private var sources: [MediaSources.Entry] { SourceSettingsStore.shared.value.mediaSources }
     private var selected: SeriesSummary? {
         if mode == .random { return drawn }
         return items.indices.contains(index) ? items[index] : nil

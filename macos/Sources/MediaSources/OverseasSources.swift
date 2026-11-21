@@ -4,6 +4,7 @@
 // adapted from zuomeizuoyang/shortdrama-player, MIT). Both read only the public English
 // website's server-rendered data: no account, signing key or unlock API.
 import Foundation
+import HongguoCore
 
 /// A GET for a server-rendered page: status and body, any status returned, redirects not followed.
 public typealias PageFetch = @Sendable (_ url: URL, _ timeout: TimeInterval) async throws -> (status: Int, body: Data)

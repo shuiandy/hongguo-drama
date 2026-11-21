@@ -1,5 +1,6 @@
 import Foundation
 import HongguoCore
+import MediaSources
 
 /// Routes series and episode requests to Hongguo's own services or to the other catalogues
 /// (西饭, 河马, overseas, custom endpoints) by id prefix, under the current source settings.
@@ -9,7 +10,7 @@ enum SourceRouter {
     static func isHongguo(_ id: String) -> Bool { MediaSources.sourceId(of: id) == "hongguo" }
 
     static func source(for id: String) throws -> MediaSource? {
-        try MediaSources.source(for: id, settings: { LibraryStore.shared.settings })
+        try MediaSources.source(for: id, settings: { SourceSettingsStore.shared.value })
     }
 
     /// The catalogue for a source id from the switcher ("xifan", "custom:<uuid>").
@@ -43,7 +44,7 @@ enum SourceRouter {
 
     /// Label of a source id ("xifan", "custom:<uuid>") for titles.
     static func label(_ sourceId: String) -> String {
-        LibraryStore.shared.settings.mediaSources.first { $0.id == sourceId }?.label
+        SourceSettingsStore.shared.value.mediaSources.first { $0.id == sourceId }?.label
             ?? MediaSources.builtin.first { $0.id == sourceId }?.label ?? "片源"
     }
 }

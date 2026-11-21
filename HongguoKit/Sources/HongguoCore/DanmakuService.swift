@@ -91,8 +91,7 @@ public actor DanmakuService {
     public static let shared = DanmakuService()
 
     static let baseURL = "https://api5-normal-sinfonlineb.fqnovel.com"
-    static let userAgent = "com.phoenix.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; "
-        + "Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
+    static let userAgent = AppLegacySigner.currentMetadataUA
     public static let maxTextLength = 200
     public static let maxTimeSeconds: Double = 604_800
     public static let pageCount = 90
@@ -148,20 +147,27 @@ public actor DanmakuService {
             return .finalize(seriesId: seriesId, vid: vid, items: [], truncated: false, error: "仅红果来源的剧集支持弹幕")
         }
         let key = "\(seriesId):\(vid)"
-        if !fresh, let hit = cache[key], hit.expires > Date() { return hit.result.limited(to: limit) }
-        if let shared = pending[key] { return await shared.value.limited(to: limit) }
+        if !fresh, let hit = cache[key], hit.expires > now() { return hit.result.limited(to: limit) }
+        if !fresh, let shared = pending[key] {
+            return await shared.value.limited(to: limit)
+        }
         let task = Task { await self.collect(seriesId: seriesId, vid: vid) }
         pending[key] = task
-        let result = await task.value
-        pending[key] = nil
+        let result = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        if pending[key] == task { pending[key] = nil }
         if Task.isCancelled || result.error == "弹幕请求已取消" { return result }
         store(key, result)
         return result.limited(to: limit)
     }
 
     private func store(_ key: String, _ result: DanmakuResult) {
-        if cache[key] == nil { cacheOrder.append(key) }
-        cache[key] = (result, Date().addingTimeInterval(result.success ? Self.cacheTTLOK : Self.cacheTTLFail))
+        cacheOrder.removeAll { $0 == key }
+        cacheOrder.append(key)
+        cache[key] = (result, now().addingTimeInterval(result.success ? Self.cacheTTLOK : Self.cacheTTLFail))
         while cacheOrder.count > Self.cacheLimit { cache[cacheOrder.removeFirst()] = nil }
     }
 
@@ -232,10 +238,10 @@ public actor DanmakuService {
         return "弹幕接口暂不可用（已尝试官方签名请求），请稍后重试"
     }
 
-    private func currentIdentity() async throws -> DanmakuIdentity {
-        if let identity { return identity }
-        let device = try await PersistentAppDevice.dataIdentity(transport: AppTransport(http: .shared)).identity
-        return DanmakuIdentity(deviceId: device.deviceId, installId: device.iid)
+    private func currentIdentity() async throws -> (identity: DanmakuIdentity, dToken: String) {
+        if let identity { return (identity, "") }
+        let device = try await PersistentAppDevice.dataIdentity(transport: AppTransport(http: .shared))
+        return (DanmakuIdentity(deviceId: device.identity.deviceId, installId: device.identity.iid), device.dToken)
     }
 
     /// The stamp (seconds), `_rticket` (milliseconds) and nonce come from one clock read; a
@@ -243,18 +249,19 @@ public actor DanmakuService {
     func requestWindow(vid: String, bookId: String, start: Int64, duration: Int64) async throws -> JSONValue {
         let stampMs = Int64((now().timeIntervalSince1970 * 1000).rounded(.down))
         let stamp = stampMs / 1000
-        let who = try await currentIdentity()
+        let (who, dToken) = try await currentIdentity()
         let rawQuery = DanmakuSigner.buildQuery(stampMs: stampMs, deviceId: who.deviceId, installId: who.installId)
         guard let url = URL(string: "\(Self.baseURL)/novel/commentapi/comment/list/\(vid)/v1/?\(rawQuery)") else {
             throw HongguoError(.input, "弹幕请求地址无效")
         }
+        let body = try JSONSerialization.data(withJSONObject: Self.body(vid: vid, bookId: bookId, start: start, duration: duration),
+                                              options: [.sortedKeys])
         var headers: [(String, String)] = [
             ("User-Agent", Self.userAgent), ("Accept", "application/json"), ("X-XS-From-Web", "0"), ("Sdk-Version", "2"),
             ("Content-Type", "application/json; charset=utf-8"), ("Comment-Source", "601"), ("Server-Channel", "1000"),
         ]
-        headers += try DanmakuSigner.headers(rawQuery: rawQuery, stamp: stamp, nonce: nonce())
-        let body = try JSONSerialization.data(withJSONObject: Self.body(vid: vid, bookId: bookId, start: start, duration: duration),
-                                              options: [.sortedKeys])
+        if !dToken.isEmpty { headers.append(("x-tt-dt", dToken)) }
+        headers += try DanmakuSigner.headers(rawQuery: rawQuery, stamp: stamp, nonce: nonce(), stampMs: stampMs, body: body)
         let data = try await transport.post(url: url, body: body, headers: headers, timeout: Self.requestTimeout)
         guard data.count <= Self.maxResponseBytes else { throw HongguoError(.upstream, "弹幕响应过大") }
         guard let payload = try? JSONValue.parse(data) else { throw HongguoError(.format, "弹幕接口返回了非 JSON 内容") }

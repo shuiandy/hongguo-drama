@@ -14,8 +14,11 @@ struct ContentView: View {
                 if let item = model.selection {
                     NavigationStack(path: model.path(for: item)) {
                         root(for: item)
-                            .navigationDestination(for: SeriesSummary.self) { summary in
-                                SeriesDetailView(summary: summary)
+                            .navigationDestination(for: DetailRoute.self) { route in
+                                switch route {
+                                case .series(let summary): SeriesDetailView(summary: summary)
+                                case .celebrity(let member): CelebrityView(member: member)
+                                }
                             }
                     }
                     .id(item)

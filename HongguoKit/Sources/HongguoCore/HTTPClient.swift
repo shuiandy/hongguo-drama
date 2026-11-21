@@ -59,7 +59,7 @@ public final class HTTPClient: @unchecked Sendable {
         config.httpMaximumConnectionsPerHost = 6
         // By default connect directly instead of through the system HTTP proxy, like the
         // Electron app's default ("未启用（所有请求直连）"). A local proxy's CONNECT tunnel (e.g.
-        // Surge on 127.0.0.1:6152) stalled TLS handshakes to some CDNs such as 河马's; a TUN-mode
+        // Surge on 127.0.0.1:6152) stalled TLS handshakes to some CDNs; a TUN-mode
         // proxy still sees the traffic. 设置 > 网络 can switch to the system or a manual proxy.
         NetworkProxy.shared.configure(config)
         return config

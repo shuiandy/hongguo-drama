@@ -97,6 +97,12 @@ enum SidebarItem: Hashable, Identifiable {
     }
 }
 
+/// What a sidebar column's navigation stack shows: a series, or an actor and their works.
+enum DetailRoute: Hashable {
+    case series(SeriesSummary)
+    case celebrity(EpisodeSocial.CastMember)
+}
+
 /// App-wide state: services, settings and navigation.
 @MainActor
 @Observable
@@ -122,7 +128,7 @@ final class AppModel {
     }
     /// The tab open on 我的.
     var meTab: MeTab = .history
-    var paths: [SidebarItem: [SeriesSummary]] = [:]
+    var paths: [SidebarItem: [DetailRoute]] = [:]
 
     /// The 我的 tab an older page maps to, or nil for any other page.
     static func meTab(for item: SidebarItem?) -> MeTab? {
@@ -602,10 +608,25 @@ final class AppModel {
 
     func open(_ summary: SeriesSummary) {
         guard let selection else { return }
-        paths[selection, default: []].append(summary)
+        paths[selection, default: []].append(.series(summary))
     }
 
-    func path(for item: SidebarItem) -> Binding<[SeriesSummary]> {
+    /// Opens the search page with `query`, as tapping a tag does in the official app.
+    func search(_ query: String) {
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        pendingSearch = text
+        paths[.search] = []
+        selection = .search
+    }
+
+    /// An actor's page (their works), pushed onto the current column like a series.
+    func openCelebrity(_ member: EpisodeSocial.CastMember) {
+        guard let selection else { return }
+        paths[selection, default: []].append(.celebrity(member))
+    }
+
+    func path(for item: SidebarItem) -> Binding<[DetailRoute]> {
         Binding(get: { self.paths[item] ?? [] }, set: { self.paths[item] = $0 })
     }
 

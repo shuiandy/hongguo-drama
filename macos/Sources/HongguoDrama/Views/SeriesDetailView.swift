@@ -34,6 +34,7 @@ struct SeriesDetailView: View {
                 }
                 sequelFinder
                 seasonShelf
+                castShelf
                 episodePanel
                 if let reviews = details?.reviews, !reviews.isEmpty {
                     reviewList(reviews)
@@ -80,6 +81,38 @@ struct SeriesDetailView: View {
                 ScrollView(.horizontal) {
                     HStack(alignment: .top, spacing: 12) {
                         ForEach(items) { item in seasonCard(item) }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .scrollIndicators(.never)
+            }
+        }
+    }
+
+    /// 演员: the cast from the App detail; each opens the actor's page with their other works.
+    @ViewBuilder
+    private var castShelf: some View {
+        if let cast = details?.cast, !cast.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("演员", systemImage: "person.2").font(.system(size: 13, weight: .semibold))
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: 14) {
+                        ForEach(cast) { member in
+                            Button { model.openCelebrity(member) } label: {
+                                VStack(spacing: 6) {
+                                    CoverImage(url: member.avatar, cornerRadius: 32)
+                                        .frame(width: 64, height: 64)
+                                    Text(member.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                                    if !member.role.isEmpty {
+                                        Text(member.role).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                                    }
+                                }
+                                .frame(width: 84)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("查看 \(member.name) 的作品")
+                        }
                     }
                     .padding(.vertical, 2)
                 }
@@ -205,7 +238,12 @@ struct SeriesDetailView: View {
                     }
                     if let likes = details?.likeCount { GlassTag(text: formatCount(likes), systemImage: "heart.fill", iconColor: .hongguoRed) }
                     if !summary.heat.isEmpty { GlassTag(text: summary.heat, systemImage: "flame.fill", iconColor: .orange) }
-                    ForEach(summary.tags.prefix(3), id: \.self) { GlassTag(text: $0) }
+                    // As in the official app, a tag searches for itself.
+                    ForEach((details?.tags.isEmpty == false ? details?.tags ?? [] : summary.tags).prefix(6), id: \.self) { tag in
+                        Button { model.search(tag) } label: { GlassTag(text: tag, trailingSystemImage: "chevron.right") }
+                            .buttonStyle(.plain)
+                            .help("搜索“\(tag)”")
+                    }
                 }
                 let description = details?.description.isEmpty == false ? details!.description : summary.description
                 if !description.isEmpty {

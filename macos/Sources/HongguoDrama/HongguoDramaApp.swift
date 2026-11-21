@@ -1,9 +1,13 @@
 import SwiftUI
 import AppKit
 import HongguoCore
+import MediaSources
 
 @main
 struct HongguoDramaApp: App {
+    /// First, before anything opens `LibraryStore`: takes the source settings an older build kept in
+    /// library.json before the library file is written again without them.
+    private let sourceSettings = SourceSettingsStore.shared
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel.shared
 

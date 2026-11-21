@@ -18,7 +18,8 @@ public struct ResumePoint: Equatable, Sendable {
     public static func from(_ record: WatchRecord?, episodeCount: Int) -> ResumePoint {
         guard let record, record.episodeIndex >= 1 else { return ResumePoint(episodeIndex: 1, position: 0) }
         let total = max(episodeCount, record.total)
-        let nearEnd = record.duration > 0 && record.position >= record.duration - endSlack
+        let nearEnd = (record.duration > 0 && record.position >= record.duration - endSlack)
+            || (record.completedEpisode >= record.episodeIndex && record.position <= 0)
         if nearEnd {
             if total == 0 || record.episodeIndex < total { return ResumePoint(episodeIndex: record.episodeIndex + 1, position: 0) }
             return ResumePoint(episodeIndex: record.episodeIndex, position: 0)
@@ -123,20 +124,21 @@ public enum WatchHistory {
         return text.count <= 15 ? Int(text) : nil
     }
 
-    public enum Source: String, Sendable { case hongguo, xifan, hema }
+    /// The catalogue a series id belongs to, for grouping seasons: "hongguo" for a Hongguo id,
+    /// else the prefix of an app-defined `<source>:<id>` id (the Mac app's other catalogues).
+    public static let hongguoSource = "hongguo"
 
-    public static func source(of id: String) -> Source? {
-        if id.matchesDigits(min: 6, max: 30) { return .hongguo }
-        if id.range(of: "^xifan:[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+$", options: .regularExpression) != nil { return .xifan }
-        if id.range(of: "^hema:[0-9]+$", options: .regularExpression) != nil { return .hema }
-        return nil
+    public static func source(of id: String) -> String? {
+        if id.matchesDigits(min: 6, max: 30) { return hongguoSource }
+        guard id.range(of: "^[a-z][a-z0-9]{1,15}:[a-zA-Z0-9_:-]{1,200}$", options: .regularExpression) != nil else { return nil }
+        return id.split(separator: ":", maxSplits: 1).first.map(String.init)
     }
 
     /// Source plus base title; empty when the series cannot be grouped.
     public static func familyKey(seriesId: String, title: String) -> String {
         let parsed = seasonTitle(title)
         guard let source = source(of: seriesId), !parsed.base.isEmpty, !parsed.invalid else { return "" }
-        return "\(source.rawValue)\u{0}\(parsed.base)"
+        return "\(source)\u{0}\(parsed.base)"
     }
 
     public static func season(of title: String) -> Int {

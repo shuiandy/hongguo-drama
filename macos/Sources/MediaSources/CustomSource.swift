@@ -4,6 +4,7 @@
 // checks again that the source is still enabled with the same URL, and upstream messages are
 // never shown (they can carry signed URLs).
 import Foundation
+import HongguoCore
 
 public struct CustomSourceConfig: Codable, Equatable, Hashable, Sendable, Identifiable {
     /// Lowercase UUID; empty for a draft that has not been saved yet.

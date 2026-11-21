@@ -24,6 +24,8 @@ public struct WatchRecord: Codable, Hashable, Identifiable, Sendable {
     public var seenSequelIds: [String]?
     public var lastCheckedAt: Date?
     public var lastCheckError: String?
+    /// Non-nil when this row originated from or was synced by a signed-in account's cloud history.
+    public var cloudAccountId: String? = nil
 
     public var isFinished: Bool { total > 0 && completedEpisode >= total }
 }
@@ -61,11 +63,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var watchSequelsEnabled: Bool = true
     /// Preferred video short side in pixels (1080, 720…); nil = automatic (best tier).
     public var preferredQuality: Int?
-    /// 西饭/河马 (on unless false) and ReelShort/DramaBox (off unless true); Hongguo is always on.
-    public var builtinSources: [String: Bool] = [:]
-    /// Apple CMS (`/api.php/provide/vod/`) endpoints added by the user.
-    public var customSources: [CustomSourceConfig] = []
-
     // Settings window (2026-11 redesign).
     /// Page shown when the main window opens: "last", "discover", "history", "library" or "downloads".
     public var startPage: String = "last"
@@ -77,7 +74,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var defaultPictureMode: PictureMode = .fit
     /// Volume (percent) applied each time the player opens; nil keeps the last volume.
     public var startVolume: Int?
-    /// Also search the enabled other sources from the search page.
+    /// Also search the enabled other sources from the search page (the Mac app's other catalogues).
     public var searchOtherSources: Bool = true
     /// Hours between new-episode checks for unfinished series (1...48).
     public var watchCheckHours: Int = 6
@@ -113,33 +110,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public static let startVolumes = [10, 25, 50, 75, 100]
 
     public init() {}
-
-    /// Sources shown in the switcher, in order.
-    public var mediaSources: [MediaSources.Entry] { MediaSources.enabled(builtinSources, custom: customSources) }
-
-    /// Turns a built-in source on or off (`setBuiltinSourceEnabled`). Hongguo cannot be turned off.
-    public mutating func setBuiltinSource(_ id: String, enabled: Bool) throws {
-        if id == "hongguo" { throw HongguoError(.input, "红果来源固定开启，不能关闭") }
-        guard ["xifan", "hema", "reelshort", "dramabox"].contains(id) else { throw HongguoError(.input, "来源开关无效") }
-        builtinSources[id] = enabled
-    }
-
-    /// Adds or replaces a custom source after validation; returns the stored entry.
-    @discardableResult
-    public mutating func saveCustomSource(_ draft: CustomSourceConfig) throws -> CustomSourceConfig {
-        var source = try CustomSource.validate(draft)
-        if let index = customSources.firstIndex(where: { $0.id == source.id }) { customSources[index] = source }
-        else {
-            if source.id.isEmpty { source.id = UUID().uuidString.lowercased() }
-            customSources.append(source)
-        }
-        return source
-    }
-
-    public mutating func removeCustomSource(id: String) throws {
-        guard customSources.contains(where: { $0.id == id.lowercased() }) else { throw HongguoError(.input, "播放源不存在") }
-        customSources.removeAll { $0.id == id.lowercased() }
-    }
 
     public func pictureMode(for seriesId: String) -> PictureMode { pictureModes[seriesId] ?? defaultPictureMode }
 
@@ -192,11 +162,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
         watchUpdatesEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .watchUpdatesEnabled)) ?? d.watchUpdatesEnabled
         watchSequelsEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .watchSequelsEnabled)) ?? d.watchSequelsEnabled
         preferredQuality = try? c.decodeIfPresent(Int.self, forKey: .preferredQuality)
-        builtinSources = (try? c.decodeIfPresent([String: Bool].self, forKey: .builtinSources)) ?? d.builtinSources
-        // An entry that no longer validates is dropped instead of failing the whole file.
-        customSources = ((try? c.decodeIfPresent([Lenient<CustomSourceConfig>].self, forKey: .customSources)) ?? []).compactMap { entry in
-            entry.value.flatMap { try? CustomSource.validate($0) }.flatMap { $0.id.isEmpty ? nil : $0 }
-        }
         startPage = (try? c.decodeIfPresent(String.self, forKey: .startPage)) ?? d.startPage
         lastPage = try? c.decodeIfPresent(String.self, forKey: .lastPage)
         playbackCacheLimitGB = (try? c.decodeIfPresent(Int.self, forKey: .playbackCacheLimitGB)) ?? d.playbackCacheLimitGB
@@ -268,20 +233,28 @@ public final class LibraryStore: @unchecked Sendable {
     }
 
     public func savePosition(seriesId: String, title: String, cover: String, total: Int,
-                             episodeIndex: Int, vid: String, position: Double, duration: Double, finished: Bool) {
+                             episodeIndex: Int, vid: String, position: Double, duration: Double, finished: Bool,
+                             accountId: String? = nil) {
         queue.sync {
             var record = snapshot.history[seriesId] ?? WatchRecord(
                 seriesId: seriesId, title: title, cover: cover, total: total, episodeIndex: episodeIndex,
                 vid: vid, position: 0, duration: 0, updatedAt: Date(), completedEpisode: 0)
             record.title = title.isEmpty ? record.title : title
             record.cover = cover.isEmpty ? record.cover : cover
-            record.total = max(total, record.total)
+            if total > record.total {
+                record.total = total
+                if let known = record.knownTotal, total > known { record.knownTotal = total }
+                if let ack = record.acknowledgedTotal, total > ack { record.acknowledgedTotal = total }
+            }
             record.episodeIndex = episodeIndex
             record.vid = vid
             record.position = position.isFinite ? max(0, position) : 0
             record.duration = duration.isFinite ? max(0, duration) : 0
             record.updatedAt = Date()
             if finished { record.completedEpisode = max(record.completedEpisode, episodeIndex) }
+            if let accountId, !accountId.isEmpty {
+                record.cloudAccountId = accountId
+            }
             snapshot.history[seriesId] = record
             persistLocked()
         }
@@ -318,17 +291,24 @@ public final class LibraryStore: @unchecked Sendable {
     /// side wins by last-watched time; an older cloud row only fills an empty title, cover or total.
     /// Returns how many local records were added or moved forward.
     @discardableResult
-    public func mergeCloudHistory(_ items: [AccountHistoryItem]) -> Int {
-        queue.sync {
+    public func mergeCloudHistory(_ items: [AccountHistoryItem], accountId: String? = nil) -> Int {
+        let tag = (accountId?.isEmpty == false) ? accountId : "cloud"
+        return queue.sync {
             var count = 0
+            var dirty = false
             for item in items {
+                let cloudFinished = item.episodeIndex > 0 && item.duration > 0 && item.position >= item.duration - ResumePoint.endSlack
+                let cloudCompleted = item.episodeIndex > 0 ? (cloudFinished ? item.episodeIndex : max(0, item.episodeIndex - 1)) : 0
                 if var existing = snapshot.history[item.seriesId] {
                     if existing.updatedAt >= item.updatedAt {
                         var filled = existing
                         if filled.title.isEmpty || filled.title.hasPrefix("剧集 ") { filled.title = item.seriesTitle }
                         if filled.cover.isEmpty { filled.cover = item.cover }
                         filled.total = max(filled.total, item.total)
-                        if filled != existing { snapshot.history[item.seriesId] = filled }
+                        if filled != existing {
+                            snapshot.history[item.seriesId] = filled
+                            dirty = true
+                        }
                         continue
                     }
                     if !item.seriesTitle.isEmpty && !item.seriesTitle.hasPrefix("剧集 ") { existing.title = item.seriesTitle }
@@ -339,22 +319,46 @@ public final class LibraryStore: @unchecked Sendable {
                         existing.vid = item.episodeId
                         existing.position = item.position
                         existing.duration = item.duration
+                        existing.completedEpisode = max(existing.completedEpisode, cloudCompleted)
+                        existing.updatedAt = item.updatedAt
+                        if existing.cloudAccountId != nil { existing.cloudAccountId = tag }
+                        snapshot.history[item.seriesId] = existing
+                        count += 1
+                        dirty = true
+                    } else if existing != snapshot.history[item.seriesId] {
+                        snapshot.history[item.seriesId] = existing
+                        dirty = true
                     }
-                    existing.updatedAt = item.updatedAt
-                    snapshot.history[item.seriesId] = existing
                 } else {
                     // Without an episode number the position cannot be placed: start that series at episode 1.
                     let known = item.episodeIndex > 0
-                    snapshot.history[item.seriesId] = WatchRecord(
+                    var record = WatchRecord(
                         seriesId: item.seriesId, title: item.seriesTitle, cover: item.cover, total: item.total,
                         episodeIndex: known ? item.episodeIndex : 1, vid: known ? item.episodeId : "",
                         position: known ? item.position : 0, duration: known ? item.duration : 0,
-                        updatedAt: item.updatedAt, completedEpisode: known ? max(0, item.episodeIndex - 1) : 0)
+                        updatedAt: item.updatedAt, completedEpisode: known ? cloudCompleted : 0)
+                    record.cloudAccountId = tag
+                    snapshot.history[item.seriesId] = record
+                    count += 1
+                    dirty = true
                 }
-                count += 1
             }
-            persistLocked()
+            if dirty { persistLocked() }
             return count
+        }
+    }
+
+    /// Removes watch-history entries that originated from cloud sync (leaving purely local guest
+    /// entries untouched). Called on sign-out or account switch.
+    public func clearCloudHistory(exceptAccountId: String? = nil) {
+        queue.sync {
+            let before = snapshot.history.count
+            snapshot.history = snapshot.history.filter { _, record in
+                guard let owner = record.cloudAccountId else { return true }
+                if let keep = exceptAccountId, !keep.isEmpty { return owner == keep }
+                return false
+            }
+            if snapshot.history.count != before { persistLocked() }
         }
     }
 
@@ -392,10 +396,4 @@ extension JSONDecoder {
         decoder.dateDecodingStrategy = .millisecondsSince1970
         return decoder
     }
-}
-
-/// Decodes one array element without failing the whole array.
-struct Lenient<Value: Decodable>: Decodable {
-    var value: Value?
-    init(from decoder: Decoder) throws { value = try? Value(from: decoder) }
 }

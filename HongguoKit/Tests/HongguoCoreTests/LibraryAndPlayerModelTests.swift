@@ -90,7 +90,7 @@ final class WatchHistoryTests: XCTestCase {
             SeriesRef(seriesId: "7200000000000000003", title: "霸总归来第三季"),
             SeriesRef(seriesId: "7200000000000000002", title: "霸总归来第二季"),
             SeriesRef(seriesId: "7200000000000000009", title: "别的剧第二季"),
-            SeriesRef(seriesId: "xifan:a:b", title: "霸总归来第四季"),
+            SeriesRef(seriesId: "other:a:b", title: "霸总归来第四季"),
         ]
         XCTAssertEqual(WatchHistory.findSequels(of: current, in: candidates).map(\.title), ["霸总归来第二季", "霸总归来第三季"])
         XCTAssertEqual(WatchHistory.findSequels(of: current, in: candidates, afterSeason: 2).map(\.title), ["霸总归来第三季"])
