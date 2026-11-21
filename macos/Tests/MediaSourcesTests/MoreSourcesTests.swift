@@ -212,4 +212,19 @@ final class MoreSourcesTests: XCTestCase {
         XCTAssertEqual(second.value.builtinSources, ["dramabox": false], "the saved value wins over library.json")
         XCTAssertEqual(second.value.customSources.count, 1)
     }
+
+    func testStoreTakesConcurrentReadsAndWrites() async throws {
+        let suite = "MediaSourcesTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SourceSettingsStore(defaults: defaults, legacyLibrary: nil)
+        await withTaskGroup(of: Void.self) { group in
+            for i in 0..<200 {
+                group.addTask { store.update { $0.builtinSources["k\(i)"] = true } }
+                group.addTask { _ = store.value.mediaSources }
+            }
+        }
+        XCTAssertEqual(store.value.builtinSources.count, 200, "no update is lost")
+        XCTAssertEqual(SourceSettingsStore(defaults: defaults, legacyLibrary: nil).value.builtinSources.count, 200)
+    }
 }

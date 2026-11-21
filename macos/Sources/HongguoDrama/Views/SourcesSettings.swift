@@ -66,7 +66,7 @@ struct SourcesSettingsSection: View {
 
     private func setBuiltin(_ id: String, _ enabled: Bool) {
         do {
-            try sources.value.setBuiltinSource(id, enabled: enabled)
+            try sources.update { try $0.setBuiltinSource(id, enabled: enabled) }
             message = ""
         } catch {
             message = (error as? HongguoError)?.message ?? describe(error)
@@ -75,7 +75,7 @@ struct SourcesSettingsSection: View {
 
     private func save(_ source: CustomSourceConfig) {
         do {
-            try sources.value.saveCustomSource(source)
+            try sources.update { try $0.saveCustomSource(source) }
             message = ""
         } catch {
             message = (error as? HongguoError)?.message ?? describe(error)
@@ -84,7 +84,7 @@ struct SourcesSettingsSection: View {
 
     private func remove(_ source: CustomSourceConfig) {
         do {
-            try sources.value.removeCustomSource(id: source.id)
+            try sources.update { try $0.removeCustomSource(id: source.id) }
             if model.selection == .source("custom:\(source.id)") { model.selection = .category(.realDrama) }
             message = ""
         } catch {

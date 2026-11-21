@@ -218,3 +218,14 @@ final class SearchSuggestionTests: XCTestCase {
         XCTAssertEqual(DiscoveryAccess.parseSuggestions(try JSONValue.parse(#"{"code":1}"#)), [])
     }
 }
+
+final class OfficialHostTests: XCTestCase {
+    func testLoginCookieGoesOnlyToOfficialHosts() {
+        XCTAssertTrue(AppBookMallAccess.isOfficialHost("https://reading.snssdk.com"))
+        XCTAssertTrue(AppBookMallAccess.isOfficialHost("https://api5-normal-sinfonlineb.fqnovel.com"))
+        XCTAssertFalse(AppBookMallAccess.isOfficialHost("http://reading.snssdk.com"))
+        XCTAssertFalse(AppBookMallAccess.isOfficialHost("https://snssdk.com.example.com"))
+        XCTAssertFalse(AppBookMallAccess.isOfficialHost("https://evilsnssdk.com"))
+        XCTAssertFalse(AppBookMallAccess.isOfficialHost("https://reading.snssdk.com:8443"))
+    }
+}

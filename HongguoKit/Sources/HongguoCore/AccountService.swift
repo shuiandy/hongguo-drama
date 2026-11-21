@@ -417,9 +417,11 @@ public actor AccountService {
         }
     }
 
+    /// Only an explicit session rejection clears the saved login: HTTP 401 or the passport's own
+    /// expiry wording. A 403 is often risk control or rate limiting at the gateway and passes.
     private static func isAuthRejection(_ message: String) -> Bool {
         message.range(
-            of: "会话过期|登录态未通过|账号编号无效|未登录|session.*expir|HTTP\\s*(401|403)",
+            of: "会话过期|登录态未通过|账号编号无效|未登录|session.*expir|HTTP\\s*401",
             options: [.regularExpression, .caseInsensitive]
         ) != nil
     }

@@ -12,14 +12,16 @@ public enum AppBookMallAccess {
         "/reading/bookapi/search/suggest/v/",
     ]
 
-    /// GET a bookmall/discovery endpoint with query values. Anonymous by default so login cookies
-    /// are never leaked outside account-scoped endpoints.
+    /// GET a bookmall/discovery endpoint with query values. Signed in, the login cookie goes along
+    /// as the official app sends it on every request (ranking, calendar and suggestions then match
+    /// the account), but only to the official API hosts (`AppTransport.apiDomains`); `authenticated:
+    /// false` asks anonymously.
     public static func tab(
         values: [(String, String)],
         host: String? = nil,
         path: String = "/reading/bookapi/bookmall/tab/v/",
         timeout: TimeInterval = 10,
-        authenticated: Bool = false
+        authenticated: Bool = true
     ) async throws -> JSONValue {
         let transport = AppTransport(http: .shared)
         do {
@@ -32,7 +34,8 @@ public enum AppBookMallAccess {
                 dToken: device.dToken,
                 nowMillis: Int64(Date().timeIntervalSince1970 * 1000)
             )
-            let extraHeaders = authenticated ? PersistentAppDevice.authHeaders() : []
+            let base = host ?? AppLegacySigner.metadataHost
+            let extraHeaders = authenticated && isOfficialHost(base) ? PersistentAppDevice.authHeaders() : []
             return try await transport.requestJSON(
                 signed.url,
                 method: "GET",
@@ -43,6 +46,13 @@ public enum AppBookMallAccess {
         } catch let error as AppSourceError {
             throw error.hongguoError
         }
+    }
+
+    /// HTTPS on one of the official API domains (or a subdomain), nothing else.
+    static func isOfficialHost(_ base: String) -> Bool {
+        guard let url = URL(string: base), url.scheme?.lowercased() == "https", url.user == nil, url.port == nil,
+              let host = url.host?.lowercased() else { return false }
+        return AppTransport.apiDomains.contains { host == $0 || host.hasSuffix("." + $0) }
     }
 }
 

@@ -60,25 +60,57 @@ struct Lenient<Value: Decodable>: Decodable {
     init(from decoder: Decoder) throws { value = try? Value(from: decoder) }
 }
 
-/// `SourceSettings` in the app's preferences, observable by views. Every change is written back
-/// at once. The first read takes the values an older build kept in library.json's settings, if any.
+/// `SourceSettings` in the app's preferences, observable by views and safe to read from any task
+/// (the source router reads it off the main actor). Every change is written back at once.
+/// The first read takes the values an older build kept in library.json's settings, if any: the app
+/// creates `shared` before `LibraryStore` can rewrite that file without them.
 @Observable
 public final class SourceSettingsStore: @unchecked Sendable {
     public static let shared = SourceSettingsStore()
     static let defaultsKey = "HongguoMediaSourceSettings.v1"
     @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private let lock = NSLock()
+    @ObservationIgnored private var storage: SourceSettings
 
     public var value: SourceSettings {
-        didSet { if let data = try? JSONEncoder().encode(value) { defaults.set(data, forKey: Self.defaultsKey) } }
+        get {
+            access(keyPath: \.value)
+            lock.lock(); defer { lock.unlock() }
+            return storage
+        }
+        set {
+            withMutation(keyPath: \.value) {
+                lock.lock()
+                storage = newValue
+                let data = try? JSONEncoder().encode(newValue)
+                lock.unlock()
+                if let data { defaults.set(data, forKey: Self.defaultsKey) }
+            }
+        }
+    }
+
+    /// Changes the settings in one step under the lock (no lost update between a read and a write).
+    @discardableResult
+    public func update<T>(_ change: (inout SourceSettings) throws -> T) rethrows -> T {
+        var result: T?
+        try withMutation(keyPath: \.value) {
+            lock.lock()
+            defer { lock.unlock() }
+            var copy = storage
+            result = try change(&copy)
+            storage = copy
+            if let data = try? JSONEncoder().encode(copy) { defaults.set(data, forKey: Self.defaultsKey) }
+        }
+        return result!
     }
 
     public init(defaults: UserDefaults = .standard, legacyLibrary: URL? = SourceSettingsStore.legacyLibraryURL) {
         self.defaults = defaults
         if let data = defaults.data(forKey: Self.defaultsKey), let value = try? JSONDecoder().decode(SourceSettings.self, from: data) {
-            self.value = value
+            storage = value
         } else {
             let initial = legacyLibrary.flatMap(Self.legacy) ?? SourceSettings()
-            self.value = initial
+            storage = initial
             if let data = try? JSONEncoder().encode(initial) { defaults.set(data, forKey: Self.defaultsKey) }
         }
     }

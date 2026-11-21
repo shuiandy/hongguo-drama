@@ -25,7 +25,7 @@ public enum AppCatalogueAccess {
                                                              identity: device.identity, dToken: device.dToken,
                                                              nowMillis: Int64(Date().timeIntervalSince1970 * 1000))
             return try await transport.requestJSON(signed.url, method: payload == nil ? "GET" : "POST",
-                                                   headers: signed.headers, body: payload,
+                                                   headers: signed.headers + PersistentAppDevice.authHeaders(), body: payload,
                                                    deadline: Date().addingTimeInterval(timeout))
         } catch let error as AppSourceError {
             throw error.hongguoError
