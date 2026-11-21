@@ -8,8 +8,9 @@
 | `HongguoPlayback` | 把 `PlayInfo` 变成可播放的 `AVPlayerItem` 加 loader：红果的 `EpisodeResolver`、`StreamingResourceLoader`、`MediaPrefixCache`。loader 由 App 持有到换集或关闭。iOS 的 `BookMallFeed`（首页推荐流，`AppFeed` 只剩它用的行解析）、`LocalCastServer`、`SeriesCredits` 暂时也在这里，接 tvOS 时再定归属。 |
 | `AppLogic` | 各 App 共用的纯规则，不碰界面和网络：信息流和连播推进、手势换算、定时关闭、写操作同步、历史与点赞合并、首页曝光去重、每集断点、分页请求等（原 iOS 仓库的 `Logic/`，模块名不变）。 |
 | `HongguoModels` | 各 App 共用的模型，不碰界面：`DramaBackend`（协议、真实实现 `LiveBackend`、离线样例 `FixtureBackend`）、`AccountModel`（登录态，收藏点赞预约历史，按记录排队的写操作，会话隔离）、`LibraryModel`（本机和账号切换与失败回滚、云端历史合并、不感兴趣、首页曝光去重、每集断点、3 分钟同步循环）、`LoginModel`（扫码登录循环）、`LaunchArguments`（通用启动参数）。原在 iOS App 里，搬过来时规则不变。 |
+| `HongguoPlayerKit` | iOS 和 tvOS 共用的播放器（UIKit，macOS 上为空模块）：`PlayerEngine` 和图层视图（`VideoSurface`、`SlotView`、`PlayerLayerView`）、`PlaybackSession`、`FeedModel`、`LandingCache`、封面缓存 `CoverImage`、`DanmakuLayer`、`CoverTint`、表情 `EmoticonCatalog`（表情图是本包资源）、`CountText`。只有 iOS 有的能力（已下载文件、ByteVC2 转码流、投屏发布、小窗）走 `PlayerHooks` 四个可选钩子，iOS 启动时装上，tvOS 不装；不装时只有 ByteVC2 的分集落到「此剧集暂不支持」。 |
 
-播放器、手势、画中画、页面布局留在各 App。
+手势、页面布局和控制层留在各 App。
 
 落盘位置统一走 `StorageRoot`：默认 Application Support（Mac、iOS 不用设置），tvOS 启动时调一次 `StorageRoot.configure(base:mirror:)` 指向 Caches，并把设置和最近 40 部剧的进度镜像进 `UserDefaults`。这是位置，不是行为开关。
 
