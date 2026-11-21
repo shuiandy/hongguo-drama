@@ -72,4 +72,56 @@ final class PlayerTests: XCTestCase {
         remote.press(.menu)
         XCTAssertTrue(app.staticTexts["真人剧"].waitForExistence(timeout: 5))
     }
+
+    private func advances(_ app: XCUIApplication, within seconds: Double = 2.5) -> Bool {
+        guard let start = elapsed(app) else { return false }
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline { if let now = elapsed(app), now > start { return true } }
+        return false
+    }
+
+    /// The play key on the picture pauses and shows the controls, and plays again; with the focus
+    /// on the buttons it does the same, once per press.
+    func testPlayKeyOnThePictureAndOnTheButtons() {
+        let app = launch(route: "player")
+        XCTAssertTrue(app.staticTexts["离线示例，没有视频画面"].waitForExistence(timeout: 10))
+        remote.press(.playPause)
+        XCTAssertTrue(app.buttons["选集"].waitForExistence(timeout: 5), "paused, controls shown")
+        XCTAssertFalse(advances(app), "paused")
+        remote.press(.down) // focus to the buttons
+        remote.press(.playPause)
+        let gone = NSPredicate(format: "exists == false")
+        expectation(for: gone, evaluatedWith: app.buttons["选集"])
+        waitForExpectations(timeout: 3) // one press on the buttons plays (and the controls go)
+        remote.press(.playPause)
+        XCTAssertTrue(app.buttons["选集"].waitForExistence(timeout: 3), "the next press pauses")
+        XCTAssertFalse(advances(app), "paused")
+    }
+
+    /// In the last 5 seconds 下一集 shows and takes the focus; pressing it plays the next episode.
+    func testNextButtonInTheLastFiveSeconds() {
+        let app = launch(route: "player")
+        XCTAssertTrue(app.staticTexts["离线示例，没有视频画面"].waitForExistence(timeout: 10))
+        for _ in 0..<7 { remote.press(.right) }
+        let next = app.buttons["下一集"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        XCTAssertTrue(next.hasFocus, "下一集 takes the focus")
+        remote.press(.select)
+        XCTAssertTrue(app.staticTexts["第2集 / 共60集"].waitForExistence(timeout: 5))
+    }
+
+    /// At the end of an episode the next one plays by itself.
+    func testNextEpisodePlaysAtTheEnd() {
+        let app = launch(route: "player")
+        XCTAssertTrue(app.staticTexts["离线示例，没有视频画面"].waitForExistence(timeout: 10))
+        for _ in 0..<7 { remote.press(.right) }
+        let next = app.buttons["下一集"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        // Left alone, the episode runs out and the next one starts (its clock starts again).
+        let gone = NSPredicate(format: "exists == false")
+        expectation(for: gone, evaluatedWith: next)
+        waitForExpectations(timeout: 10)
+        remote.press(.playPause) // pause, to show the controls
+        XCTAssertTrue(app.staticTexts["第2集 / 共60集"].waitForExistence(timeout: 5))
+    }
 }

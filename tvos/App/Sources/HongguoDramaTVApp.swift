@@ -1,6 +1,7 @@
 import AVFoundation
 import HongguoCore
 import HongguoModels
+import HongguoPlayback
 import HongguoPlayerKit
 import SwiftUI
 
@@ -63,18 +64,26 @@ final class TVAppModel: PlayerHost {
         if routesToSeries, !launch.arguments.seriesId.isEmpty {
             open(route: launch.route, SeriesSummary(seriesId: launch.arguments.seriesId, title: ""))
         } else if routesToSeries, launch.offlineFixtures {
-            open(route: launch.route, FixtureBackend.summary(1))
+            open(route: launch.route, FixtureBackend.summary(1), startEpisode: 1)
         } else if routesToSeries {
             Task { [weak self] in
                 guard let self, let first = try? await self.backend.catalog(kind: .hotDrama, genre: nil, page: 1).items.first else { return }
-                self.open(route: launch.route, first)
+                self.open(route: launch.route, first, startEpisode: 1)
             }
+        }
+        // 弹幕 starts off on a TV: the first time this device runs, its own setting is turned off
+        // (afterwards it is whatever the viewer chose). Sample runs start off every time.
+        if launch.offlineFixtures {
+            library.settings.danmaku.enabled = false
+        } else if !UserDefaults.standard.bool(forKey: "tvDanmakuDefaulted") {
+            library.settings.danmaku.enabled = false
+            UserDefaults.standard.set(true, forKey: "tvDanmakuDefaulted")
         }
         library.startLive { [weak self] in self?.player.hasFirstFrame ?? true }
     }
 
-    private func open(route: LaunchOptions.Route, _ series: SeriesSummary) {
-        if route == .detail { openDetail(series) } else { openPlayer(series) }
+    private func open(route: LaunchOptions.Route, _ series: SeriesSummary, startEpisode: Int? = nil) {
+        if route == .detail { openDetail(series) } else { openPlayer(series, startEpisode: startEpisode) }
     }
 
     func openDetail(_ series: SeriesSummary) {
@@ -96,6 +105,8 @@ final class TVAppModel: PlayerHost {
 /// sit over it in place; while one is up the tabs take no focus.
 struct RootView: View {
     @Environment(TVAppModel.self) private var app
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var hasActivatedOnce = false
 
     var body: some View {
         @Bindable var app = app
@@ -136,5 +147,20 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.25), value: app.detailTarget?.seriesId)
         .animation(.easeInOut(duration: 0.25), value: app.playerTarget?.id)
+        .onChange(of: scenePhase) { _, phase in
+            // As in the iOS app: back in front, warm the App source up and sync the account (at
+            // most once a minute, then every 3 minutes); in the background, stop the loop.
+            if phase == .active {
+                if hasActivatedOnce {
+                    if !app.launch.offlineFixtures {
+                        Task { await EpisodeResolver.shared.warmUpAppSource() }
+                    }
+                    app.library.sceneBecameActive()
+                }
+                hasActivatedOnce = true
+            } else if phase == .background {
+                app.library.sceneEnteredBackground()
+            }
+        }
     }
 }

@@ -98,6 +98,10 @@ schemes:
         "-HongguoMuted YES": true
     test:
       config: Debug
+      # The unit tests run inside the app: it starts offline and muted like every other run.
+      commandLineArguments:
+        "-HongguoOfflineFixtures YES": true
+        "-HongguoMuted YES": true
       targets:
         - HongguoDramaTVTests
         - HongguoDramaTVUITests

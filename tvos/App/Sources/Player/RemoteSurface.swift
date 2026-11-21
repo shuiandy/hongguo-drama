@@ -1,15 +1,14 @@
 import SwiftUI
 import UIKit
 
-/// The whole-screen surface that takes the Siri Remote while the player shows no panel: a click
-/// or the play key, a click on the left or right edge (±10 s), horizontal swipes (scrubbing) and a
-/// swipe down. SwiftUI has no swipe input on tvOS, so this is a focusable UIKit view with gesture
+/// The whole-screen surface that takes the Siri Remote while the player shows no panel: a click,
+/// a click on the left or right edge (±10 s), horizontal swipes (scrubbing) and a swipe down.
+/// The play key is left to the page (`onPlayPauseCommand`), so one press is handled once. SwiftUI has no swipe input on tvOS, so this is a focusable UIKit view with gesture
 /// recognizers for the touch surface.
 struct RemoteSurface: UIViewRepresentable {
     /// Takes focus and input only while true (a panel takes over otherwise).
     var isActive: Bool
     var onSelect: () -> Void
-    var onPlayPause: () -> Void
     var onStep: (_ direction: Int) -> Void
     /// Horizontal swipe: the fraction of the surface's width moved so far, then nil when it ends.
     var onScrub: (_ fraction: Double?) -> Void
@@ -42,9 +41,6 @@ struct RemoteSurface: UIViewRepresentable {
             let select = UITapGestureRecognizer(target: self, action: #selector(selected))
             select.allowedPressTypes = [NSNumber(value: UIPress.PressType.select.rawValue)]
             addGestureRecognizer(select)
-            let playPause = UITapGestureRecognizer(target: self, action: #selector(playPaused))
-            playPause.allowedPressTypes = [NSNumber(value: UIPress.PressType.playPause.rawValue)]
-            addGestureRecognizer(playPause)
             let pan = UIPanGestureRecognizer(target: self, action: #selector(panned(_:)))
             pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirect.rawValue)]
             addGestureRecognizer(pan)
@@ -55,7 +51,6 @@ struct RemoteSurface: UIViewRepresentable {
         override var canBecomeFocused: Bool { isActive }
 
         @objc private func selected() { handlers?.onSelect() }
-        @objc private func playPaused() { handlers?.onPlayPause() }
 
         @objc private func panned(_ pan: UIPanGestureRecognizer) {
             let moved = pan.translation(in: self)

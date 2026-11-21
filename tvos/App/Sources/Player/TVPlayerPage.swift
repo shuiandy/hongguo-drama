@@ -21,14 +21,13 @@ struct TVPlayerPage: View {
     @State private var scrubTo: Double?
     @State private var tint = Color.gray
     @State private var nowPlaying = NowPlaying()
-    /// 弹幕 starts off on the TV; turning it on here also turns on the shared setting that loads it.
-    @AppStorage("tvDanmakuVisible") private var danmakuVisible = false
+    @Environment(\.scenePhase) private var scenePhase
     @FocusState private var focus: Focus?
 
     enum Panel: Equatable { case episodes, speed, quality }
     /// The same choices as the iOS player's speed menu.
     static let rates: [Float] = [0.75, 1, 1.25, 1.5, 2, 3]
-    private enum Focus: Hashable { case next, episodes, danmaku, speed, quality, panel(Int) }
+    enum Focus: Hashable { case next, episodes, danmaku, speed, quality, panel(Int) }
 
     init(target: PlayerTarget, app: TVAppModel) {
         self.app = app
@@ -45,7 +44,7 @@ struct TVPlayerPage: View {
                 VideoSurface(engine: engine)
                     .frame(width: video.width, height: video.height)
                     .position(x: video.midX, y: video.midY)
-                if danmakuVisible, app.library.settings.danmaku.enabled, !session.danmaku.isEmpty {
+                if app.library.settings.danmaku.enabled, !session.danmaku.isEmpty {
                     // Only over the top third of the picture.
                     DanmakuLayer(items: session.danmaku, engine: engine, settings: app.library.settings.danmaku, bottomInset: 0)
                         .frame(width: video.width, height: video.height / 3)
@@ -56,7 +55,7 @@ struct TVPlayerPage: View {
                 status
                     .position(x: video.midX, y: video.midY)
                 RemoteSurface(isActive: panel == nil,
-                              onSelect: clickOrPlayKey, onPlayPause: clickOrPlayKey,
+                              onSelect: clickOrPlayKey,
                               onStep: { step($0) }, onScrub: { scrub($0) },
                               onSwipeDown: swipeDown, onMenu: back)
                     .ignoresSafeArea()
@@ -64,11 +63,12 @@ struct TVPlayerPage: View {
                     controls
                         .transition(.opacity)
                 }
-                if showsNextButton {
-                    nextButton
+                if panel == nil {
+                    NextEpisodeButton(session: session, focus: $focus)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                         .padding(.trailing, 90).padding(.bottom, controlsVisible ? 260 : 90)
                 }
+                NowPlayingTicker(session: session, nowPlaying: nowPlaying)
                 if let panel {
                     panelView(panel)
                         .transition(.move(edge: panel == .episodes ? .bottom : .trailing).combined(with: .opacity))
@@ -80,6 +80,8 @@ struct TVPlayerPage: View {
         .animation(.easeInOut(duration: 0.25), value: controlsVisible)
         .animation(.easeInOut(duration: 0.25), value: panel)
         .onExitCommand(perform: back)
+        // The play key, wherever the focus is.
+        .onPlayPauseCommand(perform: clickOrPlayKey)
         .task { await session.open() }
         .task(id: session.cover) {
             if let color = await CoverTint.color(for: session.cover) { tint = color }
@@ -91,11 +93,11 @@ struct TVPlayerPage: View {
         .onChange(of: engine.isPlaying) { _, playing in
             // No screensaver while an episode plays.
             UIApplication.shared.isIdleTimerDisabled = playing
-            updateNowPlaying()
         }
-        .onChange(of: session.episodeNumber) { _, _ in updateNowPlaying() }
-        .onChange(of: Int(engine.currentTime) / 5) { _, _ in updateNowPlaying() }
-        .onChange(of: showsNextButton) { _, shows in if shows, panel == nil { focus = .next } }
+        .onChange(of: scenePhase) { _, phase in
+            // Leaving the front: the position is written now, not on the next 5 s tick.
+            if phase != .active { session.persist(forceSync: true) }
+        }
     }
 
     // MARK: Layout
@@ -138,13 +140,13 @@ struct TVPlayerPage: View {
             }
             Spacer()
             VStack(alignment: .leading, spacing: 28) {
-                ProgressBar(current: scrubTo ?? engine.currentTime, buffered: engine.buffered, duration: engine.duration,
-                            isScrubbing: scrubTo != nil)
+                LiveProgress(engine: engine, scrubTo: scrubTo)
                 HStack(spacing: 28) {
                     Button { open(.episodes) } label: { Label("选集", systemImage: "square.grid.3x3") }
                         .focused($focus, equals: .episodes)
+                    let danmakuOn = app.library.settings.danmaku.enabled
                     Button { toggleDanmaku() } label: {
-                        Label(danmakuVisible ? "弹幕 开" : "弹幕 关", systemImage: danmakuVisible ? "captions.bubble.fill" : "captions.bubble")
+                        Label(danmakuOn ? "弹幕 开" : "弹幕 关", systemImage: danmakuOn ? "captions.bubble.fill" : "captions.bubble")
                     }
                     .focused($focus, equals: .danmaku)
                     Button { open(.speed) } label: { Label(speedLabel(engine.rate), systemImage: "gauge.with.dots.needle.67percent") }
@@ -166,19 +168,6 @@ struct TVPlayerPage: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
         }
-    }
-
-    // MARK: Next episode
-
-    /// In the last 5 seconds of an episode with one after it.
-    private var showsNextButton: Bool {
-        engine.duration > 0 && engine.duration - engine.currentTime <= 5 && session.hasNext && panel == nil
-            && engine.phase == .ready
-    }
-
-    private var nextButton: some View {
-        Button { session.next() } label: { Label("下一集", systemImage: "forward.end.fill") }
-            .focused($focus, equals: .next)
     }
 
     // MARK: Panels
@@ -274,11 +263,8 @@ struct TVPlayerPage: View {
     }
 
     private func toggleDanmaku() {
-        danmakuVisible.toggle()
-        if danmakuVisible, !app.library.settings.danmaku.enabled {
-            app.library.settings.danmaku.enabled = true
-        }
-        if danmakuVisible { session.reloadDanmakuIfNeeded() }
+        app.library.settings.danmaku.enabled.toggle()
+        if app.library.settings.danmaku.enabled { session.reloadDanmakuIfNeeded() }
         showControls()
     }
 
@@ -317,8 +303,55 @@ struct TVPlayerPage: View {
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
-    private func updateNowPlaying() {
-        nowPlaying.update(title: session.title, episode: session.episodeNumber, engine: engine)
+}
+
+/// 下一集 in the last 5 seconds of an episode with one after it; it takes the focus when it shows.
+/// A view of its own, so only it follows the playback clock.
+private struct NextEpisodeButton: View {
+    let session: PlaybackSession
+    var focus: FocusState<TVPlayerPage.Focus?>.Binding
+
+    var body: some View {
+        let engine = session.engine
+        let shows = engine.duration > 0 && engine.duration - engine.currentTime <= 5 && session.hasNext
+            && (engine.phase == .ready || engine.phase == .offline)
+        Group {
+            if shows {
+                Button { session.next() } label: { Label("下一集", systemImage: "forward.end.fill") }
+                    .focused(focus, equals: .next)
+            }
+        }
+        .onChange(of: shows) { _, now in if now { focus.wrappedValue = .next } }
+    }
+}
+
+/// Keeps the system's Now Playing in step: on play and pause, a new episode, and every 5 s.
+private struct NowPlayingTicker: View {
+    let session: PlaybackSession
+    let nowPlaying: NowPlaying
+
+    var body: some View {
+        let engine = session.engine
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onChange(of: engine.isPlaying, initial: true) { _, _ in update() }
+            .onChange(of: session.episodeNumber) { _, _ in update() }
+            .onChange(of: Int(engine.currentTime) / 5) { _, _ in update() }
+    }
+
+    private func update() {
+        nowPlaying.update(title: session.title, episode: session.episodeNumber, engine: session.engine)
+    }
+}
+
+/// The progress bar following the playback clock (or the scrub target).
+private struct LiveProgress: View {
+    let engine: PlayerEngine
+    let scrubTo: Double?
+
+    var body: some View {
+        ProgressBar(current: scrubTo ?? engine.currentTime, buffered: engine.buffered, duration: engine.duration,
+                    isScrubbing: scrubTo != nil)
     }
 }
 
