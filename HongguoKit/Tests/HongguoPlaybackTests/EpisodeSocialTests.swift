@@ -419,8 +419,9 @@ final class EpisodeSocialTests: XCTestCase {
         let items = Dictionary(uniqueKeysWithValues: (URLComponents(url: uploadURL, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
         XCTAssertTrue(uploadURL.absoluteString.hasPrefix("https://reading.snssdk.com/reading/reader/upload/picture/?"))
         XCTAssertEqual(items["aid"], "8662")
-        XCTAssertEqual(items["app_name"], "dragon_app")
-        XCTAssertEqual(items["version_code"], "74532")
+        XCTAssertEqual(items["app_name"], "novelread")
+        XCTAssertEqual(items["version_code"], "74300")
+        XCTAssertEqual(items["device_platform"], "iphone")
         XCTAssertEqual(items["device_id"], "1234567890123456789")
         XCTAssertEqual(items["iid"], "2234567890123456789")
 

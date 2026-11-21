@@ -20,9 +20,9 @@
 
 | 环节 | 唯一的做法 |
 | --- | --- |
-| 取源 | `AuthenticatedPlaybackSource` 通过 App 播放模型取源，使用固定 iPhone UA。播放、预热与预取共用设备注册记录。 |
+| 取源 | `AuthenticatedPlaybackSource` 通过 App 播放模型取源，使用官方 iOS 7.4.3 资料（`Eggplant/7.4.3`、`device_platform=iphone`、`v04.10.03-ml-ios`）。播放、预热与预取共用设备注册记录。 |
 | 分集列表 | `SeriesService.episodes` 从 App 详情生成分集，创作者合集走合集详情。 |
-| 设备身份 | `PersistentAppDevice` 保存注册记录，注册与续期仍声明 Android 客户端。搜索、书城、账号和社交请求也使用 Android 资料；播放模型的外层参数使用 iPhone 资料。 |
+| 设备身份 | `PersistentAppDevice` 按官方 iOS 7.4.3 `BDInstall`（`com.phoenix.video`、`novelread`、`App Store`、`sdk_version=1120`、`device_platform=iphone`）注册、续期与激活；历史非 iOS 记录会自动触发一次全新 iOS 注册。搜索、书城、账号与评论/弹幕的旧签名器（`AppLegacySigner`、`DanmakuSigner`）因服务端将 `x-medusa`/`X-Argus` 密钥与 Android 平台强绑定，保留其 Android 资料。 |
 | 目录和榜单 | 只有 App（`CatalogService` 调 `DiscoveryAccess`），不读官网页面。 |
 | 搜索 | 只有 App 搜索 `AppSearchService`（翻页用它的游标），没有官网搜索、放宽关键词或上新补搜。`NewReleaseService` 是单独的近 7 天上新列表，不参与搜索。 |
 | 评论 | 只有 App 评论接口（`EpisodeSocialService.commentsPage`，`EpisodeCommentService` 和 `load` 都用它）。 |

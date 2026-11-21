@@ -232,7 +232,7 @@ struct PlaybackSignerV5 {
         return encoded.map { UInt8($0 & 255) }
     }
 
-    struct Who { var deviceId, osVersion, deviceType, channel, versionName: String; var brand: String = "HONOR" }
+    struct Who { var deviceId, osVersion, deviceType, channel, versionName: String; var brand: String = "HONOR"; var sdkVersion: String = "v04.10.03-ml-android" }
 
     func medusa(query: [UInt8], f13: [UInt8], ts: UInt32, who: Who) throws -> String {
         let flags = [UInt8](repeating: 0, count: 8)
@@ -250,7 +250,7 @@ struct PlaybackSignerV5 {
         var message = ProtoWriter()
         message.bytes(1, Self.magic); message.sint(2, 5); message.sint(3, Int64(random32()))
         message.string(4, "8662"); message.string(5, who.deviceId); message.string(6, "646637794")
-        message.string(7, who.versionName); message.string(8, "v04.10.03-ml-android"); message.sint(9, 0x040a0300)
+        message.string(7, who.versionName); message.string(8, who.sdkVersion); message.sint(9, 0x040a0300)
         message.bytes(10, flags); message.sint(12, Int64(ts)); message.bytes(13, f13)
         message.bytes(14, Array(query[0..<6])); message.bytes(15, nested.bytes)
         message.sint(17, Int64(ts)); message.string(20, "none"); message.sint(21, 377); message.bytes(23, env.bytes)
@@ -324,9 +324,11 @@ struct PlaybackSignerV5 {
         let ts = UInt32(nowMillis / 1000)
         let bodyHash = AppCrypto.md5(body)
         let fields = values.map { $0.0 == "ts" ? ($0.0, String(ts)) : $0 }
-        let brand = lookup["device_platform"]?.lowercased() == "iphone" ? "Apple" : "HONOR"
+        let isIOS = lookup["device_platform"]?.lowercased() == "iphone"
+        let brand = isIOS ? "Apple" : "HONOR"
+        let sdkVersion = isIOS ? "v04.10.03-ml-ios" : "v04.10.03-ml-android"
         let who = Who(deviceId: lookup["device_id"]!, osVersion: lookup["os_version"]!, deviceType: lookup["device_type"]!,
-                      channel: lookup["channel"]!, versionName: lookup["version_name"]!, brand: brand)
+                      channel: lookup["channel"]!, versionName: lookup["version_name"]!, brand: brand, sdkVersion: sdkVersion)
         for offset in 0..<1024 {
             let ticket = String(nowMillis + Int64(offset))
             var pairs = fields

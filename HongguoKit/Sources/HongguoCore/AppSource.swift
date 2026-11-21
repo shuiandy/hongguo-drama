@@ -211,11 +211,14 @@ enum AppSource {
     /// the video's content type, as the official client sends it: 1004 for series episodes, 1001 for
     /// videos of a creator's collection (`UGCVideos`). One request may mix both; the reply is keyed by
     /// vid either way.
+    /// `device_level` is kept at 1 (rather than 3): live A/B across 147 episodes on 2026-11-21
+    /// confirmed identical 360p-1080p `bytevc1` bitrates on iOS 7.4.3 while defending against
+    /// server-side ByteVC2 substitution observed for `device_level >= 3`.
     static func modelPayload(vids: [String]) throws -> [UInt8] {
         var map: [String: [String]] = [:]
         for vid in vids { map[UGCVideos.contains(vid) ? UGCVideos.modelKey : "1004", default: []].append(vid) }
         let object: [String: Any] = [
-            "biz_param": ["detail_page_version": 0, "device_level": 3, "disable_digg_stat": false,
+            "biz_param": ["detail_page_version": 0, "device_level": 1, "disable_digg_stat": false,
                           "disable_video_relate_book": false, "need_all_video_definition": true, "need_mp4_align": false,
                           "use_os_player": false, "use_server_dns": false, "video_platform": 1024],
             "mixed_video_id_map": map,

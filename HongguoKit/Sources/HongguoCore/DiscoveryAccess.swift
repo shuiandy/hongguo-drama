@@ -230,6 +230,17 @@ public enum DiscoveryAccess {
         }
     }
 
+    /// Related recommendations shown on a series detail/selector surface
+    /// (`/reading/bookapi/plan/v/?scene=10&from=select_panel_recommend`).
+    public struct SeriesRecommendResult: Equatable, Sendable {
+        public var cellTitle: String
+        public var sessionId: String
+        public var items: [RelatedSeriesItem]
+        public init(cellTitle: String, sessionId: String, items: [RelatedSeriesItem]) {
+            self.cellTitle = cellTitle; self.sessionId = sessionId; self.items = items
+        }
+    }
+
     // MARK: - Category Catalog Browse (剧场分类)
 
     public struct CatalogBrowseResult: Equatable, Sendable {
@@ -292,6 +303,8 @@ public enum DiscoveryAccess {
     private static let catalogCache = TTLCache<CatalogBrowseResult>(limit: 32)
     private static let catalogCursors = TTLCache<CategoryCursor>(limit: 64)
     private static let catalogRankCursors = TTLCache<(cursor: RankCursor, startRank: Int)>(limit: 32)
+    private static let recommendCache = TTLCache<SeriesRecommendResult>(limit: 64)
+    private static let cuesCache = TTLCache<[String]>(limit: 8)
 
     // MARK: - Ranking Requests
 
@@ -551,6 +564,133 @@ public enum DiscoveryAccess {
             timeout: timeout
         )
         return parseSameIPSeries(payload, currentSeriesId: seriesId)
+    }
+
+    // MARK: - Series Recommendations (相关推荐)
+
+    /// Fetches related dramas for a series (`/reading/bookapi/plan/v/?scene=10&from=select_panel_recommend`).
+    /// Prefers the detail-related cell (`show_type=160`) and falls back to the first populated video cell
+    /// (e.g. `show_type=401` "更多好剧" when anonymous). Coalesced and cached for 60 seconds per series.
+    public static func seriesRecommend(seriesId: String, timeout: TimeInterval = 8) async throws -> SeriesRecommendResult {
+        guard seriesId.matchesDigits(min: 1, max: 30) else {
+            return SeriesRecommendResult(cellTitle: "相关推荐", sessionId: "", items: [])
+        }
+        return try await recommendCache.load(seriesId, ttl: 60) {
+            let payload = try await AppBookMallAccess.tab(
+                values: [
+                    ("scene", "10"),
+                    ("from", "select_panel_recommend"),
+                    ("book_id", seriesId),
+                    ("session_uuid", AppCrypto.uuid()),
+                ],
+                host: defaultHost,
+                path: "/reading/bookapi/plan/v/",
+                timeout: timeout
+            )
+            return try parseSeriesRecommend(payload, excludingSeriesId: seriesId)
+        }
+    }
+
+    static func parseSeriesRecommend(_ payload: JSONValue, excludingSeriesId: String = "") throws -> SeriesRecommendResult {
+        guard payload["code"].isZeroOrMissingStatusCode else {
+            throw HongguoError(.upstream, "相关推荐暂时不可用")
+        }
+        let cells = payload["data"].array ?? []
+        let topSession = (payload["session_id"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        func extractItems(from cell: JSONValue) -> [RelatedSeriesItem] {
+            let rawRows = cell["video_data"].array ?? cell["cell_data"].array ?? []
+            var seen = Set<String>()
+            var items: [RelatedSeriesItem] = []
+            for entry in rawRows {
+                let row = entry["video_detail"].object != nil ? entry["video_detail"] : entry
+                let id = (row["series_id"].idString ?? row["book_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
+                let title = AccountService.cleanText(row["title"].string ?? row["series_title"].string ?? row["book_name"].string)
+                guard id.matchesDigits(min: 1, max: 30), id != excludingSeriesId,
+                      !title.isEmpty, seen.insert(id).inserted else { continue }
+                let cover = normalizedCover(row["cover"].string ?? row["series_cover"].string ?? row["thumb_url"].string ?? "")
+                let season = max(0, Int(row["season_index"].number ?? 0))
+                let epCount = max(0, Int(row["episode_cnt"].number ?? row["serial_count"].number ?? 0))
+                let subs = row["sub_title_list"].array ?? []
+                let heatText = AccountService.cleanText(
+                    subs.first(where: { Int($0["data_type"].number ?? 0) == 27 })?["content"].string
+                    ?? subs.first(where: { ($0["content"].string ?? "").contains("热度") })?["content"].string
+                    ?? row["hot_score_str"].string
+                )
+                let ct = Int(row["content_type"].number ?? 0)
+                let desc = AccountService.cleanText(row["video_desc"].string ?? row["series_intro"].string ?? row["abstract"].string)
+                let disablePlay = row["disable_play"].bool == true
+                let badgeText = AccountService.cleanText(row["tag_info"]["text"].string)
+                var parts: [String] = []
+                if !heatText.isEmpty { parts.append(heatText) }
+                if epCount > 0 { parts.append("全\(epCount)集") }
+                items.append(RelatedSeriesItem(
+                    seriesId: id, title: title, cover: cover, seasonIndex: season,
+                    episodeCount: epCount, heatText: heatText,
+                    subtitle: parts.joined(separator: " · "),
+                    disablePlay: disablePlay,
+                    categoryLabel: AccountDataAccess.categoryLabel(contentType: ct),
+                    description: desc,
+                    subscribeItemId: id,
+                    badgeText: badgeText
+                ))
+            }
+            return items
+        }
+
+        var fallback: SeriesRecommendResult?
+        for cell in cells {
+            let items = extractItems(from: cell)
+            guard !items.isEmpty else { continue }
+            let name = AccountService.cleanText(cell["cell_name"].string)
+            let title = name.isEmpty ? "相关推荐" : name
+            let session = (cell["session_id"].idString ?? topSession).trimmingCharacters(in: .whitespacesAndNewlines)
+            let result = SeriesRecommendResult(cellTitle: title, sessionId: session, items: items)
+            if Int(cell["show_type"].number ?? 0) == 160 {
+                return result
+            }
+            if fallback == nil {
+                fallback = result
+            }
+        }
+        return fallback ?? SeriesRecommendResult(cellTitle: "相关推荐", sessionId: topSession, items: [])
+    }
+
+    // MARK: - Search Cues (搜索框轮播词)
+
+    /// Fetches rotating placeholder cues for the search bar (`/reading/bookapi/search/cue/v1/`).
+    /// Coalesced and cached for 5 minutes.
+    public static func searchCues(limit: Int = 10, timeout: TimeInterval = 5) async throws -> [String] {
+        let clamped = min(max(limit, 1), 20)
+        return try await cuesCache.load("cues:\(clamped)", ttl: 300) {
+            let payload = try await AppBookMallAccess.tab(
+                values: [
+                    ("cue_type", "1"),
+                    ("limit", String(clamped)),
+                    ("search_source", "1"),
+                    ("tab_name", "feed"),
+                ],
+                host: defaultHost,
+                path: "/reading/bookapi/search/cue/v1/",
+                timeout: timeout
+            )
+            return try parseSearchCues(payload)
+        }
+    }
+
+    static func parseSearchCues(_ payload: JSONValue) throws -> [String] {
+        guard payload["code"].isZeroOrMissingStatusCode else {
+            throw HongguoError(.upstream, "搜索提示词暂时不可用")
+        }
+        let rows = payload["data_v1"].array ?? payload["data"].array ?? []
+        var seen = Set<String>()
+        var out: [String] = []
+        for row in rows {
+            let text = AccountService.cleanText(row["text"].string ?? row["word"].string ?? row.string)
+            guard !text.isEmpty, seen.insert(text).inserted else { continue }
+            out.append(text)
+        }
+        return out
     }
 
     // MARK: - Search Suggestions

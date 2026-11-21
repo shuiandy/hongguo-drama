@@ -85,6 +85,19 @@ final class PersistentPlaybackTests: XCTestCase {
         missingToken.deviceToken = "valid-token"
         missingToken.isActivated = false
         XCTAssertTrue(missingToken.needsRenewal(now: now.addingTimeInterval(60)))
+
+        var legacyAndroid = PersistentAppDevice.StoredRecord(
+            deviceId: "7600112233445566",
+            iid: "7600998877665544",
+            cdid: "11111111-2222-3333-4444-555555555555",
+            deviceToken: "valid-token",
+            isActivated: true,
+            lastRegisteredAt: now,
+            platform: nil
+        )
+        XCTAssertTrue(legacyAndroid.needsRenewal(now: now.addingTimeInterval(60)), "legacy non-iOS device records must trigger a fresh iOS registration")
+        legacyAndroid.platform = "iphone"
+        XCTAssertFalse(legacyAndroid.needsRenewal(now: now.addingTimeInterval(60)))
     }
 
     func testRecordRoundTripAndValidation() throws {
@@ -237,5 +250,70 @@ final class PersistentPlaybackTests: XCTestCase {
         XCTAssertFalse(serverError.isExpiredOrAuthError)
         let layout = FastCencOpenError.unsupportedLayout("mdat before moov")
         XCTAssertFalse(layout.isExpiredOrAuthError)
+    }
+
+    func testFreshResetCoalescesConcurrentCallersAndEnforcesCooldown() async throws {
+        let counter = LockedValue<Int>(0)
+        let initial = PersistentAppDevice.StoredRecord(
+            deviceId: "7600112233445566",
+            iid: "7600998877665544",
+            cdid: "11111111-2222-3333-4444-555555555555",
+            deviceToken: "old-token",
+            isActivated: true,
+            lastRegisteredAt: Date()
+        )
+        let device = PersistentAppDevice(initialRecord: initial) {
+            let n = counter.withLock { value -> Int in
+                value += 1
+                return value
+            }
+            try await Task.sleep(for: .milliseconds(40))
+            return PersistentAppDevice.StoredRecord(
+                deviceId: "770000000000000\(n)",
+                iid: "780000000000000\(n)",
+                cdid: "22222222-2222-3333-4444-55555555555\(n)",
+                deviceToken: "fresh-token-\(n)",
+                isActivated: true,
+                lastRegisteredAt: Date()
+            )
+        }
+
+        let transport = AppTransport(http: .shared)
+        let gen0 = await device.currentGeneration()
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+
+        // Two concurrent failures on gen0 coalesce onto a single fresh registration.
+        async let r1 = device.resetFreshForRecovery(fromGeneration: gen0, transport: transport, now: t0)
+        async let r2 = device.resetFreshForRecovery(fromGeneration: gen0, transport: transport, now: t0)
+        let (a, b) = try await (r1, r2)
+        XCTAssertTrue(a.reset)
+        XCTAssertTrue(b.reset)
+        XCTAssertEqual(a.identity.deviceId, "7700000000000001")
+        XCTAssertEqual(b.identity.deviceId, "7700000000000001")
+        XCTAssertEqual(counter.withLock { $0 }, 1)
+
+        // A late caller that still holds gen0 immediately reuses the reset device without re-registering.
+        let late = try await device.resetFreshForRecovery(fromGeneration: gen0, transport: transport, now: t0.addingTimeInterval(5))
+        XCTAssertTrue(late.reset)
+        XCTAssertEqual(late.identity.deviceId, "7700000000000001")
+        XCTAssertEqual(counter.withLock { $0 }, 1)
+
+        // A failure on the new generation inside the 120 s cooldown is skipped.
+        let gen1 = await device.currentGeneration()
+        XCTAssertNotEqual(gen1, gen0)
+        let cooled = try await device.resetFreshForRecovery(fromGeneration: gen1, transport: transport, now: t0.addingTimeInterval(30))
+        XCTAssertFalse(cooled.reset)
+        XCTAssertEqual(cooled.identity.deviceId, "7700000000000001")
+        XCTAssertEqual(counter.withLock { $0 }, 1)
+
+        // After the 120 s cooldown expires, another fresh reset succeeds.
+        let afterCooldown = try await device.resetFreshForRecovery(
+            fromGeneration: gen1,
+            transport: transport,
+            now: t0.addingTimeInterval(PersistentAppDevice.minFreshResetInterval + 1)
+        )
+        XCTAssertTrue(afterCooldown.reset)
+        XCTAssertEqual(afterCooldown.identity.deviceId, "7700000000000002")
+        XCTAssertEqual(counter.withLock { $0 }, 2)
     }
 }

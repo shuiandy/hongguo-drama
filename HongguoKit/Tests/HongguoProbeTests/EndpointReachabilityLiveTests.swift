@@ -41,6 +41,11 @@ final class EndpointReachabilityLiveTests: XCTestCase {
             try need(!s.isEmpty, "suggestions")
             return "\(s.count): \(s.prefix(3).joined(separator: "、"))"
         }
+        await check("search/cue/v1 (search cues)") {
+            let cues = try await DiscoveryAccess.searchCues()
+            try need(!cues.isEmpty, "cues")
+            return "\(cues.count): \(cues.prefix(3).joined(separator: "、"))"
+        }
         await check("plan/v (search_input_page: 猜你想搜 & 热点话题榜)") {
             let landing = try await DiscoveryAccess.searchLanding()
             try need(!landing.hotTopics.isEmpty, "hotTopics")
@@ -78,6 +83,11 @@ final class EndpointReachabilityLiveTests: XCTestCase {
         }
         await check("plan/v (same IP)") {
             let r = try await DiscoveryAccess.sameIPSeries(seriesId: sid); return "\(r.items.count) items (0 is fine for a series without seasons)"
+        }
+        await check("plan/v (series recommend)") {
+            let r = try await DiscoveryAccess.seriesRecommend(seriesId: sid)
+            try need(!r.items.isEmpty, "recommend items")
+            return "\(r.cellTitle): \(r.items.count) items"
         }
         await check("subscribe/list (calendar)") {
             let days = DiscoveryAccess.calendarDays()
