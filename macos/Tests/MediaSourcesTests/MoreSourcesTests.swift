@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import XCTest
 @testable import HongguoCore
+@testable import MediaSources
 
 final class MoreSourcesTests: XCTestCase {
     final class Log: @unchecked Sendable {
@@ -163,7 +164,7 @@ final class MoreSourcesTests: XCTestCase {
     }
 
     func testSettingsForSources() throws {
-        var settings = AppSettings()
+        var settings = SourceSettings()
         XCTAssertEqual(settings.mediaSources.map(\.id), ["hongguo", "xifan", "hema"])
         XCTAssertThrowsError(try settings.setBuiltinSource("hongguo", enabled: false))
         try settings.setBuiltinSource("reelshort", enabled: true)
@@ -175,7 +176,7 @@ final class MoreSourcesTests: XCTestCase {
         let data = try JSONEncoder().encode(settings)
         var object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         object["customSources"] = (object["customSources"] as! [Any]) + [["name": "坏", "url": "http://127.0.0.1/"], 5]
-        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONSerialization.data(withJSONObject: object))
+        let decoded = try JSONDecoder().decode(SourceSettings.self, from: JSONSerialization.data(withJSONObject: object))
         XCTAssertEqual(decoded.customSources, [saved])
         XCTAssertEqual(decoded.builtinSources, ["reelshort": true, "hema": false])
 
@@ -187,5 +188,28 @@ final class MoreSourcesTests: XCTestCase {
         XCTAssertEqual(try MediaSources.source(for: "custom:\(saved.id):1", settings: { snapshot })?.label, "源")
         try settings.removeCustomSource(id: saved.id)
         XCTAssertTrue(settings.customSources.isEmpty)
+    }
+
+    func testStoreTakesOlderLibrarySettingsOnceThenKeepsItsOwn() throws {
+        let suite = "MediaSourcesTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let library = dir.appendingPathComponent("library.json")
+        let legacy: [String: Any] = ["version": 1, "settings": ["autoNext": true, "builtinSources": ["dramabox": true],
+                                     "customSources": [["id": "0f8fad5b-d9cb-469f-a165-70867728950e", "name": "源", "url": "https://cms.example.com", "enabled": true]]]]
+        try JSONSerialization.data(withJSONObject: legacy).write(to: library)
+
+        let first = SourceSettingsStore(defaults: defaults, legacyLibrary: library)
+        XCTAssertEqual(first.value.builtinSources, ["dramabox": true])
+        XCTAssertEqual(first.value.customSources.map(\.name), ["源"])
+        first.value.builtinSources["dramabox"] = false
+
+        try FileManager.default.removeItem(at: library)
+        let second = SourceSettingsStore(defaults: defaults, legacyLibrary: library)
+        XCTAssertEqual(second.value.builtinSources, ["dramabox": false], "the saved value wins over library.json")
+        XCTAssertEqual(second.value.customSources.count, 1)
     }
 }

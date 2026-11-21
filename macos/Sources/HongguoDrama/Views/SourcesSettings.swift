@@ -1,9 +1,11 @@
 import SwiftUI
 import HongguoCore
+import MediaSources
 
 /// 片源 settings: built-in source switches and custom Apple CMS endpoints. Embedded in a Form.
 struct SourcesSettingsSection: View {
     @Environment(AppModel.self) private var model
+    private var sources = SourceSettingsStore.shared
     @State private var editing: CustomSourceConfig?
     @State private var message = ""
 
@@ -24,10 +26,10 @@ struct SourcesSettingsSection: View {
         }
 
         Section {
-            if model.settings.customSources.isEmpty {
+            if sources.value.customSources.isEmpty {
                 Text("还没有自定义接口").foregroundStyle(.secondary)
             }
-            ForEach(model.settings.customSources) { source in
+            ForEach(sources.value.customSources) { source in
                 HStack {
                     Toggle(isOn: Binding(get: { source.enabled }, set: { value in
                         var copy = source
@@ -58,13 +60,13 @@ struct SourcesSettingsSection: View {
     }
 
     private func isOn(_ entry: MediaSources.Entry) -> Bool {
-        let value = model.settings.builtinSources[entry.id]
+        let value = sources.value.builtinSources[entry.id]
         return entry.optIn ? value == true : value != false
     }
 
     private func setBuiltin(_ id: String, _ enabled: Bool) {
         do {
-            try model.settings.setBuiltinSource(id, enabled: enabled)
+            try sources.value.setBuiltinSource(id, enabled: enabled)
             message = ""
         } catch {
             message = (error as? HongguoError)?.message ?? describe(error)
@@ -73,7 +75,7 @@ struct SourcesSettingsSection: View {
 
     private func save(_ source: CustomSourceConfig) {
         do {
-            try model.settings.saveCustomSource(source)
+            try sources.value.saveCustomSource(source)
             message = ""
         } catch {
             message = (error as? HongguoError)?.message ?? describe(error)
@@ -82,7 +84,7 @@ struct SourcesSettingsSection: View {
 
     private func remove(_ source: CustomSourceConfig) {
         do {
-            try model.settings.removeCustomSource(id: source.id)
+            try sources.value.removeCustomSource(id: source.id)
             if model.selection == .source("custom:\(source.id)") { model.selection = .category(.realDrama) }
             message = ""
         } catch {

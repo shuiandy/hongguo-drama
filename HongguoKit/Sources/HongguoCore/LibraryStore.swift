@@ -63,11 +63,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var watchSequelsEnabled: Bool = true
     /// Preferred video short side in pixels (1080, 720…); nil = automatic (best tier).
     public var preferredQuality: Int?
-    /// 西饭/河马 (on unless false) and ReelShort/DramaBox (off unless true); Hongguo is always on.
-    public var builtinSources: [String: Bool] = [:]
-    /// Apple CMS (`/api.php/provide/vod/`) endpoints added by the user.
-    public var customSources: [CustomSourceConfig] = []
-
     // Settings window (2026-11 redesign).
     /// Page shown when the main window opens: "last", "discover", "history", "library" or "downloads".
     public var startPage: String = "last"
@@ -79,7 +74,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var defaultPictureMode: PictureMode = .fit
     /// Volume (percent) applied each time the player opens; nil keeps the last volume.
     public var startVolume: Int?
-    /// Also search the enabled other sources from the search page.
+    /// Also search the enabled other sources from the search page (the Mac app's other catalogues).
     public var searchOtherSources: Bool = true
     /// Hours between new-episode checks for unfinished series (1...48).
     public var watchCheckHours: Int = 6
@@ -115,33 +110,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public static let startVolumes = [10, 25, 50, 75, 100]
 
     public init() {}
-
-    /// Sources shown in the switcher, in order.
-    public var mediaSources: [MediaSources.Entry] { MediaSources.enabled(builtinSources, custom: customSources) }
-
-    /// Turns a built-in source on or off (`setBuiltinSourceEnabled`). Hongguo cannot be turned off.
-    public mutating func setBuiltinSource(_ id: String, enabled: Bool) throws {
-        if id == "hongguo" { throw HongguoError(.input, "红果来源固定开启，不能关闭") }
-        guard ["xifan", "hema", "reelshort", "dramabox"].contains(id) else { throw HongguoError(.input, "来源开关无效") }
-        builtinSources[id] = enabled
-    }
-
-    /// Adds or replaces a custom source after validation; returns the stored entry.
-    @discardableResult
-    public mutating func saveCustomSource(_ draft: CustomSourceConfig) throws -> CustomSourceConfig {
-        var source = try CustomSource.validate(draft)
-        if let index = customSources.firstIndex(where: { $0.id == source.id }) { customSources[index] = source }
-        else {
-            if source.id.isEmpty { source.id = UUID().uuidString.lowercased() }
-            customSources.append(source)
-        }
-        return source
-    }
-
-    public mutating func removeCustomSource(id: String) throws {
-        guard customSources.contains(where: { $0.id == id.lowercased() }) else { throw HongguoError(.input, "播放源不存在") }
-        customSources.removeAll { $0.id == id.lowercased() }
-    }
 
     public func pictureMode(for seriesId: String) -> PictureMode { pictureModes[seriesId] ?? defaultPictureMode }
 
@@ -194,11 +162,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
         watchUpdatesEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .watchUpdatesEnabled)) ?? d.watchUpdatesEnabled
         watchSequelsEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .watchSequelsEnabled)) ?? d.watchSequelsEnabled
         preferredQuality = try? c.decodeIfPresent(Int.self, forKey: .preferredQuality)
-        builtinSources = (try? c.decodeIfPresent([String: Bool].self, forKey: .builtinSources)) ?? d.builtinSources
-        // An entry that no longer validates is dropped instead of failing the whole file.
-        customSources = ((try? c.decodeIfPresent([Lenient<CustomSourceConfig>].self, forKey: .customSources)) ?? []).compactMap { entry in
-            entry.value.flatMap { try? CustomSource.validate($0) }.flatMap { $0.id.isEmpty ? nil : $0 }
-        }
         startPage = (try? c.decodeIfPresent(String.self, forKey: .startPage)) ?? d.startPage
         lastPage = try? c.decodeIfPresent(String.self, forKey: .lastPage)
         playbackCacheLimitGB = (try? c.decodeIfPresent(Int.self, forKey: .playbackCacheLimitGB)) ?? d.playbackCacheLimitGB
@@ -433,10 +396,4 @@ extension JSONDecoder {
         decoder.dateDecodingStrategy = .millisecondsSince1970
         return decoder
     }
-}
-
-/// Decodes one array element without failing the whole array.
-struct Lenient<Value: Decodable>: Decodable {
-    var value: Value?
-    init(from decoder: Decoder) throws { value = try? Value(from: decoder) }
 }

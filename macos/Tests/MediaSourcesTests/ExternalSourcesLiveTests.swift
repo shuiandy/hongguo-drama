@@ -1,5 +1,6 @@
 import XCTest
 @testable import HongguoCore
+@testable import MediaSources
 
 /// Live check of 西饭 and 河马: browse, a genre page, page 2, search, episodes and a play URL.
 /// `HONGGUO_LIVE=1 swift test --filter ExternalSourcesLiveTests`. Read-only requests.

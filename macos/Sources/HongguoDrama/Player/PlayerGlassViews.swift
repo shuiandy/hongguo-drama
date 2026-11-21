@@ -834,7 +834,7 @@ struct PlayerSidePanel: View {
               let seriesId = controller.episodes?.seriesId, let vid = controller.currentEpisode?.vid else { return }
         if episodeComments?.vid == vid { return }
         episodeCommentsError = ""
-        guard WatchHistory.source(of: seriesId) == .hongguo else {
+        guard WatchHistory.source(of: seriesId) == WatchHistory.hongguoSource else {
             episodeCommentsError = "这个片源没有本集评论"
             return
         }

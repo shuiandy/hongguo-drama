@@ -180,7 +180,7 @@ final class DanmakuParsingTests: XCTestCase {
         let limited = await service(transport).fetch(seriesId: Self.series, vid: Self.vid, limit: 2)
         XCTAssertEqual(limited.items.count, 2)
         XCTAssertTrue(limited.truncated)
-        let bad = await service(transport).fetch(seriesId: "xifan:a:b", vid: Self.vid)
+        let bad = await service(transport).fetch(seriesId: "other:a:b", vid: Self.vid)
         XCTAssertEqual(bad.error, "仅红果来源的剧集支持弹幕")
     }
 }

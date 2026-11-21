@@ -96,7 +96,7 @@ public actor WatchUpdateChecker {
         } catch {
             failure = "分集更新检查失败"
         }
-        if includeSequels, WatchHistory.source(of: id) == .hongguo {
+        if includeSequels, WatchHistory.source(of: id) == WatchHistory.hongguoSource {
             let keyword = WatchHistory.sequelKeyword(record.title)
             if !keyword.isEmpty {
                 do {

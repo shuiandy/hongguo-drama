@@ -40,6 +40,7 @@ public struct Genre: Hashable, Identifiable, Sendable {
     public var id: String { slug }
     public var slug: String
     public var label: String
+    public init(slug: String, label: String) { self.slug = slug; self.label = label }
 }
 
 public struct CatalogPage: Sendable {
@@ -63,10 +64,15 @@ public struct Episode: Identifiable, Hashable, Codable, Sendable {
     public var seriesId: String
     /// nil when the website did not say how many episodes are publicly available.
     public var webAvailable: Bool?
-    /// Set by 西饭/河马 lists: the source marks this episode as paid or locked. nil for Hongguo.
+    /// Set by an app's other catalogues: the source marks this episode as paid or locked. nil for Hongguo.
     public var locked: Bool? = nil
     /// Set when the server marks this episode `disable_play == true`.
     public var disabled: Bool? = nil
+
+    public init(vid: String, index: Int, title: String, seriesId: String, webAvailable: Bool? = nil, locked: Bool? = nil, disabled: Bool? = nil) {
+        self.vid = vid; self.index = index; self.title = title; self.seriesId = seriesId
+        self.webAvailable = webAvailable; self.locked = locked; self.disabled = disabled
+    }
 }
 
 public enum EpisodeListSource: String, Codable, Sendable { case web, api }
@@ -79,6 +85,11 @@ public struct SeriesEpisodes: Sendable {
     public var webAccessibleEpisodes: Int?
     public var source: EpisodeListSource
     public var total: Int { episodes.count }
+
+    public init(seriesId: String, title: String, cover: String, episodes: [Episode], webAccessibleEpisodes: Int?, source: EpisodeListSource) {
+        self.seriesId = seriesId; self.title = title; self.cover = cover; self.episodes = episodes
+        self.webAccessibleEpisodes = webAccessibleEpisodes; self.source = source
+    }
 }
 
 public struct Review: Hashable, Identifiable, Sendable {
@@ -146,6 +157,12 @@ public struct PlayInfo: Sendable, Equatable {
     public var quality: QualityOption? = nil
     /// The same episode at other resolution tiers, highest first. Empty for single-stream sources.
     public var variants: [PlayInfo] = []
+
+    public init(url: URL, spadeA: String?, codec: String, source: PlaySource, vid: String, userAgent: String, referer: String?,
+                contentKey: [UInt8]? = nil, quality: QualityOption? = nil, variants: [PlayInfo] = []) {
+        self.url = url; self.spadeA = spadeA; self.codec = codec; self.source = source; self.vid = vid
+        self.userAgent = userAgent; self.referer = referer; self.contentKey = contentKey; self.quality = quality; self.variants = variants
+    }
 
     /// Every tier of this episode, highest first (empty for single-stream sources).
     public var qualityOptions: [QualityOption] {

@@ -1,5 +1,6 @@
 import SwiftUI
 import HongguoCore
+import MediaSources
 
 /// Browse and search one of the other catalogues (西饭, 河马, overseas, custom endpoints).
 struct SourceCatalogView: View {
@@ -130,7 +131,7 @@ struct SourcePicker: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let sources = model.settings.mediaSources
+        let sources = SourceSettingsStore.shared.value.mediaSources
         if sources.count > 1 {
             Menu {
                 ForEach(sources, id: \.id) { entry in

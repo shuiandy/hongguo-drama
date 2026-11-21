@@ -4,6 +4,7 @@
 // prefixed (`xifan:<source>:<id>`, `hema:<bookId>`) so they never collide with Hongguo ids, and
 // an episode's lock state is read again before every play, never reused from a cached list.
 import Foundation
+import HongguoCore
 
 /// A catalogue other than Hongguo: browse by genre, search, episodes and a playable URL.
 public protocol MediaSource: Sendable {
@@ -49,7 +50,7 @@ public enum MediaSources {
 
     /// The catalogue behind a source or series id under the current settings; nil for Hongguo
     /// (which has its own services). Throws when the source is turned off or deleted.
-    public static func source(for id: String, settings: @escaping @Sendable () -> AppSettings) throws -> MediaSource? {
+    public static func source(for id: String, settings: @escaping @Sendable () -> SourceSettings) throws -> MediaSource? {
         let kind = sourceId(of: id)
         let current = settings()
         switch kind {
@@ -95,6 +96,8 @@ public enum MediaSources {
     }
 
     static func locked(_ message: String) -> HongguoError { HongguoError(.previewOnly, message) }
+
+    static func hex(_ bytes: [UInt8]) -> String { bytes.map { String(format: "%02x", $0) }.joined() }
 }
 
 // MARK: - 西饭
@@ -160,7 +163,7 @@ public final class XifanSource: MediaSource {
             guard case .int(let raw) = item["categoryId"], raw > 0, let id = Int(exactly: raw) else { return nil }
             let label = MediaSources.plainText(item["oppoCategory"].string)
             guard !label.isEmpty else { return nil }
-            let slug = "\(id)-\(AppCrypto.hex(Array((item["oppoCategory"].string ?? "").utf8)))"
+            let slug = "\(id)-\(MediaSources.hex(Array((item["oppoCategory"].string ?? "").utf8)))"
             return XifanGenre(slug: slug, label: label, categoryId: id, version: item["version"].number.map(Int.init) ?? 1)
         }.filter { seen.insert($0.slug).inserted }
         guard !items.isEmpty else { throw HongguoError(.upstream, "西饭没有返回可用分类，请重试") }

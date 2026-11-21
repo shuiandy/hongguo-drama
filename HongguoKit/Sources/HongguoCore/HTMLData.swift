@@ -60,7 +60,7 @@ public enum HTMLData {
         }
     }
 
-    static func firstMatch(_ pattern: String, in text: String, options: NSRegularExpression.Options = [.caseInsensitive]) -> [String]? {
+    public static func firstMatch(_ pattern: String, in text: String, options: NSRegularExpression.Options = [.caseInsensitive]) -> [String]? {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return nil }
         let ns = text as NSString
         guard let match = regex.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) else { return nil }
@@ -83,6 +83,6 @@ public enum HTMLData {
 }
 
 extension String {
-    var isDigitsOnly: Bool { !isEmpty && allSatisfy { $0.isASCII && $0.isNumber } }
-    func matchesDigits(min: Int, max: Int) -> Bool { isDigitsOnly && count >= min && count <= max }
+    public var isDigitsOnly: Bool { !isEmpty && allSatisfy { $0.isASCII && $0.isNumber } }
+    public func matchesDigits(min: Int, max: Int) -> Bool { isDigitsOnly && count >= min && count <= max }
 }

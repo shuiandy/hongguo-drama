@@ -12,13 +12,13 @@ public enum Site {
 }
 
 /// Short-lived in-memory response cache shared by the services.
-actor TTLCache<Value: Sendable> {
+public actor TTLCache<Value: Sendable> {
     private var entries: [String: (Value, Date)] = [:]
     private var order: [String] = []
     private let limit: Int
-    init(limit: Int) { self.limit = limit }
+    public init(limit: Int) { self.limit = limit }
 
-    func get(_ key: String) -> Value? {
+    public func get(_ key: String) -> Value? {
         guard let (value, expires) = entries[key], expires > Date() else {
             if entries.removeValue(forKey: key) != nil {
                 order.removeAll { $0 == key }
@@ -28,7 +28,7 @@ actor TTLCache<Value: Sendable> {
         return value
     }
 
-    func set(_ key: String, _ value: Value, ttl: TimeInterval) {
+    public func set(_ key: String, _ value: Value, ttl: TimeInterval) {
         order.removeAll { $0 == key }
         order.append(key)
         entries[key] = (value, Date().addingTimeInterval(ttl))

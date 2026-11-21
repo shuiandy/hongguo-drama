@@ -103,7 +103,7 @@ final class TextExportTests: XCTestCase {
 
     func testRejectsNonHongguoAndForeignFiles() async throws {
         let list = try targets(1)
-        let other = await TextExport.export(seriesId: "xifan:a:b", seriesTitle: "剧", targets: list, kinds: [.danmaku, .reviews], fetchers: fetchers(Calls()))
+        let other = await TextExport.export(seriesId: "other:a:b", seriesTitle: "剧", targets: list, kinds: [.danmaku, .reviews], fetchers: fetchers(Calls()))
         XCTAssertEqual(other.danmaku.skipped, 1)
         XCTAssertEqual(other.reviews.skipped, 1)
         // A file that is not valid JSON is somebody else's: not overwritten.
