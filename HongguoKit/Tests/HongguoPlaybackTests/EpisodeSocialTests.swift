@@ -32,7 +32,7 @@ final class EpisodeSocialTests: XCTestCase {
       "extra":{"credibility_score":"9.0","credibility_score_count":23973},
       "common_list_info":{"total":786,"cursor":"10","has_more":true},
       "data_list":[
-        {"comment":{"comment_id":"8001","expand":{"score":"10"},"stat":{"digg_count":246},
+        {"comment":{"comment_id":"8001","expand":{"score":"10"},"stat":{"digg_count":246,"reply_count":14},
           "common":{"create_timestamp":1794000000,"content":{"text":"很好看"},
             "user_info":{"base_info":{"user_name":"示例用户甲","user_avatar":"http://example.com/a.jpg"}}}}},
         {"comment":{"comment_id":"8002","expand":{"score":"0"},
@@ -54,6 +54,8 @@ final class EpisodeSocialTests: XCTestCase {
         XCTAssertEqual(list.map(\.content), ["很好看", "一般"], "duplicates and blank reviews are dropped")
         XCTAssertEqual(list.map(\.rating), [10, nil], "a score outside 1...10 is treated as no score")
         XCTAssertEqual(list[0].likes, 246)
+        XCTAssertEqual(list[0].replyCount, 14)
+        XCTAssertEqual(list[1].replyCount, 0)
         XCTAssertEqual(list[0].avatar, "https://example.com/a.jpg", "http pictures are requested over https")
         XCTAssertEqual(list[1].avatar, "https://example.com/b.jpg")
         XCTAssertEqual(list[0].createdAt, Date(timeIntervalSince1970: 1_794_000_000))
@@ -132,5 +134,73 @@ final class EpisodeSocialTests: XCTestCase {
         XCTAssertNil(bare.favoriteCount)
         XCTAssertEqual(bare.recordNumber, "")
         XCTAssertEqual(bare.rating, 9.0, "the score stands on its own")
+    }
+
+    func testReplyPageParsesCapitalCommonAndReplyToTarget() throws {
+        let json = try JSONValue.parse(#"""
+        {
+          "comment_list_info": {"total": 222, "cursor": "5", "has_more": true},
+          "reply_list": [
+            {
+              "reply_id": "9001",
+              "reply_to_reply_id": "0",
+              "reply_to_user_info": {"base_info": {"user_name": "楼主甲"}},
+              "stat": {"digg_count": 12},
+              "Common": {
+                "create_timestamp": 1794000000,
+                "content": {"text": "同感[捂脸]"},
+                "user_info": {"base_info": {"user_name": "示例回复甲", "user_avatar": "http://example.com/r1.jpg"}}
+              }
+            },
+            {
+              "reply_id": "9002",
+              "reply_to_reply_id": "9001",
+              "reply_to_user_info": {"base_info": {"user_name": " 示例回复甲 "}},
+              "stat": {"digg_count": "3"},
+              "Common": {
+                "create_timestamp": 1794000100000,
+                "content": {"text": "不上了[笑哭]"},
+                "user_info": {"base_info": {"user_name": "示例回复乙", "expand_user_avatar": "https://example.com/r2.jpg"}}
+              }
+            },
+            {
+              "reply_id": "9001",
+              "Common": {
+                "content": {"text": "重复"},
+                "user_info": {"base_info": {"user_name": "示例回复甲"}}
+              }
+            },
+            {
+              "reply_id": "9003",
+              "Common": {
+                "content": {"text": "   "},
+                "user_info": {"base_info": {"user_name": "空白回复"}}
+              }
+            }
+          ]
+        }
+        """#)
+        let page = EpisodeSocialService.replyPage(from: json)
+        XCTAssertEqual(page.total, 222)
+        XCTAssertEqual(page.cursor, "5")
+        XCTAssertTrue(page.hasMore)
+        XCTAssertEqual(page.replies.map(\.id), ["9001", "9002"])
+        XCTAssertEqual(page.replies[0].author, "示例回复甲")
+        XCTAssertEqual(page.replies[0].avatar, "https://example.com/r1.jpg")
+        XCTAssertEqual(page.replies[0].content, "同感[捂脸]")
+        XCTAssertEqual(page.replies[0].likes, 12)
+        XCTAssertEqual(page.replies[0].replyToAuthor, "", "direct reply to root comment must not show reply-to prefix")
+        XCTAssertEqual(page.replies[0].createdAt, Date(timeIntervalSince1970: 1_794_000_000))
+
+        XCTAssertEqual(page.replies[1].author, "示例回复乙")
+        XCTAssertEqual(page.replies[1].avatar, "https://example.com/r2.jpg")
+        XCTAssertEqual(page.replies[1].content, "不上了[笑哭]")
+        XCTAssertEqual(page.replies[1].likes, 3)
+        XCTAssertEqual(page.replies[1].replyToAuthor, "示例回复甲")
+        XCTAssertEqual(page.replies[1].createdAt, Date(timeIntervalSince1970: 1_794_000_100))
+
+        let empty = EpisodeSocialService.replyPage(from: try JSONValue.parse(#"{"comment_list_info":{"total":0,"cursor":"0","has_more":true},"reply_list":[]}"#))
+        XCTAssertTrue(empty.replies.isEmpty)
+        XCTAssertFalse(empty.hasMore, "empty reply_list stops pagination even if has_more is true")
     }
 }

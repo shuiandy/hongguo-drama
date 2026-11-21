@@ -182,6 +182,32 @@ final class FeedProbeTests: XCTestCase {
             print("PROBE feedcontract \(channel.rawValue)(tab=\(channel.tabType)): anonP1=\(p1.entries.count) anonP2=\(p2.entries.count) accP1=\(accP1.entries.count) first='\(p1.entries.first?.series.title ?? "")'")
         }
     }
+
+    /// `HONGGUO_PROBE=replies swift test --filter FeedProbeTests/testCommentRepliesLive`:
+    /// Finds a live episode comment with `replyCount > 0` and fetches two pages of replies.
+    func testCommentRepliesLive() async throws {
+        try XCTSkipUnless(probe == "replies", "set HONGGUO_PROBE=replies to run this live probe")
+        let feed = try await BookMallFeed.page(channel: .liveAction, cursor: .first)
+        var tested = false
+        for entry in feed.entries.prefix(5) where !entry.firstVid.isEmpty {
+            let comments = try await EpisodeSocialService.commentsPage(seriesId: entry.series.seriesId, vid: entry.firstVid, count: 20)
+            guard let target = comments.comments.first(where: { $0.replyCount >= 6 }) ?? comments.comments.first(where: { $0.replyCount > 0 }) else {
+                continue
+            }
+            let p1 = try await EpisodeSocialService.repliesPage(seriesId: entry.series.seriesId, vid: entry.firstVid, commentId: target.id, count: 5)
+            XCTAssertFalse(p1.replies.isEmpty, "expected non-empty replies for comment \(target.id) with replyCount=\(target.replyCount)")
+            print("PROBE replies: sid=\(entry.series.seriesId) vid=\(entry.firstVid) cid=\(target.id) replyCount=\(target.replyCount) p1=\(p1.replies.count) total=\(String(describing: p1.total)) cursor=\(p1.cursor) hasMore=\(p1.hasMore)")
+            if p1.hasMore {
+                let p2 = try await EpisodeSocialService.repliesPage(seriesId: entry.series.seriesId, vid: entry.firstVid, commentId: target.id, cursor: p1.cursor, count: 5)
+                XCTAssertFalse(p2.replies.isEmpty, "expected page 2 replies")
+                XCTAssertNotEqual(p1.replies.first?.id, p2.replies.first?.id, "page 2 should advance past page 1")
+                print("PROBE replies p2: count=\(p2.replies.count) cursor=\(p2.cursor) hasMore=\(p2.hasMore) sampleReplyTo='\(p2.replies.first(where: { !$0.replyToAuthor.isEmpty })?.replyToAuthor ?? "")'")
+            }
+            tested = true
+            break
+        }
+        XCTAssertTrue(tested, "did not find any live comment with replies in the first 5 feed entries")
+    }
 }
 
 private extension Array {
