@@ -239,35 +239,141 @@ public enum EpisodeSocialService {
         var seen = Set<String>()
         var parsed: [EpisodeSocial.Comment] = []
         for row in rawList {
-            let c = row["comment"]
-            let common = c["common"]
-            guard let rawText = common["content"]["text"].string,
-                  !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-            let base = common["user_info"]["base_info"]
-            let author = String((base["user_name"].string ?? "").prefix(200))
-            let rawAvatar = [base["user_avatar"].string, base["expand_user_avatar"].string]
-                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .first { !$0.isEmpty } ?? ""
-            let created = date(common["create_timestamp"])
-            let content = String(rawText.prefix(20000))
-            let cid = c["comment_id"].idString ?? DownloadNaming.sha256Prefix("\(author)\u{0}\(created?.timeIntervalSince1970 ?? 0)\u{0}\(content)", 32)
-            guard seen.insert(cid).inserted else { continue }
-            let score = integer(c["expand"]["score"]) ?? integer(common["expand"]["score"])
-            parsed.append(.init(
-                id: cid,
-                author: author,
-                avatar: secure(rawAvatar),
-                content: content,
-                createdAt: created,
-                likes: integer(c["stat"]["digg_count"]) ?? 0,
-                rating: score.flatMap { (1...10).contains($0) ? $0 : nil },
-                replyCount: integer(c["stat"]["reply_count"]) ?? 0
-            ))
+            guard let item = parseComment(row["comment"]), seen.insert(item.id).inserted else { continue }
+            parsed.append(item)
         }
         let listInfo = data["common_list_info"]
         let nextCursor = listInfo["cursor"].string ?? listInfo["cursor"].idString ?? ""
         let hasMore = listInfo["has_more"].bool == true && !nextCursor.isEmpty && !rawList.isEmpty
         return CommentPage(comments: parsed, total: integer(listInfo["total"]), cursor: nextCursor, hasMore: hasMore)
+    }
+
+    static func parseComment(_ c: JSONValue) -> EpisodeSocial.Comment? {
+        let common = c["common"].isNull ? c["Common"] : c["common"]
+        guard let rawText = common["content"]["text"].string,
+              !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let base = common["user_info"]["base_info"]
+        let author = String((base["user_name"].string ?? "").prefix(200))
+        let rawAvatar = [base["user_avatar"].string, base["expand_user_avatar"].string]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty } ?? ""
+        let created = date(common["create_timestamp"])
+        let content = String(rawText.prefix(20000))
+        let cid = c["comment_id"].idString ?? DownloadNaming.sha256Prefix("\(author)\u{0}\(created?.timeIntervalSince1970 ?? 0)\u{0}\(content)", 32)
+        let score = integer(c["expand"]["score"]) ?? integer(common["expand"]["score"])
+        return .init(
+            id: cid,
+            author: author,
+            avatar: secure(rawAvatar),
+            content: content,
+            createdAt: created,
+            likes: integer(c["stat"]["digg_count"]) ?? 0,
+            rating: score.flatMap { (1...10).contains($0) ? $0 : nil },
+            replyCount: integer(c["stat"]["reply_count"]) ?? 0
+        )
+    }
+
+    /// Publishes an episode comment to `/novel/commentapi/comment/add/v1/` (signed in).
+    /// Matches official 7.4.3 `FQCRpcAddCommentRequest` (`commit_source=10`, `group_type=30`,
+    /// `data_type=4`, `comment_type=0`, `business_param.book_id`, `business_param.offset`).
+    public static func postComment(
+        seriesId: String,
+        vid: String,
+        text: String,
+        offsetMs: Int64 = 0,
+        accountId: String? = nil,
+        http: HTTPClient = .shared
+    ) async throws -> EpisodeSocial.Comment {
+        guard seriesId.matchesDigits(min: 6, max: 30), vid.matchesDigits(min: 6, max: 30) else {
+            throw HongguoError(.input, "剧集编号无效")
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw HongguoError(.input, "评论内容不能为空") }
+        guard trimmed.count <= 1000 else { throw HongguoError(.input, "评论内容不能超过 1000 字") }
+        guard !MacTestRunner.isActive, let saved = try KeychainCredentialStore().load() else {
+            throw HongguoError(.input, "请先登录再发表评论")
+        }
+        if let accountId, saved.profile?.id != accountId {
+            throw HongguoError(.cancelled, "账号已切换")
+        }
+        try Task.checkCancellation()
+        let body = postCommentBody(seriesId: seriesId, vid: vid, text: trimmed, offsetMs: offsetMs)
+        let payload: JSONValue
+        do {
+            payload = try await AppCommentClient.post(
+                "/novel/commentapi/comment/add/v1/",
+                body: body,
+                headers: [("Comment-Source", "4"), ("Server-Channel", "18"), ("Cookie", saved.cookie)],
+                http: http
+            )
+        } catch let error as HTTPStatusError where error.status == 401 {
+            Task { await AccountService.shared.notifyPossibleAuthFailure() }
+            throw HongguoError(.unavailable, "登录已过期，请重新扫码登录")
+        }
+        let posted = try parsePostedComment(
+            payload,
+            fallbackText: trimmed,
+            fallbackAuthor: saved.profile?.nickname ?? "",
+            fallbackAvatar: "",
+            onAuthExpired: {
+                Task { await AccountService.shared.notifyPossibleAuthFailure() }
+            }
+        )
+        await cache.remove("\(seriesId):\(vid)")
+        return posted
+    }
+
+    static func postCommentBody(seriesId: String, vid: String, text: String, offsetMs: Int64 = 0) -> [String: Any] {
+        [
+            "aid": 8662,
+            "commit_source": 10,
+            "group_id": vid,
+            "group_type": 30,
+            "data_type": 4,
+            "comment_type": 0,
+            "text": text,
+            "business_param": [
+                "book_id": seriesId,
+                "offset": max(0, offsetMs),
+            ],
+        ]
+    }
+
+    static func parsePostedComment(
+        _ payload: JSONValue,
+        fallbackText: String,
+        fallbackAuthor: String,
+        fallbackAvatar: String,
+        now: Date = Date(),
+        onAuthExpired: (() -> Void)? = nil
+    ) throws -> EpisodeSocial.Comment {
+        let code = payload["code"].signedInt ?? -1
+        let msg = AccountService.cleanText(payload["message"].string ?? payload["msg"].string)
+        if code == 103_006 {
+            onAuthExpired?()
+            throw HongguoError(.unavailable, "登录已过期，请重新扫码登录")
+        }
+        guard code == 0 else {
+            throw HongguoError(.upstream, msg.isEmpty ? "评论发表失败" : msg)
+        }
+        let info = payload["data"]["comment_info"]
+        if var parsed = parseComment(info) {
+            if parsed.author.isEmpty { parsed.author = fallbackAuthor }
+            if parsed.avatar.isEmpty { parsed.avatar = secure(fallbackAvatar) }
+            if parsed.createdAt == nil { parsed.createdAt = now }
+            return parsed
+        }
+        let cid = info["comment_id"].idString
+            ?? payload["data"]["comment_id"].idString
+            ?? DownloadNaming.sha256Prefix("\(fallbackAuthor)\u{0}\(now.timeIntervalSince1970)\u{0}\(fallbackText)", 32)
+        return .init(
+            id: cid,
+            author: fallbackAuthor,
+            avatar: secure(fallbackAvatar),
+            content: fallbackText,
+            createdAt: now,
+            likes: 0
+        )
     }
 
     /// Fetches one page of replies for an episode comment from the official App comment API

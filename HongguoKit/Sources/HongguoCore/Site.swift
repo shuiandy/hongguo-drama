@@ -37,5 +37,11 @@ public actor TTLCache<Value: Sendable> {
         }
     }
 
+    public func remove(_ key: String) {
+        if entries.removeValue(forKey: key) != nil {
+            order.removeAll { $0 == key }
+        }
+    }
+
     func clear() { entries.removeAll(); order.removeAll() }
 }

@@ -203,4 +203,99 @@ final class EpisodeSocialTests: XCTestCase {
         XCTAssertTrue(empty.replies.isEmpty)
         XCTAssertFalse(empty.hasMore, "empty reply_list stops pagination even if has_more is true")
     }
+
+    func testPostCommentBodyMatchesOfficialSchema() {
+        let body = EpisodeSocialService.postCommentBody(
+            seriesId: Self.sid,
+            vid: "7000000000000000011",
+            text: "太爽了[微笑][笑哭]",
+            offsetMs: 12_500
+        )
+        XCTAssertEqual(body["aid"] as? Int, 8662)
+        XCTAssertEqual(body["commit_source"] as? Int, 10)
+        XCTAssertEqual(body["group_id"] as? String, "7000000000000000011")
+        XCTAssertEqual(body["group_type"] as? Int, 30)
+        XCTAssertEqual(body["data_type"] as? Int, 4)
+        XCTAssertEqual(body["comment_type"] as? Int, 0)
+        XCTAssertEqual(body["text"] as? String, "太爽了[微笑][笑哭]")
+        let biz = body["business_param"] as? [String: Any]
+        XCTAssertEqual(biz?["book_id"] as? String, Self.sid)
+        XCTAssertEqual(biz?["offset"] as? Int64, 12_500)
+
+        let clamped = EpisodeSocialService.postCommentBody(seriesId: Self.sid, vid: "7000000000000000011", text: "ok", offsetMs: -50)
+        XCTAssertEqual((clamped["business_param"] as? [String: Any])?["offset"] as? Int64, 0)
+    }
+
+    func testParsePostedCommentFullMinimalAndErrors() throws {
+        let full = try JSONValue.parse(#"""
+        {
+          "code": 0,
+          "message": "success",
+          "data": {
+            "comment_info": {
+              "comment_id": "99001",
+              "stat": {"digg_count": 0, "reply_count": 0},
+              "common": {
+                "create_timestamp": 1794000500,
+                "content": {"text": "好看[微笑]"},
+                "user_info": {"base_info": {"user_name": "示例作者", "user_avatar": "http://example.com/u.jpg"}}
+              }
+            }
+          }
+        }
+        """#)
+        let parsed = try EpisodeSocialService.parsePostedComment(
+            full, fallbackText: "好看[微笑]", fallbackAuthor: "本地名", fallbackAvatar: ""
+        )
+        XCTAssertEqual(parsed.id, "99001")
+        XCTAssertEqual(parsed.author, "示例作者")
+        XCTAssertEqual(parsed.avatar, "https://example.com/u.jpg")
+        XCTAssertEqual(parsed.content, "好看[微笑]")
+        XCTAssertEqual(parsed.createdAt, Date(timeIntervalSince1970: 1_794_000_500))
+
+        let minimal = try JSONValue.parse(#"{"code":0,"data":{"comment_info":{"comment_id":"99002"}}}"#)
+        let now = Date(timeIntervalSince1970: 1_794_000_600)
+        let fallback = try EpisodeSocialService.parsePostedComment(
+            minimal, fallbackText: "冲[赞]", fallbackAuthor: "本地用户", fallbackAvatar: "http://example.com/me.jpg", now: now
+        )
+        XCTAssertEqual(fallback.id, "99002")
+        XCTAssertEqual(fallback.author, "本地用户")
+        XCTAssertEqual(fallback.avatar, "https://example.com/me.jpg")
+        XCTAssertEqual(fallback.content, "冲[赞]")
+        XCTAssertEqual(fallback.createdAt, now)
+
+        var expiredCalled = false
+        let authExpired = try JSONValue.parse(#"{"code":103006,"message":"用户未登录"}"#)
+        XCTAssertThrowsError(try EpisodeSocialService.parsePostedComment(
+            authExpired, fallbackText: "x", fallbackAuthor: "", fallbackAvatar: "", onAuthExpired: { expiredCalled = true }
+        ))
+        XCTAssertTrue(expiredCalled)
+
+        let failed = try JSONValue.parse(#"{"code":103099,"message":"内容包含敏感词"}"#)
+        XCTAssertThrowsError(try EpisodeSocialService.parsePostedComment(
+            failed, fallbackText: "x", fallbackAuthor: "", fallbackAvatar: ""
+        )) { error in
+            XCTAssertEqual((error as? HongguoError)?.message, "内容包含敏感词")
+        }
+    }
+
+    func testPostCommentRejectsBlankAndInvalidInputs() async {
+        do {
+            _ = try await EpisodeSocialService.postComment(seriesId: "abc", vid: "7000000000000000011", text: "你好")
+            XCTFail("expected invalid series id error")
+        } catch let error as HongguoError {
+            XCTAssertEqual(error.kind, .input)
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+
+        do {
+            _ = try await EpisodeSocialService.postComment(seriesId: Self.sid, vid: "7000000000000000011", text: "   \n ")
+            XCTFail("expected blank text error")
+        } catch let error as HongguoError {
+            XCTAssertEqual(error.kind, .input)
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
 }
