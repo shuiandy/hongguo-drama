@@ -1,0 +1,80 @@
+name: HongguoDramaTV
+options:
+  bundleIdPrefix: io.github.shuiandy
+  deploymentTarget:
+    tvOS: "26.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+packages:
+  # Core, playback and the app rules, shared with the Mac and iOS apps. The tvOS app only draws
+  # the screens, focus and remote handling.
+  HongguoKit:
+    path: ../HongguoKit
+targets:
+  HongguoDramaTV:
+    type: application
+    platform: tvOS
+    sources:
+      - path: App/Sources
+      - path: App/Resources
+    dependencies:
+      - package: HongguoKit
+        product: HongguoCore
+      - package: HongguoKit
+        product: HongguoPlayback
+      - package: HongguoKit
+        product: AppLogic
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: 红果短剧
+        # The interface is written in Chinese; without this the system's own strings come out in English.
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations:
+          - zh-Hans
+        CFBundleShortVersionString: "0.1.0"
+        # Date-based (yyyymmddNN), like the iOS app.
+        CFBundleVersion: "2026112101"
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen: {}
+        UIUserInterfaceStyle: Dark
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.shuiandy.hongguo-drama.tvos
+        PRODUCT_NAME: HongguoDramaTV
+        TARGETED_DEVICE_FAMILY: "3"
+        SWIFT_VERSION: "5.0"
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # Automatic signing with the paid personal team. As in the iOS app, the team id is not
+        # kept in the repository: pass DEVELOPMENT_TEAM on the command line for a device build.
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+  HongguoDramaTVUITests:
+    type: bundle.ui-testing
+    platform: tvOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: HongguoDramaTV
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.shuiandy.hongguo-drama.tvos.uitests
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        TEST_TARGET_NAME: HongguoDramaTV
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  HongguoDramaTV:
+    build:
+      targets:
+        HongguoDramaTV: all
+        HongguoDramaTVUITests: [test]
+    run:
+      config: Debug
+      commandLineArguments:
+        "-HongguoOfflineFixtures YES": true
+        "-HongguoMuted YES": true
+    test:
+      config: Debug
+      targets:
+        - HongguoDramaTVUITests
