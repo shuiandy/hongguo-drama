@@ -173,13 +173,12 @@ public enum AccountDataAccess {
     }
 
     /// Both online (`已上线`) and upcoming (`待上线`) series reserved by the account
-    /// (`/reading/user/subscribe/list/v1/`). Throws when either list fails, so a caller keeps the
-    /// reservations it has instead of replacing them with a partial or empty list.
+    /// (`/reading/user/subscribe/list/v1/`). Runs sequentially to avoid saturating the per-host
+    /// connection pool alongside profile, bookshelf, likes and history. Throws when either list
+    /// fails, so a caller keeps the reservations it has instead of replacing them with a partial list.
     public static func reservations() async throws -> [Reservation] {
-        async let onlineTask = fetchReservations(isOnline: true)
-        async let offlineTask = fetchReservations(isOnline: false)
-        let online = try await onlineTask
-        let offline = try await offlineTask
+        let online = try await fetchReservations(isOnline: true)
+        let offline = try await fetchReservations(isOnline: false)
         var seen = Set<String>()
         return (online + offline).filter { seen.insert($0.seriesId).inserted }
     }
@@ -477,24 +476,40 @@ public enum AccountDataAccess {
         return payload["data"]
     }
 
-    /// One signed GET with the saved login. Throws when signed out.
+    static func shouldRetryTransientRead(_ error: AppSourceError) -> Bool {
+        switch error.code {
+        case .network, .timeout: return true
+        default: return false
+        }
+    }
+
+    /// One signed GET with the saved login (retrying once on transient network/timeout errors).
+    /// Throws when signed out.
     public static func get(path: String, values: [(String, String)] = []) async throws -> JSONValue {
         guard !MacTestRunner.isActive, let saved = try KeychainCredentialStore().load() else { throw HongguoError(.input, "未登录") }
         let transport = AppTransport(http: .shared)
         let (identity, dToken) = try await PersistentAppDevice.dataIdentity(transport: transport)
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
-        let signed = AppLegacySigner.accountPaths.contains(path)
-            ? try AppLegacySigner.shared.account(path: path, values: values, identity: identity, dToken: dToken, nowMillis: now)
-            : try AppLegacySigner.shared.accountRead(path: path, values: values, identity: identity, dToken: dToken, nowMillis: now)
-        do {
-            return try await transport.requestJSON(signed.url, headers: signed.headers + [("Cookie", saved.cookie)],
-                                                   deadline: Date().addingTimeInterval(12))
-        } catch let error as AppSourceError {
-            if error.status == 401 {
-                Task { await AccountService.shared.notifyPossibleAuthFailure() }
+        for attempt in 0..<2 {
+            try Task.checkCancellation()
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            let signed = AppLegacySigner.accountPaths.contains(path)
+                ? try AppLegacySigner.shared.account(path: path, values: values, identity: identity, dToken: dToken, nowMillis: now)
+                : try AppLegacySigner.shared.accountRead(path: path, values: values, identity: identity, dToken: dToken, nowMillis: now)
+            do {
+                return try await transport.requestJSON(signed.url, headers: signed.headers + [("Cookie", saved.cookie)],
+                                                       deadline: Date().addingTimeInterval(12))
+            } catch let error as AppSourceError {
+                if error.status == 401 {
+                    Task { await AccountService.shared.notifyPossibleAuthFailure() }
+                }
+                if attempt == 0, shouldRetryTransientRead(error) {
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    continue
+                }
+                throw error.hongguoError
             }
-            throw error.hongguoError
         }
+        throw HongguoError(.network, "网络请求失败，请稍后重试")
     }
 
     /// One signed POST with JSON body and the saved login. Throws when signed out.

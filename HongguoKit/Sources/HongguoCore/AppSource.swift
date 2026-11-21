@@ -64,7 +64,7 @@ struct AppTransport: Sendable {
         for _ in 0..<4 {
             try Task.checkCancellationAsApp()
             let remaining = deadline.timeIntervalSinceNow
-            guard remaining > 0 else { throw AppSourceError(.timeout, "App 片源请求超时") }
+            guard remaining > 0 else { throw AppSourceError(.timeout, "请求超时，请稍后重试") }
             var request = URLRequest(url: url)
             request.httpMethod = method
             if let body { request.httpBody = Data(body) }
@@ -82,13 +82,15 @@ struct AppTransport: Sendable {
                 throw error
             } catch let error as HongguoError {
                 switch error.kind {
-                case .cancelled: throw AppSourceError(.cancelled, "已取消 App 片源请求")
-                case .timeout: throw AppSourceError(.timeout, "App 片源请求超时")
+                case .cancelled: throw AppSourceError(.cancelled, "已取消请求")
+                case .timeout: throw AppSourceError(.timeout, "请求超时，请稍后重试")
                 case .security: throw AppSourceError(.securityBlocked, error.message)
-                default: throw AppSourceError(.network, "App 片源网络请求失败，请稍后重试")
+                default:
+                    let detail = error.message.trimmingCharacters(in: .whitespacesAndNewlines)
+                    throw AppSourceError(.network, detail.isEmpty ? "网络请求失败，请稍后重试" : detail)
                 }
             } catch {
-                throw AppSourceError(.network, "App 片源网络请求失败，请稍后重试")
+                throw AppSourceError(.network, "网络请求失败，请稍后重试")
             }
             if [301, 302, 303, 307, 308].contains(response.status) {
                 // Signatures and session headers bind the final URL and must not follow a redirect.
@@ -101,7 +103,7 @@ struct AppTransport: Sendable {
                 continue
             }
             guard response.status == 200 else {
-                throw AppSourceError(.http, "App 片源请求失败（HTTP \(response.status)）", status: response.status)
+                throw AppSourceError(.http, "请求失败（HTTP \(response.status)）", status: response.status)
             }
             guard !response.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 var error = AppSourceError(.emptyResponse, "App 接口返回空响应（HTTP 200），原因尚未确认")

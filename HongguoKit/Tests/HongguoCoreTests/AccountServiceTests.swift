@@ -131,4 +131,13 @@ final class AccountServiceTests: XCTestCase {
                                             now: Date(timeIntervalSince1970: 1_800_000_000))
         XCTAssertEqual(qr.expiresIn, 100)
     }
+
+    func testAccountReadRetryOnlyOnTransientNetworkOrTimeout() {
+        XCTAssertTrue(AccountDataAccess.shouldRetryTransientRead(AppSourceError(.network, "网络连接失败")))
+        XCTAssertTrue(AccountDataAccess.shouldRetryTransientRead(AppSourceError(.timeout, "请求超时")))
+        XCTAssertFalse(AccountDataAccess.shouldRetryTransientRead(AppSourceError(.cancelled, "已取消")))
+        XCTAssertFalse(AccountDataAccess.shouldRetryTransientRead(AppSourceError(.http, "HTTP 401", status: 401)))
+        XCTAssertFalse(AccountDataAccess.shouldRetryTransientRead(AppSourceError(.securityBlocked, "blocked")))
+        XCTAssertFalse(AccountDataAccess.shouldRetryTransientRead(AppSourceError(.invalidResponse, "bad json")))
+    }
 }
