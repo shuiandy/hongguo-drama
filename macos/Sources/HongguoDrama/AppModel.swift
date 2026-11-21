@@ -100,8 +100,7 @@ enum SidebarItem: Hashable, Identifiable {
 /// What a sidebar column's navigation stack shows: a series, or an actor and their works.
 enum DetailRoute: Hashable {
     case series(SeriesSummary)
-    /// An actor's page, with the series' whole cast to switch between (as the official panel does).
-    case celebrity(EpisodeSocial.CastMember, cast: [EpisodeSocial.CastMember])
+    case celebrity(EpisodeSocial.CastMember)
 }
 
 /// App-wide state: services, settings and navigation.
@@ -622,9 +621,9 @@ final class AppModel {
     }
 
     /// An actor's page (their works), pushed onto the current column like a series.
-    func openCelebrity(_ member: EpisodeSocial.CastMember, cast: [EpisodeSocial.CastMember] = []) {
+    func openCelebrity(_ member: EpisodeSocial.CastMember) {
         guard let selection else { return }
-        paths[selection, default: []].append(.celebrity(member, cast: cast))
+        paths[selection, default: []].append(.celebrity(member))
     }
 
     func path(for item: SidebarItem) -> Binding<[DetailRoute]> {

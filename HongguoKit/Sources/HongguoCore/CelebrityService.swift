@@ -71,12 +71,14 @@ public enum CelebrityService {
     /// A work card. Live cards (2026-11-20) carry `series_id`, `title`, `cover`, `sub_title` (genre
     /// and episode count, e.g. 时空之旅·102集), `rec_text` (the heat the official card shows, e.g.
     /// 4210万热度), `play_cnt` and `score`; their `episode_cnt` is 0 and they have no `video_detail`,
-    /// `sub_title_list` or completion state. So the episode count and genre are read from `sub_title`.
+    /// `sub_title_list` or completion state. So the episode count and genre are read from `sub_title`,
+    /// and `sub_title` itself is the label under the title, as on the official card.
     static func summary(_ video: JSONValue, seen: inout Set<String>) -> SeriesSummary? {
         let id = (video["series_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
         let title = AccountService.cleanText(video["title"].string)
         guard id.matchesDigits(min: 6, max: 30), !title.isEmpty, seen.insert(id).inserted else { return nil }
-        let (genre, episodes) = subtitle(video["sub_title"].string)
+        let subtitleText = AccountService.cleanText(video["sub_title"].string)
+        let (genre, episodes) = subtitle(subtitleText)
         let rawCover = video["cover"].string ?? ""
         let cleanedCover = AccountService.cleanCover(rawCover)
         return SeriesSummary(
@@ -84,7 +86,8 @@ public enum CelebrityService {
             cover: AccountDataAccess.normalizeHTTPSURL(cleanedCover.isEmpty ? rawCover : cleanedCover),
             episodeCount: EpisodeSocialService.integer(video["episode_cnt"]).flatMap { $0 > 0 ? $0 : nil } ?? episodes ?? 0,
             tags: genre.isEmpty ? [] : [genre],
-            heat: heat(video["rec_text"].string))
+            heat: heat(video["rec_text"].string),
+            episodeLabel: subtitleText.count <= 40 ? subtitleText : "")
     }
 
     /// `时空之旅·102集` → ("时空之旅", 102); a part that is not an episode count is the genre.
@@ -100,6 +103,29 @@ public enum CelebrityService {
             }
         }
         return (genre, episodes)
+    }
+
+    /// Works most popular first (最热), by the number in their heat text; works without one go last
+    /// and ties keep the server's order.
+    public static func hottestFirst(_ items: [SeriesSummary]) -> [SeriesSummary] {
+        items.enumerated()
+            .sorted { a, b in
+                let (x, y) = (heatScore(a.element.heat), heatScore(b.element.heat))
+                return x != y ? x > y : a.offset < b.offset
+            }
+            .map(\.element)
+    }
+
+    /// 4210万热度 → 42_100_000, 1.2亿热度 → 120_000_000, 5300热度 → 5300; 0 when there is no number.
+    public static func heatScore(_ text: String) -> Double {
+        guard let range = text.range(of: #"[0-9]+(\.[0-9]+)?"#, options: .regularExpression),
+              let number = Double(text[range]) else { return 0 }
+        let unit = text[range.upperBound...].first
+        switch unit {
+        case "亿": return number * 100_000_000
+        case "万": return number * 10_000
+        default: return number
+        }
     }
 
     /// `rec_text`, e.g. 4210万热度; "" when missing or implausibly long.

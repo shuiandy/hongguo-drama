@@ -26,6 +26,7 @@ final class CelebrityTests: XCTestCase {
         XCTAssertEqual(first.items.map(\.tags), [["时空之旅"], ["都市"], []])
         XCTAssertEqual(first.items.map(\.heat), ["6081万热度", "5300热度", ""], "the heat is the card's rec_text")
         XCTAssertEqual(first.items[0].completionStatus, .unknown, "cards say nothing about completion")
+        XCTAssertEqual(first.items.map(\.episodeLabel), ["时空之旅·102集", "都市", "全80集"], "the subtitle is the card's label")
         XCTAssertEqual(first.total, 37)
         let second = try XCTUnwrap(works["enc_b"])
         XCTAssertTrue(second.items.isEmpty)
@@ -41,6 +42,15 @@ final class CelebrityTests: XCTestCase {
         XCTAssertNil(CelebrityService.subtitle("").episodes)
         XCTAssertEqual(CelebrityService.subtitle(nil).genre, "")
         XCTAssertEqual(CelebrityService.heat(nil), "")
+        XCTAssertEqual(CelebrityService.heatScore("4210万热度"), 42_100_000)
+        XCTAssertEqual(CelebrityService.heatScore("1.2亿热度"), 120_000_000)
+        XCTAssertEqual(CelebrityService.heatScore("5300热度"), 5300)
+        XCTAssertEqual(CelebrityService.heatScore(""), 0)
+        let a = SeriesSummary(seriesId: "1000001", title: "甲", heat: "300万热度")
+        let b = SeriesSummary(seriesId: "1000002", title: "乙", heat: "1.1亿热度")
+        let c = SeriesSummary(seriesId: "1000003", title: "丙")
+        let d = SeriesSummary(seriesId: "1000004", title: "丁", heat: "300万热度")
+        XCTAssertEqual(CelebrityService.hottestFirst([c, a, b, d]).map(\.title), ["乙", "甲", "丁", "丙"], "ties keep their order, no heat goes last")
     }
 
     func testAnActorWithoutAnEncryptedIdHasNoWorksToAskFor() async {

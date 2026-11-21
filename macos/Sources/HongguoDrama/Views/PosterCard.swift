@@ -32,6 +32,9 @@ struct CoverImage: View {
 struct PosterCard: View {
     let summary: SeriesSummary
     var hovering = false
+    /// The heat sits on the cover's bottom left and the line under the title is only the label,
+    /// as on the official app's work cards.
+    var heatOnCover = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -40,6 +43,23 @@ struct PosterCard: View {
                 .overlay(CoverImage(url: summary.cover, cornerRadius: 16))
                 .overlay(alignment: .topLeading) {
                     if let rank = summary.rank { RankBadge(rank: rank).padding(8) }
+                }
+                .overlay(alignment: .bottomLeading) {
+                    if heatOnCover, !summary.heat.isEmpty {
+                        HStack(spacing: 3) {
+                            Image(systemName: "flame.fill").font(.system(size: 9, weight: .bold))
+                            Text(summary.heat).font(.system(size: 11, weight: .semibold))
+                        }
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 18)
+                        .padding(.bottom, 7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom))
+                        .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 16, bottomTrailingRadius: 16, style: .continuous))
+                        .allowsHitTesting(false)
+                    }
                 }
                 .overlay(alignment: .bottom) {
                     // Keeps the bottom of bright covers from fighting the hover button.
@@ -65,7 +85,7 @@ struct PosterCard: View {
                 } else if summary.episodeCount > 0 {
                     Text("\(summary.episodeCount) 集")
                 }
-                if !summary.heat.isEmpty { Text("· \(summary.heat)") }
+                if !heatOnCover, !summary.heat.isEmpty { Text("· \(summary.heat)") }
             }
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
@@ -94,6 +114,7 @@ struct PosterGrid: View {
     let items: [SeriesSummary]
     /// Click plays the series instead of opening its detail page (the actor page, as in the official app).
     var clickPlays = false
+    var heatOnCover = false
     var onAppearLast: (() -> Void)?
 
     private let columns = [GridItem(.adaptive(minimum: 132, maximum: 180), spacing: 18)]
@@ -101,7 +122,7 @@ struct PosterGrid: View {
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: 24) {
             ForEach(items) { item in
-                PosterCell(item: item, clickPlays: clickPlays)
+                PosterCell(item: item, clickPlays: clickPlays, heatOnCover: heatOnCover)
                     .onAppear { if item.id == items.last?.id { onAppearLast?() } }
             }
         }
@@ -113,11 +134,12 @@ struct PosterGrid: View {
 struct PosterCell: View {
     let item: SeriesSummary
     var clickPlays = false
+    var heatOnCover = false
     @Environment(AppModel.self) private var model
     @State private var hovering = false
 
     var body: some View {
-        Button { if clickPlays { playFirst() } else { model.open(item) } } label: { PosterCard(summary: item, hovering: hovering) }
+        Button { if clickPlays { playFirst() } else { model.open(item) } } label: { PosterCard(summary: item, hovering: hovering, heatOnCover: heatOnCover) }
             .buttonStyle(.plain)
             .overlay(alignment: .top) {
                 if hovering {

@@ -98,7 +98,7 @@ struct SeriesDetailView: View {
                 ScrollView(.horizontal) {
                     HStack(alignment: .top, spacing: 14) {
                         ForEach(cast) { member in
-                            Button { model.openCelebrity(member, cast: cast) } label: {
+                            Button { model.openCelebrity(member) } label: {
                                 VStack(spacing: 6) {
                                     CoverImage(url: member.avatar, cornerRadius: 32)
                                         .frame(width: 64, height: 64)

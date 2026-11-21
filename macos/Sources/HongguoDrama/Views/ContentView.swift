@@ -17,7 +17,7 @@ struct ContentView: View {
                             .navigationDestination(for: DetailRoute.self) { route in
                                 switch route {
                                 case .series(let summary): SeriesDetailView(summary: summary)
-                                case .celebrity(let member, let cast): CelebrityView(member: member, cast: cast)
+                                case .celebrity(let member): CelebrityView(member: member)
                                 }
                             }
                     }
