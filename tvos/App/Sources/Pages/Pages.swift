@@ -55,13 +55,3 @@ struct CatalogShelvesPage: View {
         state = loaded.isEmpty ? (failure.map { .failed($0) } ?? .empty("这里还没有剧")) : nil
     }
 }
-
-struct MePage: View {
-    @Environment(TVAppModel.self) private var app
-
-    var body: some View {
-        LoadStateView(state: .empty(app.account.isSignedIn
-            ? "已登录：\(app.account.profile?.nickname ?? "")"
-            : "我的页面即将上线：扫码登录、观看历史和设置"))
-    }
-}

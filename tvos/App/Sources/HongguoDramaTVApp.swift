@@ -50,6 +50,8 @@ final class TVAppModel: PlayerHost {
     var detailTarget: SeriesSummary?
     /// The player page, over everything.
     var playerTarget: PlayerTarget?
+    /// 扫码登录, over the tabs.
+    var showsLogin = false
 
     init(launch: LaunchOptions) {
         self.launch = launch
@@ -58,6 +60,7 @@ final class TVAppModel: PlayerHost {
         library = LibraryModel(offline: launch.offlineFixtures, account: account, backend: backend)
         // The series page and player routes open over 推荐.
         selectedTab = [.detail, .player, .playerControls, .playerEpisodes].contains(launch.route) ? .recommend : launch.route
+        showsLogin = launch.arguments.showsLogin
         player.isMuted = launch.muted
         // A muted run (automated tests on a Mac) must not claim the audio output at all.
         if !launch.muted { try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback) }
@@ -134,7 +137,12 @@ struct RootView: View {
                     MePage()
                 }
             }
-            .disabled(app.detailTarget != nil || app.playerTarget != nil)
+            .disabled(app.detailTarget != nil || app.playerTarget != nil || app.showsLogin)
+
+            if app.showsLogin {
+                LoginPage()
+                    .transition(.opacity)
+            }
 
             if let series = app.detailTarget {
                 DetailPage(series: series)
