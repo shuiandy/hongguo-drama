@@ -30,3 +30,27 @@ final class TheaterModelTests: XCTestCase {
         XCTAssertEqual(model.items.first?.seriesId, "fixture-comic-drama-1")
     }
 }
+
+@MainActor
+final class RankingModelTests: XCTestCase {
+    func testOfflineCategoriesListsAndChoices() async {
+        let model = RankingModel(backend: FixtureBackend())
+        let first = model.key(for: model.selectedCategoryId)
+        XCTAssertTrue(model.rankPages.needsLoad(first))
+        await model.load(first)
+        XCTAssertEqual(model.categories.map(\.id), ["all", "comic_series_rank", "human", "ai_playlet"])
+        XCTAssertEqual(model.rankPages.page(first).items.count, 18)
+        XCTAssertFalse(model.rankPages.needsLoad(first))
+
+        model.selectBoard("ranklist_hot_play_sc")
+        XCTAssertEqual(model.selectedPanelId, "")
+        model.selectedPanelId = "gender_female"
+        XCTAssertEqual(model.activeFilterTitle, "女频")
+        model.selectCategory(model.categories[2])
+        XCTAssertEqual(model.selectedCategoryId, "human")
+        XCTAssertEqual(model.selectedBoardId, "ranklist_hot_sc", "a new category opens on its first 榜单")
+        XCTAssertEqual(model.selectedPanelId, "")
+        // The first list is still kept for going back.
+        XCTAssertEqual(model.rankPages.page(first).items.count, 18)
+    }
+}
