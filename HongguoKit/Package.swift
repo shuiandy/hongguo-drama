@@ -10,6 +10,7 @@ let package = Package(
         .library(name: "HongguoCore", targets: ["HongguoCore"]),
         .library(name: "HongguoPlayback", targets: ["HongguoPlayback"]),
         .library(name: "AppLogic", targets: ["AppLogic"]),
+        .library(name: "HongguoModels", targets: ["HongguoModels"]),
     ],
     targets: [
         // Models, signing, App and website sources, identity, CDN candidates, caches.
@@ -19,10 +20,16 @@ let package = Package(
         // The apps' pure rules with no UI or network (from the iOS app's Logic/): feed and series
         // advance, gesture math, sleep timer, sync and merge rules.
         .target(name: "AppLogic", path: "Sources/AppLogic"),
+        // The apps' shared models with no UI (from the iOS app): the data backend and its offline
+        // samples, the account (sign-in state, lists, queued writes, session isolation), what the
+        // viewer keeps (LibraryModel), QR sign-in and the common launch switches.
+        .target(name: "HongguoModels", dependencies: ["HongguoCore", "HongguoPlayback", "AppLogic"],
+                path: "Sources/HongguoModels"),
         .testTarget(name: "HongguoCoreTests", dependencies: ["HongguoCore"],
                     path: "Tests/HongguoCoreTests", exclude: ["Fixtures"]),
         .testTarget(name: "HongguoPlaybackTests", dependencies: ["HongguoPlayback"], path: "Tests/HongguoPlaybackTests"),
         .testTarget(name: "AppLogicTests", dependencies: ["AppLogic"], path: "Tests/AppLogicTests"),
+        .testTarget(name: "HongguoModelsTests", dependencies: ["HongguoModels"], path: "Tests/HongguoModelsTests"),
         // Live probes of the App catalogue and playback, skipped unless HONGGUO_PROBE is set.
         .testTarget(name: "HongguoProbeTests", dependencies: ["HongguoCore", "HongguoPlayback"], path: "Tests/HongguoProbeTests"),
     ]

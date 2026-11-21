@@ -7,6 +7,7 @@
 | `HongguoCore` | 网络、签名、设备身份、取源、清晰度与 CDN 候选、解析、解密、持久化。不依赖 UI。 |
 | `HongguoPlayback` | 把 `PlayInfo` 变成可播放的 `AVPlayerItem` 加 loader：红果的 `EpisodeResolver`、`StreamingResourceLoader`、`MediaPrefixCache`。loader 由 App 持有到换集或关闭。iOS 的 `BookMallFeed`（首页推荐流，`AppFeed` 只剩它用的行解析）、`LocalCastServer`、`SeriesCredits` 暂时也在这里，接 tvOS 时再定归属。 |
 | `AppLogic` | 各 App 共用的纯规则，不碰界面和网络：信息流和连播推进、手势换算、定时关闭、写操作同步、历史与点赞合并、首页曝光去重、每集断点、分页请求等（原 iOS 仓库的 `Logic/`，模块名不变）。 |
+| `HongguoModels` | 各 App 共用的模型，不碰界面：`DramaBackend`（协议、真实实现 `LiveBackend`、离线样例 `FixtureBackend`）、`AccountModel`（登录态，收藏点赞预约历史，按记录排队的写操作，会话隔离）、`LibraryModel`（本机和账号切换与失败回滚、云端历史合并、不感兴趣、首页曝光去重、每集断点、3 分钟同步循环）、`LoginModel`（扫码登录循环）、`LaunchArguments`（通用启动参数）。原在 iOS App 里，搬过来时规则不变。 |
 
 播放器、手势、画中画、页面布局留在各 App。
 
