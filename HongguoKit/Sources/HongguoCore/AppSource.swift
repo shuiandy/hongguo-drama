@@ -157,13 +157,18 @@ enum AppSource {
         ("update_version_code", "74300"),
     ]
 
-    /// The JSON body of a play-model request for `vids` (at most 6).
+    /// The JSON body of a play-model request for `vids` (at most 6). `mixed_video_id_map` is keyed by
+    /// the video's content type, as the official client sends it: 1004 for series episodes, 1001 for
+    /// videos of a creator's collection (`UGCVideos`). One request may mix both; the reply is keyed by
+    /// vid either way.
     static func modelPayload(vids: [String]) throws -> [UInt8] {
+        var map: [String: [String]] = [:]
+        for vid in vids { map[UGCVideos.contains(vid) ? UGCVideos.modelKey : "1004", default: []].append(vid) }
         let object: [String: Any] = [
             "biz_param": ["detail_page_version": 0, "device_level": 3, "disable_digg_stat": false,
                           "disable_video_relate_book": false, "need_all_video_definition": true, "need_mp4_align": false,
                           "use_os_player": false, "use_server_dns": false, "video_platform": 1024],
-            "mixed_video_id_map": ["1004": vids],
+            "mixed_video_id_map": map,
             "dr_scene": "player",
         ]
         return Array(try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))

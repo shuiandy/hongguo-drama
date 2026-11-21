@@ -422,6 +422,8 @@ public enum AccountDataAccess {
         guard let bookIdNum = Int64(seriesId), seriesId.matchesDigits(min: 1, max: 30) else {
             throw HongguoError(.input, "剧集 ID 无效")
         }
+        // Collection videos: the official history shape for them is not known, so nothing is written.
+        if UGCVideos.contains(vid) { return }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         var entry: [String: Any] = [
             "book_id": bookIdNum,
