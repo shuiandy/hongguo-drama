@@ -372,6 +372,7 @@ public actor AuthenticatedPlaybackSource {
             }
         }
 
+        let startGen = await PersistentAppDevice.shared.currentGeneration()
         var identity = try await PersistentAppDevice.shared.get(transport: transport)
         var dToken = await PersistentAppDevice.shared.dTokenHeaders()
 
@@ -405,11 +406,11 @@ public actor AuthenticatedPlaybackSource {
 
         // Prefetches never trigger device renewal so they cannot consume the viewer's
         // recovery rate limits or race with an active viewer lookup.
-        let needsDeviceRecovery: Bool = {
-            guard let appError = lastError as? AppSourceError else { return false }
+        func isDeviceRecoverable(_ error: Error?) -> Bool {
+            guard let appError = error as? AppSourceError else { return false }
             return appError.code == .emptyResponse || appError.status == 403
-        }()
-        if entries == nil, allowRecovery, needsDeviceRecovery {
+        }
+        if entries == nil, allowRecovery, isDeviceRecoverable(lastError) {
             // A) Renew persisted device_id + refresh device_token + activate (app_alert_check).
             if deadline.timeIntervalSinceNow >= 2,
                let refreshed = try? await PersistentAppDevice.shared.refreshForRecovery(transport: transport),
@@ -425,6 +426,32 @@ public actor AuthenticatedPlaybackSource {
                         deadline: deadline
                     )
                     routeTag = "auth-renew"
+                } catch let error as AppSourceError {
+                    if error.code == .cancelled { throw error }
+                    lastError = error
+                } catch {
+                    lastError = error
+                }
+            }
+            // B) If renewing the existing device_id still gets an empty/403 reply, register one
+            // fresh activated device (coalesced across concurrent failures, 120 s cooldown).
+            if entries == nil, isDeviceRecoverable(lastError), deadline.timeIntervalSinceNow >= 2,
+               let reset = try? await PersistentAppDevice.shared.resetFreshForRecovery(
+                   fromGeneration: startGen,
+                   transport: transport
+               ),
+               reset.reset {
+                identity = reset.identity
+                dToken = await PersistentAppDevice.shared.dTokenHeaders()
+                do {
+                    entries = try await requestModels(
+                        vids: [vid],
+                        channels: [.multiPlainIOS],
+                        identity: identity,
+                        extraHeaders: dToken,
+                        deadline: deadline
+                    )
+                    routeTag = "auth-reset"
                 } catch let error as AppSourceError {
                     if error.code == .cancelled { throw error }
                     lastError = error

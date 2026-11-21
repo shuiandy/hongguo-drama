@@ -25,6 +25,8 @@ public actor PersistentAppDevice {
     public static let renewalInterval: TimeInterval = 21_600
     /// Minimum spacing between on-demand recovery renewals triggered by empty replies.
     private static let minRefreshInterval: TimeInterval = 30
+    /// Minimum spacing between full fresh-device resets when even renewal returns empty.
+    public static let minFreshResetInterval: TimeInterval = 120
 
     private static let keychainService = "io.github.shuiandy.hongguo-drama.device"
     private static let keychainAccount = "primary"
@@ -110,7 +112,26 @@ public actor PersistentAppDevice {
     private var lastBackgroundRenewFailureAt = Date.distantPast
     private static let backgroundRenewCooldown: TimeInterval = 60
     private var lastRefreshAt = Date.distantPast
+    private var lastFreshResetAt = Date.distantPast
+    private var resetGeneration: UInt64 = 0
     private var loadedFromStore = false
+    private let freshRegisterOverride: (@Sendable () async throws -> StoredRecord)?
+
+    public init() {
+        self.freshRegisterOverride = nil
+    }
+
+    init(initialRecord: StoredRecord?, freshRegister: @escaping @Sendable () async throws -> StoredRecord) {
+        self.record = initialRecord
+        self.loadedFromStore = true
+        self.freshRegisterOverride = freshRegister
+    }
+
+    /// Monotonic generation bumped after each fresh device reset, used to coalesce concurrent
+    /// callers failing on the same unusable device into a single fresh registration.
+    func currentGeneration() -> UInt64 {
+        resetGeneration
+    }
 
     /// Returns the persistent device identity immediately if stored (kicking off a non-blocking
     /// 6-hour `BDInstall` renewal in the background when due), or registers and activates once
@@ -152,6 +173,30 @@ public actor PersistentAppDevice {
         lastRefreshAt = now
         let updated = try await registerOrRenew(existing: existing, transport: transport)
         return (updated.playbackIdentity, true)
+    }
+
+    /// Discards the persisted device identity and registers + activates a brand-new device when
+    /// even `refreshForRecovery` still yields empty or 403 replies. Concurrent callers that failed
+    /// on the same generation (`expectedGeneration`) coalesce onto a single registration; after a
+    /// successful reset, further resets are rate-limited to `minFreshResetInterval` (120 s).
+    @discardableResult
+    func resetFreshForRecovery(
+        fromGeneration expectedGeneration: UInt64,
+        transport: AppTransport,
+        now: Date = Date()
+    ) async throws -> (identity: PlaybackIdentity, reset: Bool) {
+        if resetGeneration != expectedGeneration, let existing = currentRecord() {
+            return (existing.playbackIdentity, true)
+        }
+        if let inflight, inflightIsFresh {
+            let fresh = try await inflight.value
+            return (fresh.playbackIdentity, true)
+        }
+        if now.timeIntervalSince(lastFreshResetAt) < Self.minFreshResetInterval, let existing = currentRecord() {
+            return (existing.playbackIdentity, false)
+        }
+        let fresh = try await registerOrRenew(existing: nil, transport: transport, resetClock: now)
+        return (fresh.playbackIdentity, true)
     }
 
     /// Returns `[("x-tt-dt", deviceToken)]` when a `device_token` is available, matching
@@ -199,14 +244,18 @@ public actor PersistentAppDevice {
         }
     }
 
-    private func registerOrRenew(existing: StoredRecord?, transport: AppTransport) async throws -> StoredRecord {
+    private func registerOrRenew(existing: StoredRecord?, transport: AppTransport, resetClock: Date? = nil) async throws -> StoredRecord {
         let wantsFresh = existing == nil
         if let inflight, (!wantsFresh || inflightIsFresh) {
             return try await inflight.value
         }
         let label = wantsFresh ? "register" : "renew"
         let baseRecord = existing?.platform == "iphone" ? existing : nil
+        let override = wantsFresh ? freshRegisterOverride : nil
         let task = Task<StoredRecord, Error> {
+            if let override {
+                return try await override()
+            }
             var updated = try await Self.performRegister(existing: baseRecord, transport: transport)
             let activated = await Self.performActivate(record: updated, transport: transport)
             if activated {
@@ -223,6 +272,12 @@ public actor PersistentAppDevice {
         do {
             let value = try await task.value
             record = value
+            if wantsFresh {
+                resetGeneration &+= 1
+                if let resetClock {
+                    lastFreshResetAt = resetClock
+                }
+            }
             if inflight == task {
                 inflight = nil
                 inflightIsFresh = false

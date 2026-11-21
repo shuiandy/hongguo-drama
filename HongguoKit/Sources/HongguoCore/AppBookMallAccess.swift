@@ -10,6 +10,7 @@ public enum AppBookMallAccess {
         "/reading/bookapi/plan/v/",
         "/reading/user/subscribe/list/v1/",
         "/reading/bookapi/search/suggest/v/",
+        "/reading/bookapi/search/cue/v1/",
     ]
 
     /// GET a bookmall/discovery endpoint with query values. Signed in, the login cookie goes along

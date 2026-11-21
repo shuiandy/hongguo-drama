@@ -156,7 +156,76 @@ final class AppSourceParsingTests: XCTestCase {
         XCTAssertEqual(headers["Content-Encoding"], "gzip")
         let payload = try JSONValue.parse(Data(try AppSource.modelPayload(vids: ["1"])))
         XCTAssertEqual(payload["dr_scene"].string, "player")
+        XCTAssertEqual(payload["biz_param"]["device_level"].number, 1)
         XCTAssertEqual(payload["mixed_video_id_map"]["1004"].array?.count, 1)
+    }
+
+    func testParseSeriesRecommendPrefersDetailCellAndFallsBack() throws {
+        let withDetailCell = try JSONValue.parse("""
+        {
+          "code": 0,
+          "session_id": "top-sess",
+          "data": [
+            {
+              "show_type": 401,
+              "cell_name": "更多好剧",
+              "video_data": [
+                {"series_id": "7000000000000000010", "title": "泛推荐剧", "episode_cnt": 50}
+              ]
+            },
+            {
+              "show_type": 160,
+              "cell_name": "猜你喜欢",
+              "session_id": "cell-sess",
+              "video_data": [
+                {"series_id": "7000000000000000001", "title": "当前剧本身", "episode_cnt": 60},
+                {"series_id": "7000000000000000002", "title": "相关剧A", "episode_cnt": 80, "sub_title_list": [{"data_type": 27, "content": "3200万热度"}]},
+                {"series_id": "7000000000000000002", "title": "相关剧A重复", "episode_cnt": 80}
+              ]
+            }
+          ]
+        }
+        """)
+        let rec = try DiscoveryAccess.parseSeriesRecommend(withDetailCell, excludingSeriesId: "7000000000000000001")
+        XCTAssertEqual(rec.cellTitle, "猜你喜欢")
+        XCTAssertEqual(rec.sessionId, "cell-sess")
+        XCTAssertEqual(rec.items.map(\.seriesId), ["7000000000000000002"])
+        XCTAssertEqual(rec.items.first?.heatText, "3200万热度")
+        XCTAssertEqual(rec.items.first?.subtitle, "3200万热度 · 全80集")
+
+        let fallbackOnly = try JSONValue.parse("""
+        {
+          "code": 0,
+          "data": [
+            {
+              "show_type": 401,
+              "cell_name": "更多好剧",
+              "cell_data": [
+                {"video_detail": {"series_id": "7000000000000000099", "series_title": "备用剧", "episode_cnt": 45}}
+              ]
+            }
+          ]
+        }
+        """)
+        let fb = try DiscoveryAccess.parseSeriesRecommend(fallbackOnly)
+        XCTAssertEqual(fb.cellTitle, "更多好剧")
+        XCTAssertEqual(fb.items.map(\.seriesId), ["7000000000000000099"])
+    }
+
+    func testParseSearchCuesDeduplicatesAndChecksCode() throws {
+        let payload = try JSONValue.parse("""
+        {
+          "code": 0,
+          "data_v1": [
+            {"text": "家里家外"},
+            {"text": " 家里家外 "},
+            {"text": ""},
+            {"text": "好一个乖乖女"}
+          ]
+        }
+        """)
+        XCTAssertEqual(try DiscoveryAccess.parseSearchCues(payload), ["家里家外", "好一个乖乖女"])
+        XCTAssertThrowsError(try DiscoveryAccess.parseSearchCues(try JSONValue.parse(#"{"code":100001}"#)))
     }
 
     func testEmptyKeySeedDoesNotBreakPlainURL() throws {
