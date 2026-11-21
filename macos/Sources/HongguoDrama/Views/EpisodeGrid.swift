@@ -18,7 +18,7 @@ struct EpisodeGrid: View {
     private var ranges: [GlassOption<Int>] {
         guard groups.count > 1 else { return [] }
         return groups.enumerated().map { i, group in
-            GlassOption(label: "\(group.lowerBound)–\(group.upperBound)", value: i)
+            GlassOption(label: EpisodeRanges.label(group), value: i)
         }
     }
 
