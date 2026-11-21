@@ -478,26 +478,28 @@ public enum DiscoveryAccess {
 
     // MARK: - Search Suggestions
 
+    /// Search suggestions as the official app shows them while typing: GET `search/suggest/v` with
+    /// `query`, whose `query_result_v2` are short-drama names (`word_type_str` short_play_name).
+    /// `search_source=4` turns the answer into 番茄 novel topics, so it is not sent.
     public static func searchSuggestions(query: String, timeout: TimeInterval = 5) async -> [String] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
         guard let payload = try? await AppBookMallAccess.tab(
-            values: [("q", trimmed), ("search_source", "4")],
+            values: [("query", trimmed)],
             host: defaultHost,
             path: "/reading/bookapi/search/suggest/v/",
             timeout: timeout
         ) else { return [] }
+        return parseSuggestions(payload)
+    }
+
+    static func parseSuggestions(_ payload: JSONValue) -> [String] {
         guard (payload["code"].number ?? -1) == 0 else { return [] }
         var seen = Set<String>()
         var out: [String] = []
-        let rows = payload["data"]["suggest_list"].array
-            ?? payload["data"]["word_list"].array
-            ?? payload["data"].array
-            ?? []
+        let rows = payload["data"]["query_result_v2"].array ?? payload["data"]["query_result"].array ?? []
         for row in rows {
-            let word = AccountService.cleanText(
-                row["content"].string ?? row["word"].string ?? row["query"].string ?? row["text"].string ?? row.string
-            )
+            let word = AccountService.cleanText(row["name"].string ?? row["search_high_light"]["text"].string ?? row.string)
             guard !word.isEmpty, seen.insert(word).inserted else { continue }
             out.append(word)
             if out.count >= 8 { break }

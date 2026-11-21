@@ -13,7 +13,6 @@ public enum AccountDataAccess {
         "/reading/bookapi/bookmall/cell/change/v",
         "/reading/user/subscribe/list/v1/",
         "/reading/ugc/action/mget/v1/",
-        "/novel/articleapi/relation/get_user_action/v1/",
     ]
 
     /// Write paths for two-way sync of bookshelf (favorites), episode likes (digg),

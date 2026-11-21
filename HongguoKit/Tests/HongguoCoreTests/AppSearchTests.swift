@@ -206,3 +206,15 @@ final class NewReleaseTests: XCTestCase {
         XCTAssertFalse(second.cached)
     }
 }
+
+final class SearchSuggestionTests: XCTestCase {
+    func testReadsShortDramaNamesFromQueryResultV2() throws {
+        let payload = try JSONValue.parse(#"""
+        {"code":0,"data":{"query_key":"家里","query_result":["家里家外","家里来了个活爹"],
+          "query_result_v2":[{"name":"家里家外","word_type_str":"short_play_name"},{"name":"家里来了个活爹","word_type_str":"short_play_name"},
+                             {"name":"家里家外","word_type_str":"short_play_name"},{"name":"","word_type_str":"x"}]}}
+        """#)
+        XCTAssertEqual(DiscoveryAccess.parseSuggestions(payload), ["家里家外", "家里来了个活爹"])
+        XCTAssertEqual(DiscoveryAccess.parseSuggestions(try JSONValue.parse(#"{"code":1}"#)), [])
+    }
+}

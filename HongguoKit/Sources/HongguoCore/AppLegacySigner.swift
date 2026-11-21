@@ -453,8 +453,7 @@ struct AppLegacySigner {
         throw HongguoError(.format, "无法生成搜索请求签名")
     }
 
-    static let accountPaths = ["/reading/user/info/v1/", "/reading/bookapi/read_history/list/v1/",
-                               "/reading/bookapi/read_progress/list/v1/", "/reading/bookapi/multi-detail/v1/"]
+    static let accountPaths = ["/reading/user/info/v1/", "/reading/bookapi/read_history/list/v1/"]
     static let accountHost = "https://api5-normal-sinfonlinea.fqnovel.com"
 
     /// Port of `signedAccountRequest`: the registered identity plus the website login cookie (added by the caller).

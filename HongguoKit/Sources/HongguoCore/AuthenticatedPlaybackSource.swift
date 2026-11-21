@@ -363,13 +363,13 @@ public actor AuthenticatedPlaybackSource {
         var routeTag = "auth-app"
         var lastError: Error?
 
-        // Pass 1: the official iOS 7.4.3 RPC table, plain `mGetVideoModel` first (it answered in every
-        // probe on 2026-11-20 while the scene path went empty twice), then `mGetVideoModelV2`'s scene
-        // path on both hosts so a server-side flip of either route stays transparent.
+        // Pass 1: the official iOS 7.4.3 `mGetVideoModel` (`/multi_video_model/v1/`). The V2 scene
+        // path (`/multi_video_model/player/v1/`, either host) answers empty to this request
+        // (EndpointReachabilityLiveTests, 2026-11-20), so it is not asked: it only added two waits.
         do {
             entries = try await requestModels(
                 vids: [vid],
-                channels: [.multiPlainIOS, .multiScenePrimary, .multiSceneAlternate],
+                channels: [.multiPlainIOS],
                 identity: identity,
                 extraHeaders: dToken,
                 deadline: deadline
@@ -522,14 +522,10 @@ public actor AuthenticatedPlaybackSource {
     }
 
     private enum Channel {
-        /// Official iOS 7.4.3 `FQVPlayerApiService.mGetVideoModelV2` (`/multi_video_model/:dr_scene/v1/`).
-        case multiScenePrimary
-        case multiSceneAlternate
         /// Official iOS 7.4.3 `FQVPlayerApiService.mGetVideoModel` (`/multi_video_model/v1/`).
         case multiPlainIOS
     }
 
-    private static let multiScenePath = "/novel/player/multi_video_model/player/v1/"
     private static let multiPlainPath = "/novel/player/multi_video_model/v1/"
 
     private func requestModels(vids: [String], channels: [Channel], identity: PlaybackIdentity,
@@ -586,8 +582,6 @@ public actor AuthenticatedPlaybackSource {
         throws -> (url: String, headers: [(String, String)], body: [UInt8]) {
         let base: String
         switch channel {
-        case .multiScenePrimary: base = "https://api5-normal-sinfonlineb.fqnovel.com\(Self.multiScenePath)"
-        case .multiSceneAlternate: base = "https://api5-normal-sinfonlinea.fqnovel.com\(Self.multiScenePath)"
         case .multiPlainIOS: base = "https://api5-normal-sinfonlineb.fqnovel.com\(Self.multiPlainPath)"
         }
         return try AppSource.modelRequest(base: base, payload: multiPayload, identity: identity)
