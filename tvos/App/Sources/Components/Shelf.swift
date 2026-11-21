@@ -19,8 +19,10 @@ struct Shelf: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text(title)
-                .font(.title3.weight(.semibold))
+            if !title.isEmpty {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+            }
             ScrollView(.horizontal) {
                 LazyHStack(alignment: .top, spacing: PosterMetrics.spacing) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { offset, series in

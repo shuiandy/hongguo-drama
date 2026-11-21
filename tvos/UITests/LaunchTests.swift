@@ -53,4 +53,11 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["热播榜"].exists)
         XCTAssertTrue(app.buttons["真人剧"].exists)
     }
+
+    /// 搜索: the system search field, 猜你想搜 and the boards before anything is typed.
+    func testSearchLanding() {
+        let app = launch(route: "search")
+        XCTAssertTrue(app.staticTexts["猜你想搜"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["热搜榜"].exists)
+    }
 }

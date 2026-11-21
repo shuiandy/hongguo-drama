@@ -110,12 +110,6 @@ struct RecommendPage: View {
     }
 }
 
-struct SearchPage: View {
-    var body: some View {
-        LoadStateView(state: .empty("搜索即将上线"))
-    }
-}
-
 struct MePage: View {
     @Environment(TVAppModel.self) private var app
 
