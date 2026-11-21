@@ -100,6 +100,9 @@ public protocol DramaBackend: Sendable {
         offsetMs: Int64,
         accountId: String?
     ) async throws -> EpisodeSocial.Comment
+    /// Replies to an episode comment under the signed-in account.
+    func postReply(seriesId: String, vid: String, commentId: String, text: String,
+                   offsetMs: Int64, accountId: String?) async throws -> EpisodeSocial.Reply
     /// The series' public score and first reviews. Read-only.
     func reviews(seriesId: String) async throws -> SeriesReviews
 }
@@ -181,6 +184,12 @@ public struct LiveBackend: DramaBackend {
             offsetMs: offsetMs,
             accountId: accountId
         )
+    }
+
+    public func postReply(seriesId: String, vid: String, commentId: String, text: String,
+                          offsetMs: Int64, accountId: String?) async throws -> EpisodeSocial.Reply {
+        try await EpisodeSocialService.postReply(seriesId: seriesId, vid: vid, commentId: commentId, text: text,
+                                                 offsetMs: offsetMs, accountId: accountId)
     }
 
     public func reviews(seriesId: String) async throws -> SeriesReviews {
@@ -327,6 +336,14 @@ public struct FixtureBackend: DramaBackend {
             likes: 0,
             images: fixtureImages
         )
+    }
+
+    public func postReply(seriesId: String, vid: String, commentId: String, text: String,
+                          offsetMs: Int64, accountId: String?) async throws -> EpisodeSocial.Reply {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw HongguoError(.input, "请输入回复内容") }
+        return EpisodeSocial.Reply(id: "fixture-reply-\(UUID().uuidString)", author: "我", avatar: "",
+                                   content: trimmed, createdAt: Date(), likes: 0)
     }
 
     public init() {}
