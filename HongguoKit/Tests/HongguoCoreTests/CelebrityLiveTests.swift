@@ -71,7 +71,7 @@ final class CelebrityLiveTests: XCTestCase {
             do {
                 let works = try await Self.step("works(of:)") { try await CelebrityService.works(of: first) }
                 lines.append("\(first.name) works(of:): \(works.items.count) total=\(works.total ?? -1) includesThisSeries=\(works.items.contains { $0.seriesId == sid })")
-                lines.append("  cards with episodes=\(works.items.filter { $0.episodeCount > 0 }.count) genre=\(works.items.filter { !$0.tags.isEmpty }.count) plays=\(works.items.filter { !$0.heat.isEmpty }.count) https=\(works.items.filter { $0.cover.hasPrefix("https://") }.count)")
+                lines.append("  cards with episodes=\(works.items.filter { $0.episodeCount > 0 }.count) genre=\(works.items.filter { !$0.tags.isEmpty }.count) heat=\(works.items.filter { !$0.heat.isEmpty }.count) https=\(works.items.filter { $0.cover.hasPrefix("https://") }.count)")
                 for card in works.items.prefix(3) {
                     lines.append("  \(card.title): \(card.episodeCount) 集 \(card.tags.joined(separator: "/")) \(card.heat)")
                 }

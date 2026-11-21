@@ -69,9 +69,9 @@ public enum CelebrityService {
     }
 
     /// A work card. Live cards (2026-11-20) carry `series_id`, `title`, `cover`, `sub_title` (genre
-    /// and episode count, e.g. 时空之旅·102集), `play_cnt` and `score`; their `episode_cnt` is 0 and
-    /// they have no heat text, `video_detail`, `sub_title_list` or completion state. So the episode
-    /// count and genre are read from `sub_title` and the play count stands in for heat.
+    /// and episode count, e.g. 时空之旅·102集), `rec_text` (the heat the official card shows, e.g.
+    /// 4210万热度), `play_cnt` and `score`; their `episode_cnt` is 0 and they have no `video_detail`,
+    /// `sub_title_list` or completion state. So the episode count and genre are read from `sub_title`.
     static func summary(_ video: JSONValue, seen: inout Set<String>) -> SeriesSummary? {
         let id = (video["series_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
         let title = AccountService.cleanText(video["title"].string)
@@ -84,7 +84,7 @@ public enum CelebrityService {
             cover: AccountDataAccess.normalizeHTTPSURL(cleanedCover.isEmpty ? rawCover : cleanedCover),
             episodeCount: EpisodeSocialService.integer(video["episode_cnt"]).flatMap { $0 > 0 ? $0 : nil } ?? episodes ?? 0,
             tags: genre.isEmpty ? [] : [genre],
-            heat: plays(EpisodeSocialService.integer(video["play_cnt"])))
+            heat: heat(video["rec_text"].string))
     }
 
     /// `时空之旅·102集` → ("时空之旅", 102); a part that is not an episode count is the genre.
@@ -102,11 +102,9 @@ public enum CelebrityService {
         return (genre, episodes)
     }
 
-    /// 60814291 → 6081万播放; nil or 0 → "".
-    static func plays(_ count: Int?) -> String {
-        guard let count, count > 0 else { return "" }
-        if count >= 100_000_000 { return String(format: "%.1f亿播放", Double(count) / 100_000_000) }
-        if count >= 10_000 { return "\(count / 10_000)万播放" }
-        return "\(count)播放"
+    /// `rec_text`, e.g. 4210万热度; "" when missing or implausibly long.
+    static func heat(_ text: String?) -> String {
+        let value = AccountService.cleanText(text)
+        return value.count <= 20 ? value : ""
     }
 }
