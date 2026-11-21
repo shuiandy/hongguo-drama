@@ -103,3 +103,17 @@ final class SeriesDetailModelTests: XCTestCase {
         XCTAssertEqual(SeriesDetailModel.baseTitle("龙王殿第二季：归来"), "龙王殿")
     }
 }
+
+@MainActor
+final class CelebrityModelTests: XCTestCase {
+    /// Offline there is no actor home page: nothing is requested and nothing is shown as failed.
+    func testOfflineReadsNothing() async {
+        let member = EpisodeSocial.CastMember(id: "a1", name: "示例演员", role: "主演", avatar: "", profileUserId: "123")
+        let model = CelebrityModel(member: member)
+        await model.loadHome(using: FixtureBackend())
+        XCTAssertNil(model.home)
+        XCTAssertNil(model.homeError)
+        XCTAssertFalse(model.homeLoading)
+        XCTAssertNil(model.listKey)
+    }
+}
