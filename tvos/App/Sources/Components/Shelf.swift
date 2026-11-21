@@ -7,7 +7,9 @@ struct Shelf: View {
     let title: String
     let items: [SeriesSummary]
     var showsRank = false
-    var onSelect: (SeriesSummary) -> Void = { _ in }
+    /// Opens the series page unless given something else.
+    var onSelect: ((SeriesSummary) -> Void)? = nil
+    @Environment(TVAppModel.self) private var app
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -17,7 +19,7 @@ struct Shelf: View {
                 LazyHStack(alignment: .top, spacing: PosterMetrics.spacing) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { offset, series in
                         PosterCard(series: series, rank: showsRank ? (series.rank ?? offset + 1) : nil) {
-                            onSelect(series)
+                            if let onSelect { onSelect(series) } else { app.openDetail(series) }
                         }
                     }
                 }

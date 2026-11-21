@@ -1,4 +1,5 @@
 import XCTest
+import HongguoCore
 import HongguoPlayerKit
 
 // The shared player as the tvOS app gets it (no hooks), on the Apple TV simulator.
@@ -15,9 +16,10 @@ final class PlayerKitTests: XCTestCase {
         do {
             _ = try await engine.prepareForAirPlay()
             XCTFail("casting without the hook")
+        } catch let error as HongguoError {
+            XCTAssertEqual(error.message, "当前设备不支持局域网投屏")
         } catch {
-            // Matched by text: this test bundle links its own copy of the package's modules.
-            XCTAssertTrue(String(describing: error).contains("当前设备不支持局域网投屏"), "\(error)")
+            XCTFail("unexpected \(error)")
         }
     }
 

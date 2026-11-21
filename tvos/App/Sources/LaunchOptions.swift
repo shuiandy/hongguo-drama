@@ -7,9 +7,12 @@ import HongguoModels
 ///     xcrun simctl launch <udid> io.github.shuiandy.hongguo-drama.tvos \
 ///         -HongguoOfflineFixtures YES -HongguoMuted YES -HongguoRoute theater
 struct LaunchOptions: Sendable {
-    /// The six top tabs; `-HongguoRoute` opens one of them.
+    /// The six top tabs, and the series page and player for screenshots (`-HongguoSeries` picks
+    /// the series; offline the sample series).
     enum Route: String, Sendable, CaseIterable {
         case recommend, theater, ranking, following, search, me
+        case detail, player
+        case playerControls = "player-controls", playerEpisodes = "player-episodes"
     }
 
     var arguments: LaunchArguments

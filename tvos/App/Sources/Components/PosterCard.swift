@@ -1,4 +1,5 @@
 import HongguoCore
+import HongguoPlayerKit
 import SwiftUI
 
 /// Poster size on a 1920×1080-point screen: seven to a row with the system's shelf spacing.
@@ -65,12 +66,8 @@ struct PosterImage: View {
             Image(systemName: "film")
                 .font(.system(size: 48))
                 .foregroundStyle(.white.opacity(0.35))
-            if let url = URL(string: series.cover), !series.cover.isEmpty {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    Color.clear
-                }
+            if !series.cover.isEmpty {
+                CoverImage(url: series.cover)
             }
         }
         .clipped()

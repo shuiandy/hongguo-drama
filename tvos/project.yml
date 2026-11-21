@@ -58,10 +58,10 @@ targets:
     platform: tvOS
     sources:
       - path: UnitTests
+    # Hosted in the app and linked against it only: linking the package product here too would
+    # make Xcode build it as a dynamic framework with a second copy of the core in it.
     dependencies:
       - target: HongguoDramaTV
-      - package: HongguoKit
-        product: HongguoPlayerKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.shuiandy.hongguo-drama.tvos.tests
