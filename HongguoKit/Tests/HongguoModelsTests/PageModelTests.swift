@@ -117,3 +117,22 @@ final class CelebrityModelTests: XCTestCase {
         XCTAssertNil(model.listKey)
     }
 }
+
+@MainActor
+final class CommentListModelTests: XCTestCase {
+    func testOfflineCommentsAndReplies() async throws {
+        let model = CommentListModel()
+        let total = await model.load(seriesId: "fixture-1", vid: "fixture-1-ep1", using: FixtureBackend())
+        XCTAssertEqual(total, 422)
+        XCTAssertEqual(model.phase, .loaded)
+        XCTAssertEqual(model.comments.count, 8)
+        XCTAssertFalse(model.hasMore, "offline: no further pages")
+        let first = try XCTUnwrap(model.comments.first)
+        await model.loadReplies(for: first)
+        XCTAssertEqual(model.replyThreads[first.id]?.replies.count, 3)
+        model.collapseReplies(of: first.id)
+        // Another episode drops the threads.
+        _ = await model.load(seriesId: "fixture-1", vid: "fixture-1-ep2", using: FixtureBackend())
+        XCTAssertTrue(model.replyThreads.isEmpty)
+    }
+}
