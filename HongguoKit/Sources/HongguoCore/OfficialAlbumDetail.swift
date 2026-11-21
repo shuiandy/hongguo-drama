@@ -5,21 +5,33 @@ import Foundation
 /// account history writes skip them (the official shape for collection history is not known).
 enum UGCVideos {
     static let modelKey = "1001"
+    /// Kept between launches, so a download or a resume of a collection video after a relaunch
+    /// still asks under 1001 before the collection is opened again. The newest `limit` are kept.
+    static let defaultsKey = "HongguoUGCVideoIds.v1"
+    static let limit = 5000
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var vids = Set<String>()
+    nonisolated(unsafe) private static var vids: [String] = UserDefaults.standard.stringArray(forKey: defaultsKey) ?? []
+    nonisolated(unsafe) private static var known = Set(vids)
 
     static func insert(_ list: [String]) {
         lock.lock(); defer { lock.unlock() }
-        vids.formUnion(list)
+        let fresh = list.filter { known.insert($0).inserted }
+        guard !fresh.isEmpty else { return }
+        vids += fresh
+        if vids.count > limit {
+            vids.removeFirst(vids.count - limit)
+            known = Set(vids)
+        }
+        UserDefaults.standard.set(vids, forKey: defaultsKey)
     }
 
     static func contains(_ vid: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        return vids.contains(vid)
+        return known.contains(vid)
     }
 }
 
-/// A creator's collection (合集, `content_type` 1003) as the official app reads it with POST
+/// A creator's collection (合集, `content_type` 1003), or one creator video on its own (1001), as the official app reads it with POST
 /// `/novel/player/album_detail/v1/` (`FQVGetVideoAlbumDetailRequest` in the 7.4.3 binary:
 /// `album_id`, `series_ids`, `need_video_detail_info`, `biz_param`). Search and history give the
 /// collection's id where a series id would be; the series detail read answers it with no episode
@@ -30,8 +42,15 @@ enum OfficialAlbumDetail {
 
     /// The collection as an `OfficialSeriesDetail`, or nil when `albumId` is not a collection with videos.
     static func load(_ albumId: String, http: HTTPClient = .shared) async throws -> OfficialSeriesDetail? {
-        guard let listing = try? await request(albumId, items: nil, http: http),
-              let album = listing["data"]["album_data"].object, !(album["video_detail_list"]?.array ?? []).isEmpty else { return nil }
+        guard let listing = try? await request(albumId, items: nil, http: http) else { return nil }
+        guard let album = listing["data"]["album_data"].object, !(album["video_detail_list"]?.array ?? []).isEmpty else {
+            // Not a collection: perhaps one creator video on its own (an actor's 作品 › 全部 lists
+            // them), which the same read answers when asked for its own id.
+            guard let reply = try? await request(albumId, items: [albumId], http: http),
+                  let lone = parseLone(reply["data"]["video_detail_data"][albumId]["video_data"], id: albumId) else { return nil }
+            UGCVideos.insert(lone.episodes.map(\.vid))
+            return lone
+        }
         let items = itemIds(listing)
         guard !items.isEmpty else { return nil }
         // Up to 50 items per request, as the listing returns them.
@@ -73,6 +92,26 @@ enum OfficialAlbumDetail {
             throw HongguoError(.upstream, "红果合集接口暂时不可用（\(Int(reply["code"].number ?? -1))）")
         }
         return reply
+    }
+
+    /// A single creator video (`content_type` 1001) as a one-episode series, or nil.
+    static func parseLone(_ video: JSONValue, id: String) -> OfficialSeriesDetail? {
+        guard Int(video["content_type"].number ?? 0) == 1001,
+              (video["series_id_str"].idString ?? video["series_id"].idString) == id else { return nil }
+        let item = video["video_list"][0]
+        let vid = item["vid"].idString.flatMap { $0.matchesDigits(min: 1, max: 30) ? $0 : nil } ?? id
+        func count(_ value: JSONValue) -> Int? { value.number.flatMap { $0 >= 0 && $0 < 1e15 ? Int($0) : nil } }
+        let title = AccountService.cleanText(video["series_title"].string)
+        let rawCover = video["series_cover"].string ?? ""
+        let cleanedCover = AccountService.cleanCover(rawCover)
+        return OfficialSeriesDetail(
+            seriesId: id, title: title,
+            cover: AccountDataAccess.normalizeHTTPSURL(cleanedCover.isEmpty ? rawCover : cleanedCover),
+            intro: (video["series_intro"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
+            episodeLabel: "共1集", episodeCount: 1, completion: .completed,
+            favoriteCount: count(video["followed_cnt"]), playCount: count(video["series_play_cnt"]), recordNumber: "",
+            episodes: [OfficialSeriesDetail.Entry(vid: vid, index: 1, likes: count(item["digged_count"]) ?? count(video["digg_cnt"]),
+                                                  disabled: item["disable_play"].bool == true, title: title)])
     }
 
     static func itemIds(_ listing: JSONValue) -> [String] {

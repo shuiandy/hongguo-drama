@@ -33,7 +33,7 @@ public actor PersistentAppDevice {
     private static let primaryRegisterBase = "https://log5-applog-lf.fqnovel.com/service/2/device_register/"
     private static let fallbackRegisterBase = "https://log.snssdk.com/service/2/device_register/"
     private static let activateBase = "https://ichannel.snssdk.com/service/2/app_alert_check/"
-    private static let registerUA = "com.phoenix.read/74332 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3)"
+    private static let registerUA = AppLegacySigner.currentSearchUA
     /// ttEncrypt key derivation salt of `device_register`.
     static let kdfSalt = AppCrypto.fromHex("4dd4c2e6b83162090e52b3c7a6733ba41cb2462b829ab58a196b39db57177524f49baf7f08e8d68d26a72e37c1a95a2f1f05a51892aef2949732b62a38aadd58")!
 
@@ -225,11 +225,13 @@ public actor PersistentAppDevice {
         let openudid = existing?.openudid ?? AppCrypto.hex(AppCrypto.randomBytes(8))
         let clientudid = existing?.clientudid ?? AppCrypto.uuid()
         let wasActivated = existing?.isActivated == true
+        // The registered app version is the one every legacy-signed request presents.
+        let versionCode = Int(AppLegacySigner.currentVersionCode) ?? 0
 
         var header: [String: Any] = [
-            "display_name": "红果免费短剧", "update_version_code": 74332, "manifest_version_code": 74332,
-            "app_version_minor": "7.4.3.32", "aid": 8662, "channel": "update_64", "package": "com.phoenix.read",
-            "app_version": "7.4.3.32", "version_code": 74332, "sdk_version": "3.7.0-rc.34-fanqie-xiaoshuo",
+            "display_name": "红果免费短剧", "update_version_code": versionCode, "manifest_version_code": versionCode,
+            "app_version_minor": AppLegacySigner.currentVersionName, "aid": 8662, "channel": "update_64", "package": "com.phoenix.read",
+            "app_version": AppLegacySigner.currentVersionName, "version_code": versionCode, "sdk_version": "3.7.0-rc.34-fanqie-xiaoshuo",
             "sdk_target_version": 29, "git_hash": "3a88f4e", "os": "Android", "os_version": "16", "os_api": 36,
             "device_model": "25053RT47C", "device_brand": "Redmi", "device_manufacturer": "Redmi",
             "cpu_abi": "arm64-v8a", "release_build": "b5e187f", "density_dpi": 520, "display_density": "mdpi",
@@ -339,7 +341,7 @@ public actor PersistentAppDevice {
             ("channel", "update_64"),
             ("device_platform", "android"),
             ("os_version", "16"),
-            ("version_code", "74332"),
+            ("version_code", AppLegacySigner.currentVersionCode),
             ("device_id", record.deviceId),
             ("iid", record.iid),
             ("cdid", record.cdid),

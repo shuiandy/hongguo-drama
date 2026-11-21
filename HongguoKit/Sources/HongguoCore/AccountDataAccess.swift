@@ -568,7 +568,7 @@ public enum AccountDataAccess {
 
 extension AppLegacySigner {
     /// `account(path:values:identity:nowMillis:)` for the read-only paths in
-    /// `AccountDataAccess.extraPaths`: the same device fields, version and headers.
+    /// `AccountDataAccess.extraPaths`: the same device fields, version (`currentVersionName`) and headers.
     func accountRead(path: String, values: [(String, String)], identity: PlaybackIdentity, dToken: String = "", nowMillis: Int64) throws -> Signed {
         guard AccountDataAccess.extraPaths.contains(path) else { throw HongguoError(.input, "不支持的账号接口") }
         return try signedRead(host: Self.accountHost, path: path, values: values, identity: identity, dToken: dToken, nowMillis: nowMillis)

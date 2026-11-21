@@ -36,6 +36,13 @@ final class AppSearchSigningTests: XCTestCase {
         }
     }
 
+    /// The client version a reference vector was signed with (requests use `ClientVersion.current`).
+    private func referenceVersion(_ item: JSONValue) throws -> AppLegacySigner.ClientVersion {
+        let query = String(try XCTUnwrap(item["url"].string).split(separator: "?")[1])
+        return .init(code: try XCTUnwrap(AppCrypto.queryParam(query, "version_code")),
+                     name: try XCTUnwrap(AppCrypto.queryParam(query, "version_name")))
+    }
+
     func testSearchRequestMatchesReference() throws {
         let identity = Self.fixture["identity"]
         let id = PlaybackIdentity(deviceId: identity["device_id"].string!, iid: identity["iid"].string!, cdid: identity["cdid"].string!)
@@ -46,7 +53,7 @@ final class AppSearchSigningTests: XCTestCase {
                                              nextOffset: c["next_offset"]?.number.map(Int.init))
             }
             let signed = try signer.search(keyword: item["keyword"].string!, page: Int(item["page"].number!), cursor: cursor,
-                                           identity: id, nowMillis: Int64(item["now"].number!))
+                                           identity: id, nowMillis: Int64(item["now"].number!), version: try referenceVersion(item))
             XCTAssertEqual(signed.url, item["url"].string)
             assertHeaders(signed, item)
             XCTAssertEqual(queue.values.count, randoms(item).count - Int(item["used"].number!), "same number of random draws")
@@ -65,7 +72,8 @@ final class AppSearchSigningTests: XCTestCase {
             let order = ["offset", "limit", "genre", "a"].filter { raw[$0] != nil }
             let body = item["body"].string.map { Array($0.utf8) }
             let signed = try signer.metadata(path: item["apiPath"].string!, values: order.map { ($0, raw[$0]!.string!) },
-                                             payload: body, identity: device, nowMillis: Int64(item["now"].number!))
+                                             payload: body, identity: device, nowMillis: Int64(item["now"].number!),
+                                             version: try referenceVersion(item))
             XCTAssertEqual(signed.url, url)
             assertHeaders(signed, item)
         }
@@ -78,7 +86,8 @@ final class AppSearchSigningTests: XCTestCase {
             let (signer, _) = signer(randoms(item))
             let raw = item["values"].object ?? [:]
             let values = (item["valueOrder"].array ?? []).map { ($0.string!, raw[$0.string!]!.string!) }
-            let signed = try signer.account(path: item["apiPath"].string!, values: values, identity: id, nowMillis: Int64(item["now"].number!))
+            let signed = try signer.account(path: item["apiPath"].string!, values: values, identity: id, nowMillis: Int64(item["now"].number!),
+                                            version: try referenceVersion(item))
             XCTAssertEqual(signed.url, item["url"].string)
             assertHeaders(signed, item)
         }

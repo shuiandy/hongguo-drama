@@ -2,7 +2,7 @@ import SwiftUI
 import HongguoCore
 
 /// An actor's page, the official actor home page: picture, name, the role in the series it was
-/// opened from and their introduction (from the series detail's cast), then the 剧作 tab of the
+/// opened from and their introduction (from the series detail's cast), then the works tab (作品) of the
 /// actor's 红果 account (`ActorHomeService`) with the server's sub tabs (全部, 预约, …), sorted
 /// 最新 (the server's order) or 最热 (by heat). Cards carry the heat on the cover and genre · N集
 /// under the title. Clicking a released work plays it, as in the official app; a series not out yet
@@ -148,7 +148,7 @@ struct CelebrityView: View {
         do {
             let loaded = try await ActorHomeService.home(userId: member.profileUserId)
             home = loaded
-            guard let tab = loaded.worksTab else { error = "这位演员的主页没有剧作"; return }
+            guard let tab = loaded.worksTab else { error = "这位演员的主页没有作品"; return }
             subTab = tab.subTabs.first?.type ?? 0
         } catch {
             self.error = describe(error)

@@ -6,8 +6,9 @@ import Foundation
 /// the comment RPC service, so signed like the comment lists), signed out, `comment_source` 1506,
 /// `server_channel` 0, `sort` time_desc, as `SSBizCustomUserDataManager` sends it.
 ///
-/// The first read (no tab) gives the tabs: 剧作 (8; sub tabs such as 全部 100 and 预约 20), 动态
-/// and 红果圈. A read with a tab and sub tab gives that list. The 剧作 list holds `video` items
+/// The first read (no tab) gives the tabs. On the current client (7.4.5.32): 作品 (23; sub tabs 全部
+/// 100, 剧作 22, 预约 20, 合集 13, 剧评 121) and 红果圈; 全部 also holds the actor's own single videos.
+/// Older clients got 剧作 (8), 动态 and 红果圈. A read with a tab and sub tab gives that list. The works lists hold `video` items
 /// (title, cover, intro, episode count, genre, heat) and `subscribe_item` items (series not out yet).
 /// The server sends no sort options (`sort_cfgs` is empty), so 最热 is sorted here by heat.
 public struct ActorHome: Sendable, Equatable {
@@ -28,9 +29,10 @@ public struct ActorHome: Sendable, Equatable {
     /// `hightlight` (sic): the tab the page opens on.
     public var highlight: Int?
 
-    /// The 剧作 tab, the works the page shows.
+    /// The tab of the actor's works: 作品 (23) on the current client, with sub tabs 全部, 剧作, 预约,
+    /// 合集 and 剧评; 剧作 (8) on older clients.
     public var worksTab: Tab? {
-        tabs.first { $0.type == ActorHomeService.worksTabType } ?? tabs.first { $0.name == "剧作" }
+        tabs.first { ActorHomeService.worksTabTypes.contains($0.type) } ?? tabs.first { ["作品", "剧作"].contains($0.name) }
     }
 }
 
@@ -53,7 +55,7 @@ public struct ActorWorksPage: Sendable, Equatable {
 public enum ActorHomeService {
     static let commentSource = 1506
     static let serverChannel = 0
-    static let worksTabType = 8
+    static let worksTabTypes = [23, 8]
     private static let homeCache = TTLCache<ActorHome>(limit: 64)
     private static let pageCache = TTLCache<ActorWorksPage>(limit: 128)
 

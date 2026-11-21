@@ -25,19 +25,32 @@ struct AppLegacySigner {
 
     static let searchAPI = "https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/search/tab/v"
     static let metadataHost = "https://api5-normal-sinfonlineb.fqnovel.com"
+    /// The one Android client every legacy-signed request presents (query, User-Agent, x-medusa):
+    /// the official 7.4.5.32 release. Servers pick feed, search and ranking logic by version, so a
+    /// request on an older version gets older content (the real-drama feed did).
     static let currentVersionCode = "74532"
     static let currentVersionName = "7.4.5.32"
-    static let searchUA = "com.phoenix.read/72232 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3)"
-    static let metadataUA = "com.phoenix.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
-    static let currentSearchUA = searchUA.replacingOccurrences(of: "72232", with: currentVersionCode)
-    static let currentMetadataUA = metadataUA.replacingOccurrences(of: "73532", with: currentVersionCode)
+    static let currentSearchUA = ClientVersion.current.searchUA
+    static let currentMetadataUA = ClientVersion.current.metadataUA
+
+    /// An Android client version. Requests always present `current`; the signing tests replay the
+    /// reference vectors on the version they were made with.
+    struct ClientVersion: Sendable {
+        var code: String
+        var name: String
+        static let current = ClientVersion(code: AppLegacySigner.currentVersionCode, name: AppLegacySigner.currentVersionName)
+        var searchUA: String { "com.phoenix.read/\(code) (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3)" }
+        var metadataUA: String {
+            "com.phoenix.read/\(code) (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
+        }
+    }
 
     static let device: [(String, String)] = [
         ("ac", "wifi"), ("channel", "update_64"), ("aid", "8662"), ("app_name", "novelread"),
-        ("version_code", "71332"), ("version_name", "7.1.3.32"), ("device_platform", "android"), ("os", "android"),
+        ("version_code", currentVersionCode), ("version_name", currentVersionName), ("device_platform", "android"), ("os", "android"),
         ("ssmix", "a"), ("device_type", "25053RT47C"), ("device_brand", "Redmi"), ("language", "zh"), ("os_api", "36"),
-        ("os_version", "16"), ("manifest_version_code", "71332"), ("resolution", "1280*2772"), ("dpi", "520"),
-        ("update_version_code", "71332"), ("host_abi", "arm64-v8a"), ("dragon_device_type", "phone"), ("pv_player", "71332"),
+        ("os_version", "16"), ("manifest_version_code", currentVersionCode), ("resolution", "1280*2772"), ("dpi", "520"),
+        ("update_version_code", currentVersionCode), ("host_abi", "arm64-v8a"), ("dragon_device_type", "phone"), ("pv_player", currentVersionCode),
         ("compliance_status", "0"), ("need_personal_recommend", "1"), ("player_so_load", "1"), ("is_android_pad_screen", "0"),
     ]
 
@@ -405,14 +418,14 @@ struct AppLegacySigner {
         var nextOffset: Int?
     }
 
-    /// Port of `signedSearchRequest` (hongguoTV 7.2.2.32 profile, hash branch 0).
-    func search(keyword: String, page: Int, cursor: SearchCursor?, identity: PlaybackIdentity, nowMillis: Int64) throws -> Signed {
+    /// Port of `signedSearchRequest` (hash branch 0) on `currentVersionName`.
+    func search(keyword: String, page: Int, cursor: SearchCursor?, identity: PlaybackIdentity, nowMillis: Int64, version: ClientVersion = .current) throws -> Signed {
         guard (1...50).contains(page) else { throw HongguoError(.input, "App 搜索页码需为 1 至 50 的整数") }
         guard [identity.deviceId, identity.iid].allSatisfy({ $0.matchesDigits(min: 1, max: 30) && $0.contains(where: { $0 != "0" }) }),
               identity.cdid.range(of: "^[a-fA-F0-9-]{36}$", options: .regularExpression) != nil else {
             throw HongguoError(.input, "App 搜索设备身份无效")
         }
-        let device = Self.merged(Self.versioned("72232", "7.2.2.32"),
+        let device = Self.merged(Self.versioned(version.code, version.name),
                                  [("iid", identity.iid), ("device_id", identity.deviceId), ("cdid", identity.cdid)])
         let ts = UInt32(nowMillis / 1000)
         var base = device + [("query", String(keyword.prefix(80))), ("count", "20"), ("tab_type", "11"),
@@ -427,12 +440,12 @@ struct AppLegacySigner {
             let url = "\(Self.searchAPI)?\(query)"
             guard Self.branch(querySm3: AppCrypto.sm3(Array(query.utf8)), bodyMd5: [UInt8](repeating: 0, count: 16), ts: ts) == 0 else { continue }
             let headers: [(String, String)] = [
-                ("User-Agent", Self.searchUA), ("Accept", "application/json; charset=utf-8,application/x-protobuf"),
+                ("User-Agent", version.searchUA), ("Accept", "application/json; charset=utf-8,application/x-protobuf"),
                 ("x-ss-req-ticket", ticket), ("x-tt-request-tag", "t=0;n=0"), ("sdk-version", "2"),
                 ("passport-sdk-version", "50561"), ("x-xs-from-web", "0"), ("x-khronos", String(ts)),
                 ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
                 ("x-gorgon", Self.xGorgon(query: query, body: nil, ts: ts, random: random)), ("x-helios", helios(ts: ts)),
-                ("x-medusa", try medusa(url: url, body: nil, ts: ts, deviceId: identity.deviceId, versionName: "7.2.2.32", nowMillis: nowMillis)),
+                ("x-medusa", try medusa(url: url, body: nil, ts: ts, deviceId: identity.deviceId, versionName: version.name, nowMillis: nowMillis)),
                 ("x-tt-dt", ""),
             ]
             return Signed(url: url, query: query, headers: headers, body: nil)
@@ -446,13 +459,13 @@ struct AppLegacySigner {
 
     /// Port of `signedAccountRequest`: the registered identity plus the website login cookie (added by the caller).
     /// `dToken` is the device token the official client sends as `x-tt-dt` (empty until issued).
-    func account(path: String, values: [(String, String)], identity: PlaybackIdentity, dToken: String = "", nowMillis: Int64) throws -> Signed {
+    func account(path: String, values: [(String, String)], identity: PlaybackIdentity, dToken: String = "", nowMillis: Int64, version: ClientVersion = .current) throws -> Signed {
         guard Self.accountPaths.contains(path) else { throw HongguoError(.input, "不支持的账号接口") }
         guard [identity.deviceId, identity.iid].allSatisfy({ $0.matchesDigits(min: 1, max: 30) && $0.contains(where: { $0 != "0" }) }),
               identity.cdid.range(of: "^[a-fA-F0-9-]{36}$", options: .regularExpression) != nil else {
             throw HongguoError(.input, "账号设备身份无效")
         }
-        let device = Self.merged(Self.versioned("72232", "7.2.2.32"),
+        let device = Self.merged(Self.versioned(version.code, version.name),
                                  [("iid", identity.iid), ("device_id", identity.deviceId), ("cdid", identity.cdid)])
         let ts = UInt32(nowMillis / 1000)
         let fields = Self.merged(values, device)
@@ -462,12 +475,12 @@ struct AppLegacySigner {
             let url = "\(Self.accountHost)\(path)?\(query)"
             guard Self.branch(querySm3: AppCrypto.sm3(Array(query.utf8)), bodyMd5: [UInt8](repeating: 0, count: 16), ts: ts) == 0 else { continue }
             let headers: [(String, String)] = [
-                ("User-Agent", Self.searchUA), ("Accept", "application/json; charset=utf-8,application/x-protobuf"),
+                ("User-Agent", version.searchUA), ("Accept", "application/json; charset=utf-8,application/x-protobuf"),
                 ("x-ss-req-ticket", ticket), ("x-tt-request-tag", "t=0;n=0"), ("sdk-version", "2"),
                 ("passport-sdk-version", "50561"), ("x-xs-from-web", "0"), ("x-khronos", String(ts)),
                 ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
                 ("x-gorgon", Self.xGorgon(query: query, body: nil, ts: ts, random: random32() >> 16)), ("x-helios", helios(ts: ts)),
-                ("x-medusa", try medusa(url: url, body: nil, ts: ts, deviceId: identity.deviceId, versionName: "7.2.2.32", nowMillis: nowMillis)),
+                ("x-medusa", try medusa(url: url, body: nil, ts: ts, deviceId: identity.deviceId, versionName: version.name, nowMillis: nowMillis)),
                 ("x-tt-dt", dToken),
             ]
             return Signed(url: url, query: query, headers: headers, body: nil)
@@ -479,12 +492,12 @@ struct AppLegacySigner {
 
     /// Port of `signedMetadataRequest` (catalogue lists), signed for the persistent device.
     func metadata(path: String, values: [(String, String)], payload: [UInt8]?, identity: PlaybackIdentity,
-                  dToken: String = "", nowMillis: Int64) throws -> Signed {
+                  dToken: String = "", nowMillis: Int64, version: ClientVersion = .current) throws -> Signed {
         guard Self.metadataPaths.contains(path) else { throw HongguoError(.input, "不支持的 App 目录接口") }
         let devId = identity.deviceId
         var devicePairs: [(String, String)] = [("iid", identity.iid), ("device_id", devId)]
         if !identity.cdid.isEmpty { devicePairs.append(("cdid", identity.cdid)) }
-        let device = Self.merged(Self.versioned("73532", "7.3.5.32"), devicePairs)
+        let device = Self.merged(Self.versioned(version.code, version.name), devicePairs)
         let ts = UInt32(nowMillis / 1000)
         let bodyMd5 = payload.map(AppCrypto.md5) ?? [UInt8](repeating: 0, count: 16)
         // `{ ...values, ...metadataDevice }`: device fields win but keep the position of an earlier key.
@@ -495,13 +508,13 @@ struct AppLegacySigner {
             let url = "\(Self.metadataHost)\(path)?\(query)"
             guard Self.branch(querySm3: AppCrypto.sm3(Array(query.utf8)), bodyMd5: bodyMd5, ts: ts) == 0 else { continue }
             var headers: [(String, String)] = [
-                ("User-Agent", Self.metadataUA), ("Accept", "application/json"), ("Accept-Encoding", "identity"),
+                ("User-Agent", version.metadataUA), ("Accept", "application/json"), ("Accept-Encoding", "identity"),
                 ("x-xs-from-web", "0"), ("sdk-version", "2"), ("x-ss-dp", "8662"), ("x-tt-store-region", "cn"),
                 ("x-tt-store-region-src", "did"), ("x-ss-req-ticket", ticket), ("x-khronos", String(ts)),
                 ("x-gorgon", Self.xGorgon(query: query, body: payload, ts: ts, random: random32() >> 16)),
                 ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
                 ("x-helios", helios(ts: ts)),
-                ("x-medusa", try medusa(url: url, body: payload, ts: ts, deviceId: devId, versionName: "7.3.5.32", nowMillis: nowMillis)),
+                ("x-medusa", try medusa(url: url, body: payload, ts: ts, deviceId: devId, versionName: version.name, nowMillis: nowMillis)),
                 ("x-tt-dt", dToken),
             ]
             if let payload {

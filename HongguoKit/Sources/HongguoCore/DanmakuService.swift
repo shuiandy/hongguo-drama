@@ -91,8 +91,7 @@ public actor DanmakuService {
     public static let shared = DanmakuService()
 
     static let baseURL = "https://api5-normal-sinfonlineb.fqnovel.com"
-    static let userAgent = "com.phoenix.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; "
-        + "Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
+    static let userAgent = AppLegacySigner.currentMetadataUA
     public static let maxTextLength = 200
     public static let maxTimeSeconds: Double = 604_800
     public static let pageCount = 90

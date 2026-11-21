@@ -41,4 +41,19 @@ final class OfficialAlbumDetailTests: XCTestCase {
         XCTAssertEqual(payload["mixed_video_id_map"]["1004"].array?.compactMap(\.string), ["7709806267153255448"])
         XCTAssertEqual(payload["mixed_video_id_map"]["1001"].array?.compactMap(\.string), ["7695396503975627838"])
     }
+
+    func testLoneCreatorVideoIsOneEpisode() throws {
+        let video = try JSONValue.parse("""
+        {"content_type":1001,"series_id_str":"7702091541719829566","series_title":"宁宁说了","series_intro":"x","followed_cnt":3,
+         "video_list":[{"vid":"7702091541719829566","digged_count":9}]}
+        """)
+        let lone = try XCTUnwrap(OfficialAlbumDetail.parseLone(video, id: "7702091541719829566"))
+        XCTAssertEqual(lone.episodes.map(\.vid), ["7702091541719829566"])
+        XCTAssertEqual(lone.episodes.first?.likes, 9)
+        XCTAssertEqual(lone.episodeCount, 1)
+        XCTAssertNil(OfficialAlbumDetail.parseLone(video, id: "123456789"))
+        var series = video
+        if case .object(var o) = series { o["content_type"] = .int(1); series = .object(o) }
+        XCTAssertNil(OfficialAlbumDetail.parseLone(series, id: "7702091541719829566"))
+    }
 }
