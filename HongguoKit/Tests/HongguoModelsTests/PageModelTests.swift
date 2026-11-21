@@ -54,3 +54,28 @@ final class RankingModelTests: XCTestCase {
         XCTAssertEqual(model.rankPages.page(first).items.count, 18)
     }
 }
+
+@MainActor
+final class NewReleasesModelTests: XCTestCase {
+    func testNewDramaOffline() async {
+        let model = NewDramaModel(backend: FixtureBackend())
+        await model.load()
+        XCTAssertEqual(model.phase, .loaded)
+        XCTAssertEqual(model.items.count, 10)
+        XCTAssertFalse(model.hasMore)
+        await model.loadMore() // offline: nothing more
+        XCTAssertEqual(model.items.count, 10)
+    }
+
+    func testCalendarOfflineAndFilter() async {
+        let model = CalendarModel(backend: FixtureBackend())
+        XCTAssertFalse(model.days.isEmpty)
+        XCTAssertFalse(model.selectedDate.isEmpty, "today is chosen")
+        await model.load()
+        XCTAssertEqual(model.items.count, 10)
+        XCTAssertEqual(model.items.filter(\.isOnline).count, 5)
+        XCTAssertEqual(model.filtered.count, 10)
+        model.filter = .comic
+        XCTAssertTrue(model.filtered.isEmpty, "sample rows carry no category")
+    }
+}
