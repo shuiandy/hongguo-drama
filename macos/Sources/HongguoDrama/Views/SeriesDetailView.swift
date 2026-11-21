@@ -238,7 +238,12 @@ struct SeriesDetailView: View {
                     }
                     if let likes = details?.likeCount { GlassTag(text: formatCount(likes), systemImage: "heart.fill", iconColor: .hongguoRed) }
                     if !summary.heat.isEmpty { GlassTag(text: summary.heat, systemImage: "flame.fill", iconColor: .orange) }
-                    ForEach((details?.tags.isEmpty == false ? details?.tags ?? [] : summary.tags).prefix(3), id: \.self) { GlassTag(text: $0) }
+                    // As in the official app, a tag searches for itself.
+                    ForEach((details?.tags.isEmpty == false ? details?.tags ?? [] : summary.tags).prefix(6), id: \.self) { tag in
+                        Button { model.search(tag) } label: { GlassTag(text: tag, trailingSystemImage: "chevron.right") }
+                            .buttonStyle(.plain)
+                            .help("搜索“\(tag)”")
+                    }
                 }
                 let description = details?.description.isEmpty == false ? details!.description : summary.description
                 if !description.isEmpty {

@@ -612,6 +612,15 @@ final class AppModel {
         paths[selection, default: []].append(.series(summary))
     }
 
+    /// Opens the search page with `query`, as tapping a tag does in the official app.
+    func search(_ query: String) {
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        pendingSearch = text
+        paths[.search] = []
+        selection = .search
+    }
+
     /// An actor's page (their works), pushed onto the current column like a series.
     func openCelebrity(_ member: EpisodeSocial.CastMember, cast: [EpisodeSocial.CastMember] = []) {
         guard let selection else { return }

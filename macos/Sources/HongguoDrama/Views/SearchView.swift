@@ -73,12 +73,17 @@ struct SearchView: View {
         .transparentToolbar()
         .onAppear {
             fieldFocused = true
-            if let pending = model.pendingSearch {
-                model.pendingSearch = nil
-                query = pending
-                Task { await submit() }
-            }
+            takePendingSearch()
         }
+        .onChange(of: model.pendingSearch) { takePendingSearch() }
+    }
+
+    /// A query handed over by another page (a header search field, a tag on a detail page).
+    private func takePendingSearch() {
+        guard let pending = model.pendingSearch else { return }
+        model.pendingSearch = nil
+        query = pending
+        Task { await submit() }
     }
 
     private var searchField: some View {
