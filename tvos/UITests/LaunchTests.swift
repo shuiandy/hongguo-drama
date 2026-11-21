@@ -19,17 +19,23 @@ final class LaunchTests: XCTestCase {
 
     func testRouteOpensTheater() {
         let app = launch(route: "theater")
-        XCTAssertTrue(app.staticTexts["热播"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["真人剧"].waitForExistence(timeout: 10))
     }
 
     /// Down from the tab bar lands on the first poster of the first shelf.
     func testRemoteMovesFocusIntoShelf() {
         let app = launch(route: "theater")
-        XCTAssertTrue(app.staticTexts["热播"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["真人剧"].waitForExistence(timeout: 10))
         XCUIRemote.shared.press(.down)
         let focused = app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
         XCTAssertTrue(focused.waitForExistence(timeout: 5))
         XCTAssertFalse(app.tabBars.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists,
                        "focus stayed on the tab bar")
+    }
+
+    /// 追剧 shows the favourites the shared library was seeded with in a sample run.
+    func testFollowingShowsSeededFavourites() {
+        let app = launch(route: "following")
+        XCTAssertTrue(app.staticTexts["我的收藏"].waitForExistence(timeout: 10))
     }
 }

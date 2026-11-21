@@ -24,6 +24,8 @@ targets:
         product: HongguoPlayback
       - package: HongguoKit
         product: AppLogic
+      - package: HongguoKit
+        product: HongguoModels
     info:
       path: App/Info.plist
       properties:

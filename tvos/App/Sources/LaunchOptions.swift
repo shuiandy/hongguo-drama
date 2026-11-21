@@ -1,7 +1,8 @@
 import Foundation
+import HongguoModels
 
-/// Switches read once at launch, the same names the iOS app uses, so the app can be driven from
-/// `simctl launch` without the remote:
+/// The common launch switches (`LaunchArguments`, the same names as the iOS app) mapped to this
+/// app's tabs, so the app can be driven from `simctl launch` without the remote:
 ///
 ///     xcrun simctl launch <udid> io.github.shuiandy.hongguo-drama.tvos \
 ///         -HongguoOfflineFixtures YES -HongguoMuted YES -HongguoRoute theater
@@ -11,19 +12,14 @@ struct LaunchOptions: Sendable {
         case recommend, theater, ranking, following, search, me
     }
 
-    /// Built-in sample rows instead of the network.
-    var offlineFixtures: Bool
-    /// Silence playback (automated runs on a Mac with speakers).
-    var muted: Bool
+    var arguments: LaunchArguments
     var route: Route
 
+    var offlineFixtures: Bool { arguments.offlineFixtures }
+    var muted: Bool { arguments.muted }
+
     static var current: LaunchOptions {
-        let defaults = UserDefaults.standard
-        return LaunchOptions(
-            offlineFixtures: defaults.bool(forKey: "HongguoOfflineFixtures")
-                || ProcessInfo.processInfo.environment["HONGGUO_OFFLINE"] == "1",
-            muted: defaults.bool(forKey: "HongguoMuted"),
-            route: defaults.string(forKey: "HongguoRoute").flatMap(Route.init(rawValue:)) ?? .recommend
-        )
+        let arguments = LaunchArguments.current
+        return LaunchOptions(arguments: arguments, route: Route(rawValue: arguments.route) ?? .recommend)
     }
 }

@@ -1,4 +1,5 @@
 import HongguoCore
+import HongguoModels
 import SwiftUI
 
 @main
@@ -26,15 +27,25 @@ struct HongguoDramaTVApp: App {
     }
 }
 
+/// Navigation only. The data, the account and what the viewer keeps are the shared models from
+/// HongguoKit, the same ones the iOS app holds.
 @MainActor
 @Observable
 final class TVAppModel {
     let launch: LaunchOptions
+    let backend: any DramaBackend
+    let account: AccountModel
+    let library: LibraryModel
     var selectedTab: LaunchOptions.Route
 
     init(launch: LaunchOptions) {
         self.launch = launch
+        backend = launch.offlineFixtures ? FixtureBackend() : LiveBackend()
+        account = AccountModel(mode: launch.arguments.accountMode)
+        library = LibraryModel(offline: launch.offlineFixtures, account: account, backend: backend)
         selectedTab = launch.route
+        // No player yet: nothing to wait for before warming up and restoring the saved login.
+        library.startLive { true }
     }
 }
 
