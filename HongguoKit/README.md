@@ -7,7 +7,7 @@
 | `HongguoCore` | 网络、签名、设备身份、取源、清晰度与 CDN 候选、解析、解密、持久化。不依赖 UI。 |
 | `HongguoPlayback` | 把 `PlayInfo` 变成可播放的 `AVPlayerItem` 加 loader：红果的 `EpisodeResolver`、`StreamingResourceLoader`、`MediaPrefixCache`。loader 由 App 持有到换集或关闭。iOS 的 `BookMallFeed`（首页推荐流，`AppFeed` 只剩它用的行解析）、`LocalCastServer`、`SeriesCredits` 暂时也在这里，接 tvOS 时再定归属。 |
 | `AppLogic` | 各 App 共用的纯规则，不碰界面和网络：信息流和连播推进、手势换算、定时关闭、写操作同步、历史与点赞合并、首页曝光去重、每集断点、分页请求等（原 iOS 仓库的 `Logic/`，模块名不变）。 |
-| `HongguoModels` | 各 App 共用的模型，不碰界面：`DramaBackend`（协议、真实实现 `LiveBackend`、离线样例 `FixtureBackend`）、`AccountModel`（登录态，收藏点赞预约历史，按记录排队的写操作，会话隔离）、`LibraryModel`（本机和账号切换与失败回滚、云端历史合并、不感兴趣、首页曝光去重、每集断点、3 分钟同步循环）、`LoginModel`（扫码登录循环）、`LaunchArguments`（通用启动参数）。原在 iOS App 里，搬过来时规则不变。 |
+| `HongguoModels` | 各 App 共用的模型，不碰界面：`DramaBackend`（协议、真实实现 `LiveBackend`、离线样例 `FixtureBackend`）、`AccountModel`（登录态，收藏点赞预约历史，按记录排队的写操作，会话隔离）、`LibraryModel`（本机和账号切换与失败回滚、云端历史合并、不感兴趣、首页曝光去重、每集断点、3 分钟同步循环）、`LoginModel`（扫码登录循环）、`LaunchArguments`（通用启动参数）、页面模型（`TheaterModel`、`RankingModel`、`NewDramaModel`、`CalendarModel`、`SeriesDetailModel`、`CelebrityModel`、`CommentListModel`、`EpisodePanelModel`，iOS 已改用；`SearchModel`、`MeModel`，iOS 待改用）、`AccountRoster`（一台设备上的多个账号和切换，tvOS 在用，iOS 待接）。原在 iOS App 里，搬过来时规则不变。 |
 | `HongguoPlayerKit` | iOS 和 tvOS 共用的播放器（UIKit，macOS 上为空模块）：`PlayerEngine` 和图层视图（`VideoSurface`、`SlotView`、`PlayerLayerView`）、`PlaybackSession`、`FeedModel`、`LandingCache`、封面缓存 `CoverImage`、`DanmakuLayer`、`CoverTint`、表情 `EmoticonCatalog`（表情图是本包资源）、`CountText`。只有 iOS 有的能力（已下载文件、ByteVC2 转码流、投屏发布、小窗）走 `PlayerHooks` 四个可选钩子，iOS 启动时装上，tvOS 不装；不装时只有 ByteVC2 的分集落到「此剧集暂不支持」。 |
 
 手势、页面布局和控制层留在各 App。
@@ -34,10 +34,10 @@
 ## 进度
 
 1. 已完成：Mac 的核心移进来，`macos/` 用本地路径依赖。
-2. 已完成：并入 iOS 的核心和播放内核（基线 iOS 382e2c2），iOS 用子模块指向这里。
-3. 已完成：两端只留官方 iOS 那套取源逻辑，删掉所有旧通道、兜底和平台开关；目录、搜索、评论也只走 App。
-4. 下一步：加入 tvOS App，先用最小 Apple TV App 验证普通 H.264 剧集。
-5. 之后再定：Mac 播放器是否换用 iOS 的 `EpisodeResolver` 和 `StreamingResourceLoader`。
+2. 已完成：并入 iOS 的核心和播放内核，iOS 用子模块指向这里。
+3. 已完成：只留官方 iOS 那套取源逻辑，删掉旧通道、兜底和平台开关；目录、搜索、评论也只走 App。
+4. 已完成：存储根目录可注入（`StorageRoot`）、iOS 的纯规则（`AppLogic`）、共享模型（`HongguoModels`）和播放器（`HongguoPlayerKit`）下沉；tvOS App（`../tvos`）在这些之上只写界面。
+5. 之后再定：iOS 的搜索和「我的」改用 `SearchModel`、`MeModel`，iOS 接入 `AccountRoster`；Mac 播放器是否换用共享播放器。
 
 ## 测试
 
