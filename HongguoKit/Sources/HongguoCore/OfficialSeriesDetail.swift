@@ -15,6 +15,8 @@ struct OfficialSeriesDetail: Sendable, Equatable {
         var likes: Int?
         /// `disable_play`: the server marks the episode as not playable.
         var disabled: Bool
+        /// A collection video's own title (`OfficialAlbumDetail`); "" for series episodes.
+        var title: String = ""
     }
 
     var seriesId: String
@@ -43,7 +45,16 @@ struct OfficialSeriesDetail: Sendable, Equatable {
     static func load(_ seriesId: String, force: Bool = false, http: HTTPClient = .shared) async throws -> OfficialSeriesDetail {
         guard seriesId.matchesDigits(min: 6, max: 30) else { throw HongguoError(.input, "无效的剧集编号") }
         if !force, let cached = await cache.get(seriesId) { return cached }
-        let detail = try parse(try await request(seriesId, http: http), seriesId: seriesId)
+        let json = try await request(seriesId, http: http)
+        let detail: OfficialSeriesDetail
+        if json["data"]["video_detail_data"][seriesId]["video_data"]["video_list"].array == nil,
+           Int(json["code"].number ?? -1) == 0,
+           let album = try await OfficialAlbumDetail.load(seriesId, http: http) {
+            // A creator's collection: the series read answers its id without episodes.
+            detail = album
+        } else {
+            detail = try parse(json, seriesId: seriesId)
+        }
         await cache.set(seriesId, detail, ttl: 60)
         return detail
     }
