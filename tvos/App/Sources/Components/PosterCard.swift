@@ -16,7 +16,12 @@ struct PosterCard: View {
     let series: SeriesSummary
     /// A rank badge for 排行 shelves.
     var rank: Int? = nil
+    /// Watched share (0...1) drawn as a bar along the bottom of the cover, for 追剧.
+    var progress: Double? = nil
+    /// Called when the card takes the focus (the page's colour follows the focused cover).
+    var onFocus: (() -> Void)? = nil
     var action: () -> Void = {}
+    @FocusState private var focused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -26,8 +31,19 @@ struct PosterCard: View {
                     .overlay(alignment: .topLeading) {
                         if let rank { RankBadge(rank: rank) }
                     }
+                    .overlay(alignment: .bottom) {
+                        if let progress {
+                            GeometryReader { proxy in
+                                ZStack(alignment: .leading) {
+                                    Rectangle().fill(.black.opacity(0.5))
+                                    Rectangle().fill(Theme.accent).frame(width: proxy.size.width * min(1, max(0, progress)))
+                                }
+                            }
+                            .frame(height: 8)
+                        }
+                    }
                     .overlay(alignment: .bottomLeading) {
-                        if !series.heat.isEmpty {
+                        if !series.heat.isEmpty, progress == nil {
                             Label(series.heat, systemImage: "flame.fill")
                                 .font(.caption2.weight(.semibold))
                                 .padding(.horizontal, 10).padding(.vertical, 5)
@@ -37,6 +53,8 @@ struct PosterCard: View {
                     }
             }
             .buttonStyle(.card)
+            .focused($focused)
+            .onChange(of: focused) { _, now in if now { onFocus?() } }
             VStack(alignment: .leading, spacing: 4) {
                 Text(series.title)
                     .font(.callout.weight(.medium))
@@ -81,7 +99,7 @@ struct RankBadge: View {
         Text("\(rank)")
             .font(.title3.weight(.heavy).monospacedDigit())
             .padding(.horizontal, 14).padding(.vertical, 4)
-            .background(rank <= 3 ? Color.accentColor : Color.black.opacity(0.6),
+            .background(rank <= 3 ? Theme.accent : Color.black.opacity(0.6),
                         in: UnevenRoundedRectangle(bottomTrailingRadius: 14))
     }
 }

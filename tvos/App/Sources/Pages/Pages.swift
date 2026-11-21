@@ -56,14 +56,6 @@ struct CatalogShelvesPage: View {
     }
 }
 
-struct TheaterPage: View {
-    var body: some View { CatalogShelvesPage(kinds: CatalogKind.categories) }
-}
-
-struct RankingPage: View {
-    var body: some View { CatalogShelvesPage(kinds: CatalogKind.rankings, showsRank: true) }
-}
-
 /// 追剧: the favourites the shared library keeps (the account's shelf when signed in comes with
 /// the 我的 page model).
 struct FollowingPage: View {

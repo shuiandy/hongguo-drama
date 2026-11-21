@@ -161,13 +161,13 @@ struct EpisodeCell: View {
             Text("\(number)")
                 .font(.headline.monospacedDigit())
                 .frame(width: 96, height: 64)
-                .foregroundStyle(isCurrent ? Color.accentColor : .primary)
+                .foregroundStyle(isCurrent ? Theme.accent : .primary)
         }
         .buttonStyle(.card)
         .disabled(isDisabled)
         .overlay(alignment: .topTrailing) {
             if isCurrent {
-                Image(systemName: "play.fill").font(.caption2).foregroundStyle(Color.accentColor).padding(6)
+                Image(systemName: "play.fill").font(.caption2).foregroundStyle(Theme.accent).padding(6)
             }
         }
     }

@@ -371,7 +371,7 @@ struct ProgressBar: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(.white.opacity(0.18))
                     Capsule().fill(.white.opacity(0.35)).frame(width: width * loaded)
-                    Capsule().fill(Color.accentColor).frame(width: width * fraction)
+                    Capsule().fill(Theme.accent).frame(width: width * fraction)
                     Circle().fill(.white).frame(width: isScrubbing ? 30 : 20, height: isScrubbing ? 30 : 20)
                         .offset(x: width * fraction - (isScrubbing ? 15 : 10))
                 }
@@ -418,21 +418,28 @@ struct SidePanel<Content: View>: View {
 struct EpisodePanel: View {
     let session: PlaybackSession
     let choose: (Int) -> Void
-    @State private var rangeIndex = 0
+    /// The range shown (following the episode playing), shared with the iOS 选集 panel.
+    @State private var model: EpisodePanelModel
     @FocusState private var focusedEpisode: Int?
+
+    init(session: PlaybackSession, choose: @escaping (Int) -> Void) {
+        self.session = session
+        self.choose = choose
+        _model = State(initialValue: EpisodePanelModel(episode: session.episodeNumber, total: session.total))
+    }
 
     private static var columns: [GridItem] { Array(repeating: GridItem(.fixed(96), spacing: 18), count: 12) }
 
     var body: some View {
-        let ranges = EpisodeRanges.ranges(total: session.total)
-        let range = ranges.isEmpty ? 1...max(1, session.total) : ranges[min(rangeIndex, ranges.count - 1)]
+        let ranges = model.ranges(total: session.total)
+        let range = model.range(total: session.total) ?? 1...max(1, session.total)
         VStack(alignment: .leading, spacing: 22) {
             HStack(spacing: 24) {
                 Text("选集").font(.title3.weight(.semibold))
                 if ranges.count > 1 {
                     ForEach(Array(ranges.enumerated()), id: \.offset) { index, item in
-                        Button(EpisodeRanges.label(item)) { rangeIndex = index }
-                            .font(.callout.weight(index == rangeIndex ? .bold : .regular))
+                        Button(EpisodeRanges.label(item)) { model.rangeIndex = index }
+                            .font(.callout.weight(index == model.rangeIndex ? .bold : .regular))
                     }
                 }
             }
@@ -451,7 +458,7 @@ struct EpisodePanel: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.ultraThinMaterial)
         .onAppear {
-            if session.total > 0 { rangeIndex = EpisodeRanges.index(of: session.episodeNumber, total: session.total) }
+            model.follow(episode: session.episodeNumber, total: session.total)
             // The episode playing takes focus, not the range buttons above it.
             DispatchQueue.main.async { focusedEpisode = session.episodeNumber }
         }

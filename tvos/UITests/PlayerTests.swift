@@ -60,7 +60,8 @@ final class PlayerTests: XCTestCase {
     func testTheaterToSeriesPageToPlayer() {
         let app = launch(route: "theater")
         XCTAssertTrue(app.staticTexts["真人剧"].waitForExistence(timeout: 10))
-        remote.press(.down)
+        remote.press(.down) // 继续观看
+        remote.press(.down) // the first shelf
         remote.press(.select)
         let play = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '播放第1集' OR label BEGINSWITH '继续看第'")).firstMatch
         XCTAssertTrue(play.waitForExistence(timeout: 5), "the series page opens")

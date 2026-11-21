@@ -38,4 +38,19 @@ final class LaunchTests: XCTestCase {
         let app = launch(route: "following")
         XCTAssertTrue(app.staticTexts["我的收藏"].waitForExistence(timeout: 10))
     }
+
+    /// 剧场: 继续观看 and one shelf per category.
+    func testTheaterContinueAndShelves() {
+        let app = launch(route: "theater")
+        XCTAssertTrue(app.staticTexts["继续观看"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["漫剧"].waitForExistence(timeout: 10))
+    }
+
+    /// 排行: the categories on the left and the chosen 榜单's grid.
+    func testRankingBoardsAndGrid() {
+        let app = launch(route: "ranking")
+        XCTAssertTrue(app.staticTexts["红果推荐榜"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["热播榜"].exists)
+        XCTAssertTrue(app.buttons["真人剧"].exists)
+    }
 }

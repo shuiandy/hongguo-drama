@@ -18,6 +18,8 @@ struct HongguoDramaTVApp: App {
         StorageRoot.configure(base: caches, mirror: launch.offlineFixtures ? nil : .standard)
         // The playback log and metrics go next to the other files (no writable Documents here).
         PlaybackLog.directory = caches
+        // Page models (shared with the iOS app) prefetch covers through the shared cover cache.
+        CoverPrefetch.handler = { CoverImageCache.shared.prefetch($0) }
         // Created here, after the root is set: a `@State` default value would run before `init`.
         _app = State(initialValue: TVAppModel(launch: launch))
     }
