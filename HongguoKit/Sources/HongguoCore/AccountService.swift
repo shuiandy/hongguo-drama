@@ -45,6 +45,11 @@ public enum AccountLoginStatus: Equatable, Sendable {
 public struct AccountCredentials: Codable, Equatable, Sendable {
     public var cookie: String
     public var profile: AccountProfile?
+
+    public init(cookie: String, profile: AccountProfile?) {
+        self.cookie = cookie
+        self.profile = profile
+    }
 }
 
 public protocol AccountCredentialStore: Sendable {
@@ -467,6 +472,18 @@ public actor AccountService {
         restored = true
         restoreError = ""
         return warning
+    }
+
+    /// Makes another saved login the current one (switching accounts on this device), through
+    /// the same steps as a sign-in: saved as the current login, the device's auth cache dropped,
+    /// a new generation. No request is made; the account's lists are read afterwards as after any
+    /// sign-in, and a login the server no longer accepts ends the session the usual way.
+    public func switchTo(_ saved: AccountCredentials) -> AccountLoginStatus {
+        guard let next = saved.profile, next.id.matchesDigits(min: 1, max: 30),
+              CookieJar(saved.cookie).hasSession else { return .cancelled }
+        loginGeneration += 1
+        login = nil
+        return .signedIn(next, storageWarning: signIn(cookie: saved.cookie, profile: next))
     }
 
     /// Finishes a sign-in done in a web view: `cookie` is the site's cookies as a header value.

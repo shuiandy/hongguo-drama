@@ -216,3 +216,73 @@ final class SearchAndMeModelTests: XCTestCase {
         XCTAssertTrue(me.history.contains { $0.fromAccount })
     }
 }
+
+@MainActor
+final class AccountRosterTests: XCTestCase {
+    private func suite() -> UserDefaults {
+        let name = "AccountRosterTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: name) }
+        return defaults
+    }
+
+    private func login(_ id: String, _ name: String) -> AccountCredentials {
+        AccountCredentials(cookie: "sessionid=\(id)", profile: AccountProfile(id: id, nickname: name))
+    }
+
+    /// An earlier single login becomes the first entry; a sign-in adds the next and makes it current.
+    func testMigrateAndRememberAndPersist() {
+        let defaults = suite()
+        let vault = MemoryVault()
+        let current = MemoryVault.Current(login("111", "甲"))
+        let roster = AccountRoster(defaults: defaults, vault: vault, current: current)
+        roster.migrateIfNeeded()
+        XCTAssertEqual(roster.entries.map(\.id), ["111"])
+        XCTAssertEqual(roster.currentId, "111")
+        XCTAssertEqual(try vault.load("111")?.cookie, "sessionid=111")
+
+        try? current.save(login("222", "乙"))
+        roster.rememberCurrent(avatar: "https://example.invalid/b.png")
+        XCTAssertEqual(roster.mostRecent?.id, "222", "the newest login is chosen by default")
+        XCTAssertEqual(roster.currentId, "222")
+        roster.migrateIfNeeded() // not empty: nothing happens
+        XCTAssertEqual(roster.entries.count, 2)
+
+        let reopened = AccountRoster(defaults: defaults, vault: vault, current: current)
+        XCTAssertEqual(reopened.entries.map(\.id), ["222", "111"])
+        XCTAssertEqual(reopened.currentId, "222")
+        XCTAssertEqual(reopened.entries.first?.avatar, "https://example.invalid/b.png")
+    }
+
+    /// Switching goes through the sign-in steps: a new session, so anything holding the old token
+    /// (queued writes, in-flight reads) is no longer accepted.
+    func testSwitchChangesTheSessionAndRemoveSignsOutLocally() async {
+        let vault = MemoryVault()
+        let current = MemoryVault.Current()
+        let roster = AccountRoster(defaults: suite(), vault: vault, current: current)
+        let account = AccountModel(mode: .preview)
+        try? current.save(login("111", "甲")); roster.rememberCurrent()
+        try? current.save(login("222", "乙")); roster.rememberCurrent()
+        let before = account.session.current
+        let ok = await roster.switchTo(roster.entries.first { $0.id == "111" }!, account: account)
+        XCTAssertTrue(ok)
+        XCTAssertEqual(account.profile?.id, "111")
+        XCTAssertEqual(roster.currentId, "111")
+        XCTAssertEqual(roster.mostRecent?.id, "111")
+        let after = account.session.current
+        XCTAssertNotEqual(before, after)
+        if let before { XCTAssertFalse(account.session.accepts(before), "the old session's writes are dropped") }
+
+        await roster.remove(roster.entries.first { $0.id == "111" }!, account: account)
+        XCTAssertEqual(roster.entries.map(\.id), ["222"])
+        XCTAssertNil(try vault.load("111"))
+        XCTAssertNil(roster.currentId)
+        XCTAssertFalse(account.isSignedIn, "removing the current account leaves it signed out, on this device only")
+    }
+
+    func testSamplesAreInMemoryOnly() {
+        let roster = AccountRoster.samples()
+        XCTAssertEqual(roster.entries.count, 3)
+        XCTAssertEqual(roster.mostRecent?.nickname, "小红果")
+    }
+}

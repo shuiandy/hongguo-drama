@@ -613,6 +613,22 @@ public final class AccountModel {
         return true
     }
 
+    /// Switches to another login saved on this device (AccountRoster), through the same steps as
+    /// a sign-in (`apply`): a new session, the old session's queued writes dropped, cloud history
+    /// that is not the new account's cleared, the account's lists read again. Live, the core makes
+    /// it the current login without a request; sample runs only change the session here.
+    public func switchAccount(to saved: AccountCredentials) async -> Bool {
+        let status: AccountLoginStatus
+        if mode == .live {
+            status = await service.switchTo(saved)
+        } else if let profile = saved.profile {
+            status = .signedIn(profile, storageWarning: "")
+        } else {
+            return false
+        }
+        return await apply(status)
+    }
+
     public func signOut() async {
         clearSession()
         if mode == .live { message = await service.logout() }
