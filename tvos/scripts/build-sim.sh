@@ -3,6 +3,12 @@
 #
 #   scripts/build-sim.sh            build only
 #   scripts/build-sim.sh --run      build, boot the simulator, install and launch offline and muted
+#   scripts/build-sim.sh --test     run the unit and UI tests, then shut the simulator down
+#
+# A booted Apple TV simulator left idle starts the screen saver, whose IdleScreen process crashes
+# in the simulator (out of memory) and macOS shows a crash report each time. So --test (and
+# shoot.sh) shut the simulator down when done; after --run, shut it down yourself. Set
+# HONGGUO_KEEP_SIM=1 to keep it booted.
 #
 # HONGGUO_TV_UDID=<udid> picks a specific simulator; otherwise a booted Apple TV 4K first, then
 # the newest one.
@@ -38,6 +44,20 @@ command -v xcodegen >/dev/null || { echo "XcodeGen is missing: brew install xcod
 xcodegen generate --quiet
 
 mkdir -p build
+if [[ "${1:-}" == "--test" ]]; then
+    shut_down() { [[ "${HONGGUO_KEEP_SIM:-}" == "1" ]] || xcrun simctl shutdown "$UDID" 2>/dev/null || true; }
+    trap shut_down EXIT
+    xcodebuild \
+        -project HongguoDramaTV.xcodeproj \
+        -scheme HongguoDramaTV \
+        -destination "platform=tvOS Simulator,id=$UDID" \
+        -derivedDataPath "$DERIVED" \
+        test > build/test-sim.log 2>&1 && status=0 || status=$?
+    grep -E "xctest' (passed|failed)" -A1 build/test-sim.log | grep -E "Executed" || true
+    grep -E "Test Case .* failed|TEST (SUCCEEDED|FAILED)" build/test-sim.log | tail -5 || true
+    exit "$status"
+fi
+
 xcodebuild \
     -project HongguoDramaTV.xcodeproj \
     -scheme HongguoDramaTV \
@@ -57,4 +77,5 @@ if [[ "${1:-}" == "--run" ]]; then
     xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
     # Offline sample rows, muted: no request leaves the simulator and no sound is played.
     xcrun simctl launch "$UDID" "$BUNDLE_ID" -HongguoOfflineFixtures YES -HongguoMuted YES
+    echo "When done: xcrun simctl shutdown $UDID (an idle Apple TV simulator's screen saver crashes)"
 fi

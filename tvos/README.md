@@ -52,7 +52,9 @@ Apple TV 没有持久的本地存储。启动时第一件事是 `StorageRoot.con
 cd tvos
 scripts/build-sim.sh --run
 scripts/shoot.sh <udid> <label>
-xcodebuild -project HongguoDramaTV.xcodeproj -scheme HongguoDramaTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation)' test
+scripts/build-sim.sh --test
 ```
+
+`--test` 跑单元测试和 UI 测试（选模拟器的规则和 `--run` 一样，`HONGGUO_TV_UDID` 可指定），跑完关掉模拟器；`shoot.sh` 拍完也会关。Apple TV 模拟器开着闲置几分钟就进屏保，屏保进程 IdleScreen 在模拟器里会因内存申请失败反复崩溃，macOS 每次都弹崩溃报告，所以用完要关。`--run` 之后自己执行 `xcrun simctl shutdown <udid>`；要留着就设 `HONGGUO_KEEP_SIM=1`。
 
 签名用付费个人团队的自动签名；和 iOS 版一样，团队 id 不进仓库，编真机时在命令行传 `DEVELOPMENT_TEAM`。
