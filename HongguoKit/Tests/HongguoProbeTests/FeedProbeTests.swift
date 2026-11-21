@@ -1,5 +1,6 @@
 import XCTest
-import HongguoCore
+@testable import HongguoCore
+@testable import HongguoPlayback
 
 /// Live, read-only probes of the App catalogue endpoints. Skipped unless HONGGUO_PROBE names
 /// a probe, so `swift test` never touches the network. Raw responses go to captures/ (ignored
@@ -82,11 +83,12 @@ final class FeedProbeTests: XCTestCase {
         let sessionId = rawArgs[safe: 2] ?? ""
         let host = rawArgs[safe: 3].flatMap { $0.isEmpty ? nil : $0 }
         let name = rawArgs[safe: 4].flatMap { $0.isEmpty ? nil : $0 } ?? "bookmall-tab\(tabType)"
+        let bottomTabType = rawArgs[safe: 5].flatMap { $0.isEmpty ? nil : $0 } ?? "7"
         var values: [(String, String)] = [
             ("tab_type", tabType),
             ("offset", offset),
             ("client_req_type", offset == "0" ? "0" : "2"),
-            ("bottom_tab_type", "4"),
+            ("bottom_tab_type", bottomTabType),
         ]
         if !sessionId.isEmpty { values.append(("session_id", sessionId)) }
         let payload = try await AppBookMallAccess.tab(values: values, host: host)
@@ -121,6 +123,64 @@ final class FeedProbeTests: XCTestCase {
         let data = payload["data"]
         print("PROBE \(name): code=\(payload["code"].idString ?? "?") msg=\(payload["message"].string ?? "") dataKeys=\(data.object?.keys.sorted() ?? [])")
         print("PROBE \(name): has_more=\(String(describing: data["has_more"].bool)) next_offset=\(data["next_offset"].idString ?? "?") cell_data=\((data["cell_data"].array ?? []).count)")
+    }
+
+    /// `HONGGUO_PROBE=feedcontract swift test --filter FeedProbeTests/testFeedContractLive`:
+    /// Verifies that both anonymous (`AppBookMallAccess`) and `accountRead` signer profiles return
+    /// the exact requested `tab_type` under `bottom_tab_type=7`, paginate cleanly through
+    /// `cell/change/v` (including 3+ MiB comic payloads), and keep 真人剧 / 漫剧 pure.
+    func testFeedContractLive() async throws {
+        try XCTSkipUnless(probe == "feedcontract", "set HONGGUO_PROBE=feedcontract to run this live probe")
+        let transport = AppTransport(http: .shared)
+        let (identity, dToken) = try await PersistentAppDevice.dataIdentity(transport: transport)
+
+        for channel in BookMallFeedChannel.allCases {
+            // 1. Anonymous path (page 1 + page 2).
+            // Note: tab 16 (推荐) returns 3 cards on page 1 and occasionally fills all 3 with UGC
+            // promo clips (content_type=1001, filtered out); its cursor must still advance to page 2.
+            let p1 = try await BookMallFeed.page(channel: channel, cursor: .first)
+            if channel != .recommend {
+                XCTAssertFalse(p1.entries.isEmpty, "anonymous page 1 empty for \(channel.rawValue)")
+            }
+            let cursor = try XCTUnwrap(p1.next, "anonymous page 1 missing cursor for \(channel.rawValue)")
+            let p2 = try await BookMallFeed.page(channel: channel, cursor: cursor)
+            XCTAssertFalse(p2.entries.isEmpty, "anonymous page 2 empty for \(channel.rawValue)")
+
+            // 2. Account signer profile (verifies version_code=74532 on accountHost without touching Keychain)
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            let signed = try AppLegacySigner.shared.accountRead(
+                path: "/reading/bookapi/bookmall/tab/v/",
+                values: BookMallFeed.tabQuery(channel: channel),
+                identity: identity,
+                dToken: dToken,
+                nowMillis: now
+            )
+            let rawAcc = try await transport.requestJSON(signed.url, headers: signed.headers, deadline: Date().addingTimeInterval(12))
+            let accTabs = (rawAcc["data"]["tab_item"].array ?? []).compactMap { AppFeed.integer($0["tab_type"]) }
+            XCTAssertTrue(accTabs.contains(channel.tabType), "accountRead missing tab_type=\(channel.tabType), got \(accTabs)")
+            let accP1 = try BookMallFeed.parseTab(rawAcc, channel: channel)
+            if channel != .recommend {
+                XCTAssertFalse(accP1.entries.isEmpty, "accountRead page 1 empty for \(channel.rawValue)")
+            }
+            XCTAssertNotNil(accP1.next, "accountRead page 1 missing cursor for \(channel.rawValue)")
+
+            for (stage, entries) in [("anon-p1", p1.entries), ("anon-p2", p2.entries), ("acc-p1", accP1.entries)] {
+                for entry in entries {
+                    XCTAssertFalse(entry.firstVid.isEmpty, "\(channel.rawValue) \(stage) missing firstVid")
+                    XCTAssertFalse(entry.series.title.isEmpty, "\(channel.rawValue) \(stage) missing title")
+                    switch channel {
+                    case .liveAction:
+                        XCTAssertEqual(entry.contentType, 1, "\(channel.rawValue) \(stage) leaked content_type=\(entry.contentType) title=\(entry.series.title)")
+                        XCTAssertEqual(entry.aiUsageType, 0, "\(channel.rawValue) \(stage) leaked ai_usage_type=\(entry.aiUsageType) title=\(entry.series.title)")
+                    case .comic:
+                        XCTAssertEqual(entry.contentType, 1004, "\(channel.rawValue) \(stage) leaked content_type=\(entry.contentType) title=\(entry.series.title)")
+                    case .recommend:
+                        XCTAssertTrue([1, 1004].contains(entry.contentType))
+                    }
+                }
+            }
+            print("PROBE feedcontract \(channel.rawValue)(tab=\(channel.tabType)): anonP1=\(p1.entries.count) anonP2=\(p2.entries.count) accP1=\(accP1.entries.count) first='\(p1.entries.first?.series.title ?? "")'")
+        }
     }
 }
 

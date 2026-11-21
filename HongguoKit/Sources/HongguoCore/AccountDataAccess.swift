@@ -547,7 +547,9 @@ public enum AccountDataAccess {
              [("offset", "0"), ("count", "50"), ("action_type", "3"),
               ("object_type_list", (1...35).map(String.init).joined(separator: ",")), ("target_user_id", userId)]),
             ("feed tab 16", "/reading/bookapi/bookmall/tab/v/",
-             [("tab_type", "16"), ("offset", "0"), ("client_req_type", "0"), ("bottom_tab_type", "4")]),
+             [("tab_type", "16"), ("offset", "0"), ("client_req_type", "0"), ("bottom_tab_type", "7")]),
+            ("feed tab 39", "/reading/bookapi/bookmall/tab/v/",
+             [("tab_type", "39"), ("offset", "0"), ("client_req_type", "0"), ("bottom_tab_type", "7")]),
         ]
         var report = ""
         for (name, path, values) in requests {
@@ -579,7 +581,7 @@ extension AppLegacySigner {
 
     /// A GET with the legacy query signature, the registered device and its token.
     private func signedRead(host: String, path: String, values: [(String, String)], identity: PlaybackIdentity, dToken: String, nowMillis: Int64) throws -> Signed {
-        let device = Self.merged(Self.versioned("72232", "7.2.2.32"),
+        let device = Self.merged(Self.versioned(Self.currentVersionCode, Self.currentVersionName),
                                  [("iid", identity.iid), ("device_id", identity.deviceId), ("cdid", identity.cdid)])
         let ts = UInt32(nowMillis / 1000)
         let fields = Self.merged(values, device)
@@ -589,12 +591,12 @@ extension AppLegacySigner {
             let url = "\(host)\(path)?\(query)"
             guard Self.branch(querySm3: AppCrypto.sm3(Array(query.utf8)), bodyMd5: [UInt8](repeating: 0, count: 16), ts: ts) == 0 else { continue }
             let headers: [(String, String)] = [
-                ("User-Agent", Self.searchUA), ("Accept", "application/json; charset=utf-8,application/x-protobuf"),
+                ("User-Agent", Self.currentSearchUA), ("Accept", "application/json; charset=utf-8,application/x-protobuf"),
                 ("x-ss-req-ticket", ticket), ("x-tt-request-tag", "t=0;n=0"), ("sdk-version", "2"),
                 ("passport-sdk-version", "50561"), ("x-xs-from-web", "0"), ("x-khronos", String(ts)),
                 ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
                 ("x-gorgon", Self.xGorgon(query: query, body: nil, ts: ts, random: random32() >> 16)), ("x-helios", helios(ts: ts)),
-                ("x-medusa", try medusa(url: url, body: nil, ts: ts, deviceId: identity.deviceId, versionName: "7.2.2.32", nowMillis: nowMillis)),
+                ("x-medusa", try medusa(url: url, body: nil, ts: ts, deviceId: identity.deviceId, versionName: Self.currentVersionName, nowMillis: nowMillis)),
                 ("x-tt-dt", dToken),
             ]
             return Signed(url: url, query: query, headers: headers, body: nil)
@@ -605,7 +607,7 @@ extension AppLegacySigner {
     /// Signed POST with JSON body for the write paths in `AccountDataAccess.writePaths`.
     func accountWrite(path: String, values: [(String, String)], payload: [UInt8], identity: PlaybackIdentity, dToken: String = "", nowMillis: Int64) throws -> Signed {
         guard AccountDataAccess.writePaths.contains(path) else { throw HongguoError(.input, "不支持的账号写入接口") }
-        let device = Self.merged(Self.versioned("72232", "7.2.2.32"),
+        let device = Self.merged(Self.versioned(Self.currentVersionCode, Self.currentVersionName),
                                  [("iid", identity.iid), ("device_id", identity.deviceId), ("cdid", identity.cdid)])
         let ts = UInt32(nowMillis / 1000)
         let bodyMd5 = AppCrypto.md5(payload)
@@ -616,7 +618,7 @@ extension AppLegacySigner {
             let url = "\(Self.accountHost)\(path)?\(query)"
             guard Self.branch(querySm3: AppCrypto.sm3(Array(query.utf8)), bodyMd5: bodyMd5, ts: ts) == 0 else { continue }
             let headers: [(String, String)] = [
-                ("User-Agent", Self.searchUA), ("Accept", "application/json"), ("Accept-Encoding", "identity"),
+                ("User-Agent", Self.currentSearchUA), ("Accept", "application/json"), ("Accept-Encoding", "identity"),
                 ("Content-Type", "application/json; charset=utf-8"),
                 ("x-ss-stub", AppCrypto.hex(bodyMd5, uppercase: true)),
                 ("x-ss-dp", "8662"), ("x-tt-store-region", "cn"), ("x-tt-store-region-src", "did"),
@@ -624,7 +626,7 @@ extension AppLegacySigner {
                 ("passport-sdk-version", "50561"), ("x-xs-from-web", "0"), ("x-khronos", String(ts)),
                 ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
                 ("x-gorgon", Self.xGorgon(query: query, body: payload, ts: ts, random: random32() >> 16)), ("x-helios", helios(ts: ts)),
-                ("x-medusa", try medusa(url: url, body: payload, ts: ts, deviceId: identity.deviceId, versionName: "7.2.2.32", nowMillis: nowMillis)),
+                ("x-medusa", try medusa(url: url, body: payload, ts: ts, deviceId: identity.deviceId, versionName: Self.currentVersionName, nowMillis: nowMillis)),
                 ("x-tt-dt", dToken),
             ]
             return Signed(url: url, query: query, headers: headers, body: payload)

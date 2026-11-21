@@ -46,11 +46,11 @@ extension AppLegacySigner {
         let devId = identity.deviceId
         var devicePairs: [(String, String)] = [("iid", identity.iid), ("device_id", devId)]
         if !identity.cdid.isEmpty { devicePairs.append(("cdid", identity.cdid)) }
-        let device = Self.merged(Self.versioned("74532", "7.4.5.32"), devicePairs)
+        let device = Self.merged(Self.versioned(Self.currentVersionCode, Self.currentVersionName), devicePairs)
         let ts = UInt32(nowMillis / 1000)
         let bodyMd5 = [UInt8](repeating: 0, count: 16)
         let fields = Self.merged(values, device)
-        let ua = Self.metadataUA.replacingOccurrences(of: "73532", with: "74532")
+        let ua = Self.currentMetadataUA
         for n in 0..<128 {
             let ticket = String(nowMillis + Int64(n))
             let query = AppCrypto.encodeQuery(fields + [("ts", String(ts)), ("_rticket", ticket)])
@@ -59,7 +59,6 @@ extension AppLegacySigner {
             let headers: [(String, String)] = [
                 ("User-Agent", ua),
                 ("Accept", "application/json"),
-                ("Accept-Encoding", "identity"),
                 ("x-xs-from-web", "0"),
                 ("sdk-version", "2"),
                 ("x-ss-dp", "8662"),
@@ -71,7 +70,7 @@ extension AppLegacySigner {
                 ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))),
                 ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
                 ("x-helios", helios(ts: ts)),
-                ("x-medusa", try medusa(url: url, body: nil, ts: ts, deviceId: devId, versionName: "7.4.5.32", nowMillis: nowMillis)),
+                ("x-medusa", try medusa(url: url, body: nil, ts: ts, deviceId: devId, versionName: Self.currentVersionName, nowMillis: nowMillis)),
                 ("x-tt-dt", dToken),
             ]
             return Signed(url: url, query: query, headers: headers, body: nil)

@@ -1,20 +1,29 @@
 import Foundation
 import HongguoCore
 
-/// Channel mapping to `BookstoreTabType` on `/reading/bookapi/bookmall/tab/v/`.
+/// Channel mapping to `BookstoreTabType` on `/reading/bookapi/bookmall/tab/v/` under the official
+/// 7.4.3 iOS home vertical video feed (`BottomTabBarItemType.VideoSeriesFeedTab`, `bottom_tab_type=7`).
 public enum BookMallFeedChannel: String, Sendable, CaseIterable {
-    /// 找剧 / 全部推荐 (`BookstoreTabType.video_episode`)
+    /// 推荐 (`BookstoreTabType.video_feed`)
     case recommend
-    /// 真人剧 (`BookstoreTabType.real_person_series`)
+    /// 真人剧 (`BookstoreTabType.real_person_feed`)
     case liveAction
-    /// 漫剧 (`BookstoreTabType.comic_series`)
+    /// 漫剧 (`BookstoreTabType.motion_comic_feed`)
     case comic
 
     public var tabType: Int {
         switch self {
-        case .recommend: return 8
-        case .liveAction: return 38
-        case .comic: return 32
+        case .recommend: return 16
+        case .liveAction: return 39
+        case .comic: return 36
+        }
+    }
+
+    var contentFilter: AppFeed.ContentFilter {
+        switch self {
+        case .recommend: return .anyShortDrama
+        case .liveAction: return .liveActionOnly
+        case .comic: return .comicOnly
         }
     }
 }
@@ -41,17 +50,21 @@ public struct BookMallFeedContext: Sendable, Equatable {
     }
 }
 
-/// Official home recommendation feed backed by `GET /reading/bookapi/bookmall/tab/v/`
+/// Official home vertical video feed backed by `GET /reading/bookapi/bookmall/tab/v/`
 /// for page 1 and `GET /reading/bookapi/bookmall/cell/change/v` for subsequent pages.
 public enum BookMallFeed {
     public static let defaultHost = "https://reading.snssdk.com"
+    /// `BottomTabBarItemType.VideoSeriesFeedTab` in the official 7.4.3 iOS binary.
+    public static let feedBottomTabType = 7
+    /// Retained for source compatibility; `BookMallFeedChannel.recommend.tabType` is also 16.
+    public static let accountRecommendTab = 16
 
     public static func tabQuery(channel: BookMallFeedChannel, context: BookMallFeedContext = .initial) -> [(String, String)] {
         var values: [(String, String)] = [
             ("tab_type", String(channel.tabType)),
             ("offset", "0"),
             ("client_req_type", String(context.clientReqType)),
-            ("bottom_tab_type", "4"),
+            ("bottom_tab_type", String(feedBottomTabType)),
         ]
         if !context.sessionUuid.isEmpty {
             values.append(("session_uuid", context.sessionUuid))
@@ -72,6 +85,7 @@ public enum BookMallFeed {
             ("cell_id", cursor.cellId),
             ("offset", String(cursor.offset)),
             ("tab_type", String(channel.tabType)),
+            ("bottom_tab_type", String(feedBottomTabType)),
             ("change_type", "1"),
         ]
         if !cursor.sessionId.isEmpty {
@@ -87,57 +101,66 @@ public enum BookMallFeed {
         return values
     }
 
-    /// The official app's own 推荐 page (the vertical video feed) is tab 16; signed out, the
-    /// app shows 找剧 (tab 8) in its place.
-    public static let accountRecommendTab = 16
-
-    /// The feed as the signed-in account sees it: the same two requests, signed like the
-    /// account's watch history and carrying its login. 推荐 asks for tab 16.
+    /// The feed as the signed-in account sees it: the same two requests under `bottom_tab_type=7`,
+    /// carrying the account's login cookie and current client version profile.
     public static func accountPage(
         channel: BookMallFeedChannel,
         cursor: AppFeedCursor = .first,
         context: BookMallFeedContext = .initial
     ) async throws -> AppFeedPage {
-        let tabType = channel == .recommend ? accountRecommendTab : channel.tabType
         if cursor.cellId.isEmpty {
-            var values = tabQuery(channel: channel, context: context)
-            values[0] = ("tab_type", String(tabType))
+            let values = tabQuery(channel: channel, context: context)
             let payload = try await AccountDataAccess.get(path: "/reading/bookapi/bookmall/tab/v/", values: values)
-            return try parseTab(payload, tabType: tabType)
+            return try parseTab(payload, channel: channel)
         }
-        var values = cellChangeQuery(channel: channel, cursor: cursor, context: context)
-        if let at = values.firstIndex(where: { $0.0 == "tab_type" }) { values[at] = ("tab_type", String(tabType)) }
+        let values = cellChangeQuery(channel: channel, cursor: cursor, context: context)
         let payload = try await AccountDataAccess.get(path: "/reading/bookapi/bookmall/cell/change/v", values: values)
-        return try parseCellChange(payload, after: cursor)
+        return try parseCellChange(payload, after: cursor, channel: channel)
     }
 
+    /// The anonymous feed under `bottom_tab_type=7`, using the current client version profile for
+    /// both page 1 and `cell/change/v` pagination.
     public static func page(
         channel: BookMallFeedChannel,
         cursor: AppFeedCursor = .first,
         context: BookMallFeedContext = .initial
     ) async throws -> AppFeedPage {
         if cursor.cellId.isEmpty {
-            let payload = try await AppBookMallAccess.tab(values: tabQuery(channel: channel, context: context), host: defaultHost)
+            let payload = try await AppBookMallAccess.tab(
+                values: tabQuery(channel: channel, context: context),
+                host: defaultHost
+            )
             return try parseTab(payload, channel: channel)
         }
-        let payload = try await AppCatalogueAccess.cellChange(values: cellChangeQuery(channel: channel, cursor: cursor, context: context))
-        return try parseCellChange(payload, after: cursor)
+        let payload = try await AppBookMallAccess.tab(
+            values: cellChangeQuery(channel: channel, cursor: cursor, context: context),
+            host: defaultHost,
+            path: "/reading/bookapi/bookmall/cell/change/v"
+        )
+        return try parseCellChange(payload, after: cursor, channel: channel)
     }
 
     /// Parses the initial response from `/reading/bookapi/bookmall/tab/v/`.
     public static func parseTab(_ payload: JSONValue, channel: BookMallFeedChannel) throws -> AppFeedPage {
-        try parseTab(payload, tabType: channel.tabType)
+        try parseTab(payload, tabType: channel.tabType, contentFilter: channel.contentFilter)
     }
 
-    public static func parseTab(_ payload: JSONValue, tabType: Int) throws -> AppFeedPage {
+    public static func parseTab(
+        _ payload: JSONValue,
+        tabType: Int,
+        contentFilter: AppFeed.ContentFilter = .anyShortDrama
+    ) throws -> AppFeedPage {
         guard payload.object != nil else { throw HongguoError(.format, "推荐信息流返回了空响应") }
         guard AppFeed.integer(payload["code"]) == 0 else { throw HongguoError(.upstream, "推荐信息流服务暂不可用") }
         guard let tabs = payload["data"]["tab_item"].array else {
             throw HongguoError(.format, "推荐信息流数据结构异常")
         }
-        let tab = tabs.first(where: { AppFeed.integer($0["tab_type"]) == tabType && !($0["cell_data"].array ?? []).isEmpty })
-            ?? tabs.first(where: { !($0["cell_data"].array ?? []).isEmpty })
-        guard let tab, let cells = tab["cell_data"].array else {
+        // Strict tab match: never silently fall back to a different tab_type (which previously
+        // caused 真人剧 to display 找剧/推荐 comic and AI dramas when the requested tab was absent).
+        guard let tab = tabs.first(where: { AppFeed.integer($0["tab_type"]) == tabType }) else {
+            throw HongguoError(.format, "推荐信息流未返回目标频道（tab_type=\(tabType)）")
+        }
+        guard let cells = tab["cell_data"].array, !cells.isEmpty else {
             return AppFeedPage(entries: [], next: nil)
         }
 
@@ -149,18 +172,22 @@ public enum BookMallFeed {
 
         for cell in cells {
             let nested = cell["cell_data"].array ?? []
-            var cellHasVideo = false
+            var cellRawVideos = 0
             for item in nested {
-                for row in item["video_data"].array ?? [] {
-                    if let entry = AppFeed.parseEntry(row, seen: &seen) {
+                for row in videoRows(in: item) {
+                    cellRawVideos += 1
+                    if let entry = AppFeed.parseEntry(row, seen: &seen, filter: contentFilter) {
                         entries.append(entry)
-                        cellHasVideo = true
                     }
                 }
             }
-            if cellHasVideo, feedCellId.isEmpty {
-                feedCellId = cell["cell_id_str"].string ?? cell["cell_id"].idString ?? ""
-                feedNextOffset = AppFeed.integer(cell["next_offset"])
+            let cid = (cell["cell_id_str"].string ?? cell["cell_id"].idString ?? "").trimmingCharacters(in: .whitespaces)
+            if cellRawVideos > 0, feedCellId.isEmpty, !cid.isEmpty, cid != "0" {
+                feedCellId = cid
+                // `show_type=407` cells under `bottom_tab_type=7` omit `cell.next_offset`; paging
+                // continues from the number of videos already delivered on page 1.
+                let explicitOffset = AppFeed.integer(cell["next_offset"]).flatMap { $0 > 0 ? $0 : nil }
+                feedNextOffset = explicitOffset ?? cellRawVideos
             }
         }
 
@@ -173,7 +200,11 @@ public enum BookMallFeed {
     }
 
     /// Parses a load-more response from `/reading/bookapi/bookmall/cell/change/v`.
-    public static func parseCellChange(_ payload: JSONValue, after cursor: AppFeedCursor) throws -> AppFeedPage {
+    public static func parseCellChange(
+        _ payload: JSONValue,
+        after cursor: AppFeedCursor,
+        channel: BookMallFeedChannel? = nil
+    ) throws -> AppFeedPage {
         guard payload.object != nil else { throw HongguoError(.format, "推荐信息流翻页返回了空响应") }
         guard AppFeed.integer(payload["code"]) == 0 else { throw HongguoError(.upstream, "推荐信息流翻页暂不可用") }
         let data = payload["data"]
@@ -181,11 +212,12 @@ public enum BookMallFeed {
             throw HongguoError(.format, "推荐信息流翻页数据结构异常")
         }
 
+        let filter = channel?.contentFilter ?? .anyShortDrama
         var seen = Set<String>()
         var entries: [AppFeedEntry] = []
         for item in items {
-            for row in item["video_data"].array ?? [] {
-                if let entry = AppFeed.parseEntry(row, seen: &seen) {
+            for row in videoRows(in: item) {
+                if let entry = AppFeed.parseEntry(row, seen: &seen, filter: filter) {
                     entries.append(entry)
                 }
             }
@@ -202,6 +234,21 @@ public enum BookMallFeed {
             next = AppFeedCursor(offset: offset, sessionId: session, cellId: cursor.cellId)
         }
         return AppFeedPage(entries: entries, next: next)
+    }
+
+    /// Extracts playable rows from one `cell_data` item: either `video_data` (array of rows) or a
+    /// direct `video_detail` object/array (used by `show_type=407` items under `bottom_tab_type=7`).
+    private static func videoRows(in item: JSONValue) -> [JSONValue] {
+        if let rows = item["video_data"].array, !rows.isEmpty {
+            return rows
+        }
+        if item["video_detail"].object != nil {
+            return [item]
+        }
+        if let details = item["video_detail"].array, !details.isEmpty {
+            return details
+        }
+        return []
     }
 
     private static func validSessionId(_ value: JSONValue) -> String? {

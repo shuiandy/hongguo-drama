@@ -59,7 +59,7 @@ struct AppTransport: Sendable {
     static let apiDomains = ["fqnovel.com", "snssdk.com"]
 
     func requestJSON(_ start: String, method: String = "GET", headers: [(String, String)], body: [UInt8]? = nil,
-                     deadline: Date) async throws -> JSONValue {
+                     deadline: Date, maxBytes: Int = 8 * 1024 * 1024) async throws -> JSONValue {
         var url = try AppSource.checkedURL(start, domains: Self.apiDomains)
         for _ in 0..<4 {
             try Task.checkCancellationAsApp()
@@ -70,7 +70,7 @@ struct AppTransport: Sendable {
             if let body { request.httpBody = Data(body) }
             var options = HTTPClient.Options()
             options.timeout = remaining
-            options.maxBytes = 2 * 1024 * 1024
+            options.maxBytes = maxBytes
             options.maxRedirects = 0
             options.acceptStatus = 100...599
             for (k, v) in headers { options.headers[k] = v }

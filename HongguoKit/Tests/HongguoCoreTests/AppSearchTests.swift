@@ -91,6 +91,29 @@ final class AppSearchSigningTests: XCTestCase {
         XCTAssertThrowsError(try AppLegacySigner.shared.metadata(path: "/other", values: [], payload: nil,
                                                                  identity: PlaybackIdentity(deviceId: "1", iid: "1", cdid: ""), nowMillis: 0))
     }
+
+    func testAccountReadAndWriteUseCurrentClientVersion() throws {
+        let id = PlaybackIdentity(deviceId: "1234567890123456789", iid: "2234567890123456789", cdid: "01234567-89ab-cdef-0123-456789abcdef")
+        let read = try AppLegacySigner.shared.accountRead(
+            path: "/reading/bookapi/bookmall/tab/v/",
+            values: [("tab_type", "39"), ("bottom_tab_type", "7")],
+            identity: id,
+            nowMillis: 1_763_430_000_000
+        )
+        XCTAssertTrue(read.query.contains("version_code=\(AppLegacySigner.currentVersionCode)"))
+        XCTAssertTrue(read.query.contains("version_name=\(AppLegacySigner.currentVersionName)"))
+        XCTAssertEqual(read.headers.first { $0.0 == "User-Agent" }?.1, AppLegacySigner.currentSearchUA)
+
+        let write = try AppLegacySigner.shared.accountWrite(
+            path: "/reading/user/event/report",
+            values: [],
+            payload: Array("{}".utf8),
+            identity: id,
+            nowMillis: 1_763_430_000_000
+        )
+        XCTAssertTrue(write.query.contains("version_code=\(AppLegacySigner.currentVersionCode)"))
+        XCTAssertTrue(write.query.contains("version_name=\(AppLegacySigner.currentVersionName)"))
+    }
 }
 
 final class AppSearchParsingTests: XCTestCase {
