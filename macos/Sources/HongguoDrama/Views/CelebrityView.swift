@@ -1,12 +1,12 @@
 import SwiftUI
 import HongguoCore
 
-/// An actor's page in the style of the official actor home page: picture, name, the role in the
-/// series it was opened from and their introduction (all from the series detail's cast), then their
-/// works from the App's actor works read (one batch, with the total), sorted 最新 (the server's
-/// order) or 最热 (by heat). Cards carry the heat on the cover and the genre and episode count
-/// under the title. Clicking a work plays it, as in the official app; its context menu opens the
-/// detail page.
+/// An actor's page, the official actor home page: picture, name, the role in the series it was
+/// opened from and their introduction (from the series detail's cast), then the 剧作 tab of the
+/// actor's 红果 account (`ActorHomeService`) with the server's sub tabs (全部, 预约, …), sorted
+/// 最新 (the server's order) or 最热 (by heat). Cards carry the heat on the cover and genre · N集
+/// under the title. Clicking a released work plays it, as in the official app; a series not out yet
+/// opens its detail page.
 struct CelebrityView: View {
     let member: EpisodeSocial.CastMember
     @Environment(AppModel.self) private var model
@@ -16,11 +16,15 @@ struct CelebrityView: View {
         var id: String { rawValue }
     }
 
-    @State private var works: CelebrityWorks?
+    @State private var home: ActorHome?
+    @State private var subTab: Int?
+    @State private var pages: [Int: ActorWorksPage] = [:]
     @State private var isLoading = false
     @State private var error: String?
     @State private var expanded = false
     @State private var order: Order = .latest
+
+    private var worksTab: ActorHome.Tab? { home?.worksTab }
 
     var body: some View {
         ScrollView {
@@ -43,7 +47,8 @@ struct CelebrityView: View {
         }
         .navigationTitle(member.name)
         .transparentToolbar()
-        .task(id: member.id) { await load() }
+        .task(id: member.id) { await loadHome() }
+        .task(id: subTab) { await loadPage() }
     }
 
     private var header: some View {
@@ -75,12 +80,13 @@ struct CelebrityView: View {
     }
 
     private var worksSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let page = subTab.flatMap { pages[$0] }
+        return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text("作品").font(.system(size: 20, weight: .heavy))
-                if let total = works?.total, total > 0 { Text("共 \(total) 部").font(.system(size: 12)).foregroundStyle(.secondary) }
+                Text(worksTab?.name ?? "作品").font(.system(size: 20, weight: .heavy))
+                if let total = worksTab?.total, total > 0 { Text("共 \(total) 部").font(.system(size: 12)).foregroundStyle(.secondary) }
                 Spacer(minLength: 0)
-                if let items = works?.items, items.count > 1 {
+                if let items = page?.items, items.count > 1 {
                     Picker("排序", selection: $order) {
                         ForEach(Order.allCases) { Text($0.rawValue).tag($0) }
                     }
@@ -89,31 +95,89 @@ struct CelebrityView: View {
                     .fixedSize()
                 }
             }
-            if let works {
-                if works.items.isEmpty {
+            if let subs = worksTab?.subTabs, subs.count > 1 { subTabBar(subs) }
+            if let page {
+                if !page.upcomingNote.isEmpty, let upcoming = worksTab?.subTabs.first(where: { $0.name == "预约" }), upcoming.type != subTab {
+                    Button { subTab = upcoming.type } label: {
+                        GlassTag(text: page.upcomingNote, systemImage: "calendar", trailingSystemImage: "chevron.right")
+                    }
+                    .buttonStyle(.plain)
+                }
+                if page.items.isEmpty {
                     ContentUnavailableView("暂无作品信息", systemImage: "film")
                 } else {
-                    PosterGrid(items: order == .hottest ? CelebrityService.hottestFirst(works.items) : works.items,
-                               clickPlays: true, heatOnCover: true)
-                    if let total = works.total, total > works.items.count {
-                        Text("红果只返回了其中 \(works.items.count) 部").font(.system(size: 12)).foregroundStyle(.secondary)
+                    // Series not out yet (预约) cannot play, so their cards open the detail page.
+                    PosterGrid(items: order == .hottest ? ActorHomeService.hottestFirst(page.items) : page.items,
+                               clickPlays: page.upcomingIds.isEmpty, heatOnCover: true) {
+                        Task { await loadMore() }
                     }
                 }
+            } else if member.profileUserId.isEmpty {
+                ContentUnavailableView("暂无作品信息", systemImage: "film")
             } else {
-                LoadStateView(error: error, isLoading: isLoading) { Task { await load() } }
+                LoadStateView(error: error, isLoading: isLoading) {
+                    Task { if home == nil { await loadHome() } else { await loadPage() } }
+                }
             }
         }
     }
 
-    private func load() async {
-        guard works == nil, !isLoading else { return }
+    /// The server's sub tabs (全部, 预约, …) as chips, the selected one filled.
+    private func subTabBar(_ subs: [ActorHome.Tab]) -> some View {
+        HStack(spacing: 8) {
+            ForEach(subs) { sub in
+                let selected = sub.type == subTab
+                Button { subTab = sub.type } label: {
+                    Text(sub.name)
+                        .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                        .foregroundStyle(selected ? Color.hongguoRed : .secondary)
+                        .padding(.horizontal, 14)
+                        .frame(height: 28)
+                        .background(Capsule().fill(selected ? Color.hongguoRed.opacity(0.15) : Color.primary.opacity(0.06)))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func loadHome() async {
+        guard home == nil, !member.profileUserId.isEmpty else { return }
         isLoading = true
         error = nil
         defer { isLoading = false }
         do {
-            works = try await CelebrityService.works(of: member)
+            let loaded = try await ActorHomeService.home(userId: member.profileUserId)
+            home = loaded
+            guard let tab = loaded.worksTab else { error = "这位演员的主页没有剧作"; return }
+            subTab = tab.subTabs.first?.type ?? 0
         } catch {
             self.error = describe(error)
         }
+    }
+
+    /// The selected sub tab's first page, once; switching back shows what was read.
+    private func loadPage() async {
+        guard let tab = worksTab, let sub = subTab, pages[sub] == nil else { return }
+        isLoading = true
+        error = nil
+        defer { isLoading = false }
+        do {
+            pages[sub] = try await ActorHomeService.works(userId: member.profileUserId, tab: tab.type, subTab: sub)
+        } catch {
+            if subTab == sub { self.error = describe(error) }
+        }
+    }
+
+    private func loadMore() async {
+        guard let tab = worksTab, let sub = subTab, let page = pages[sub], page.hasMore, !page.cursor.isEmpty, !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
+        guard let next = try? await ActorHomeService.works(userId: member.profileUserId, tab: tab.type, subTab: sub, cursor: page.cursor) else { return }
+        var merged = page
+        let known = Set(page.items.map(\.seriesId))
+        merged.items += next.items.filter { !known.contains($0.seriesId) }
+        merged.cursor = next.cursor
+        merged.hasMore = next.hasMore && !next.items.isEmpty
+        pages[sub] = merged
     }
 }

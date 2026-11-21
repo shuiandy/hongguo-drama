@@ -11,7 +11,7 @@ final class EpisodeSocialTests: XCTestCase {
     {"code":0,"data":{"video_detail_data":{"7000000000000000001":{"video_data":{
       "series_id_str":"7000000000000000001","series_title":"示例剧","series_intro":"示例简介","episode_cnt":2,
       "followed_cnt":24009,"record_info":{"record_number":"App备案号"},
-      "celebrities":[{"nickname":"示例演员","sub_title":"饰 主角","role_name":"主角","avatar":"http://example.com/p.jpg","celebrity_id":"9001","intro":" 示例演员简介 "},
+      "celebrities":[{"nickname":"示例演员","sub_title":"饰 主角","role_name":"主角","avatar":"http://example.com/p.jpg","celebrity_id":"9001","intro":" 示例演员简介 ","schema":"sslocal://guest_profile?uid=1000000000000001"},
                      {"nickname":"示例配角","sub_title":"","role_name":"配角","celebrity_id":9002},
                      {"nickname":"示例演员","sub_title":"饰 主角","celebrity_id":"9001"},
                      {"nickname":"","sub_title":"无名"}],
@@ -86,6 +86,10 @@ final class EpisodeSocialTests: XCTestCase {
         XCTAssertEqual(detail.cast.map(\.id), ["9001", "9002"])
         XCTAssertEqual(detail.cast.first?.avatar, "https://example.com/p.jpg")
         XCTAssertEqual(detail.cast.map(\.intro), ["示例演员简介", ""])
+        XCTAssertEqual(detail.cast.map(\.profileUserId), ["1000000000000001", ""], "the home page account comes from the schema")
+        XCTAssertEqual(EpisodeSocialService.profileUserId("sslocal://guest_profile?uid=12345678&enter_from_type=0"), "12345678")
+        XCTAssertEqual(EpisodeSocialService.profileUserId("sslocal://profile?uid=12345678"), "")
+        XCTAssertEqual(EpisodeSocialService.profileUserId("sslocal://guest_profile?uid=abc"), "")
         XCTAssertEqual(detail.tags, ["都市", "逆袭"], "the JSON string is read, repeats and blanks dropped")
         XCTAssertEqual(OfficialSeriesDetail.tags(try JSONValue.parse(#"["悬疑",{"category_name":"复仇"}]"#)), ["悬疑", "复仇"])
     }

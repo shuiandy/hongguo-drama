@@ -28,8 +28,12 @@ public struct EpisodeSocial: Sendable, Equatable {
         public var avatar: String
         /// The actor's own introduction, "" when there is none.
         public var intro: String = ""
-        /// `encrypted_celebrity_id`, the key of the actor works read; "" when the reply has none.
+        /// `encrypted_celebrity_id`, the key of the official actor panel's works read
+        /// (`/reading/user/celebrity/works/v1/`, not used: the home page has more); "" when none.
         public var encryptedId: String = ""
+        /// The actor's own 红果 account (`uid` in `schema`, `sslocal://guest_profile?uid=…`), whose
+        /// user profile is the official actor home page; "" when the entry has none.
+        public var profileUserId: String = ""
     }
 
     public var seriesId: String
@@ -262,7 +266,16 @@ public enum EpisodeSocialService {
             return .init(id: id, name: name, role: subtitle.isEmpty ? (person["role_name"].string ?? "") : subtitle,
                          avatar: secure(person["avatar"].string ?? ""),
                          intro: String((person["intro"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(2000)),
-                         encryptedId: (person["encrypted_celebrity_id"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
+                         encryptedId: (person["encrypted_celebrity_id"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
+                         profileUserId: profileUserId(person["schema"].string))
         }
+    }
+
+    /// `uid` of a `sslocal://guest_profile?uid=…` link; "" for anything else.
+    static func profileUserId(_ schema: String?) -> String {
+        guard let text = schema?.trimmingCharacters(in: .whitespacesAndNewlines), let parts = URLComponents(string: text),
+              parts.host == "guest_profile",
+              let uid = parts.queryItems?.first(where: { $0.name == "uid" })?.value, uid.matchesDigits(min: 6, max: 30) else { return "" }
+        return uid
     }
 }
