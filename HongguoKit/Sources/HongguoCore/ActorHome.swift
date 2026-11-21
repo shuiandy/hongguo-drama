@@ -94,21 +94,23 @@ public enum ActorHomeService {
 
     /// The tabs of `userId`'s home page (cached for five minutes).
     public static func home(userId: String, http: HTTPClient = .shared) async throws -> ActorHome {
-        if let cached = await homeCache.get(userId) { return cached }
-        let home = try parseHome(try await request(userId: userId, http: http))
-        await homeCache.set(userId, home, ttl: 300)
-        return home
+        try await homeCache.load(userId, ttl: 300) {
+            try parseHome(try await request(userId: userId, http: http))
+        }
     }
 
     /// One list (`tab`, `subTab`) of `userId`'s home page; the first page is cached for five minutes.
     public static func works(userId: String, tab: Int, subTab: Int?, cursor: String = "",
                              http: HTTPClient = .shared) async throws -> ActorWorksPage {
-        let key = "\(userId):\(tab):\(subTab.map(String.init) ?? "none")"
-        if cursor.isEmpty, let cached = await pageCache.get(key) { return cached }
-        let page = try parseWorks(try await request(userId: userId, tab: tab, subTab: subTab, cursor: cursor, http: http),
-                                  requestedCursor: cursor)
-        if cursor.isEmpty { await pageCache.set(key, page, ttl: 300) }
-        return page
+        if cursor.isEmpty {
+            let key = "\(userId):\(tab):\(subTab.map(String.init) ?? "none")"
+            return try await pageCache.load(key, ttl: 300) {
+                try parseWorks(try await request(userId: userId, tab: tab, subTab: subTab, cursor: "", http: http),
+                               requestedCursor: "")
+            }
+        }
+        return try parseWorks(try await request(userId: userId, tab: tab, subTab: subTab, cursor: cursor, http: http),
+                              requestedCursor: cursor)
     }
 
     static func request(userId: String, tab: Int? = nil, subTab: Int? = nil, cursor: String = "",

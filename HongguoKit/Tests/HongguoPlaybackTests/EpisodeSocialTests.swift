@@ -413,5 +413,20 @@ final class EpisodeSocialTests: XCTestCase {
         XCTAssertEqual(parsed.images.first?.thumbnailUrl, "https://img.example.com/thumb.jpeg")
         XCTAssertEqual(parsed.images.first?.width, 1080)
         XCTAssertEqual(parsed.images.first?.height, 1440)
+
+        let identity = PlaybackIdentity(deviceId: "1234567890123456789", iid: "2234567890123456789", cdid: "cdid-1")
+        let uploadURL = try XCTUnwrap(EpisodeSocialService.commentImageUploadURL(identity: identity))
+        let items = Dictionary(uniqueKeysWithValues: (URLComponents(url: uploadURL, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        XCTAssertTrue(uploadURL.absoluteString.hasPrefix("https://reading.snssdk.com/reading/reader/upload/picture/?"))
+        XCTAssertEqual(items["aid"], "8662")
+        XCTAssertEqual(items["app_name"], "dragon_app")
+        XCTAssertEqual(items["version_code"], "74532")
+        XCTAssertEqual(items["device_id"], "1234567890123456789")
+        XCTAssertEqual(items["iid"], "2234567890123456789")
+
+        let fallbackURL = try XCTUnwrap(EpisodeSocialService.commentImageUploadURL(identity: nil))
+        let fallbackItems = Dictionary(uniqueKeysWithValues: (URLComponents(url: fallbackURL, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        XCTAssertEqual(fallbackItems["aid"], "8662")
+        XCTAssertNil(fallbackItems["device_id"])
     }
 }

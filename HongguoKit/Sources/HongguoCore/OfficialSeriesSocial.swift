@@ -6,28 +6,31 @@ enum AppCommentClient {
     static let host = "https://api5-normal-sinfonlineb.fqnovel.com"
 
     static func post(_ path: String, body: [String: Any], headers extra: [(String, String)] = [],
-                     http: HTTPClient) async throws -> JSONValue {
-        let stampMs = Int64(Date().timeIntervalSince1970 * 1000)
+                     retryTransient: Bool = true, http: HTTPClient) async throws -> JSONValue {
         let device = try await PersistentAppDevice.dataIdentity(transport: AppTransport(http: http))
-        let rawQuery = DanmakuSigner.buildQuery(stampMs: stampMs, deviceId: device.identity.deviceId, installId: device.identity.iid)
-        guard let url = URL(string: "\(host)\(path)?\(rawQuery)") else { throw HongguoError(.input, "请求地址无效") }
         let bodyData = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
-        var options = HTTPClient.Options()
-        options.timeout = 8
-        options.maxRedirects = 0
-        let signing = try DanmakuSigner.headers(rawQuery: rawQuery, stamp: stampMs / 1000,
-                                                nonce: AppCrypto.randomBytes(DanmakuSigner.nonceBytes),
-                                                stampMs: stampMs, body: bodyData)
-        var headers: [(String, String)] = [
-            ("User-Agent", DanmakuService.userAgent), ("Accept", "application/json"),
-            ("X-XS-From-Web", "0"), ("Sdk-Version", "2"), ("Content-Type", "application/json; charset=utf-8"),
-        ]
-        if !device.dToken.isEmpty { headers.append(("x-tt-dt", device.dToken)) }
-        headers += extra + signing
-        for (key, value) in headers { options.headers[key] = value }
-        let response = try await http.post(url, json: bodyData, options: options)
-        guard let payload = try? JSONValue.parse(response.data) else { throw HongguoError(.upstream, "红果接口返回了无法识别的内容") }
-        return payload
+        let sendOnce: @Sendable () async throws -> JSONValue = {
+            let stampMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let rawQuery = DanmakuSigner.buildQuery(stampMs: stampMs, deviceId: device.identity.deviceId, installId: device.identity.iid)
+            guard let url = URL(string: "\(host)\(path)?\(rawQuery)") else { throw HongguoError(.input, "请求地址无效") }
+            var options = HTTPClient.Options()
+            options.timeout = 10
+            options.maxRedirects = 0
+            let signing = try DanmakuSigner.headers(rawQuery: rawQuery, stamp: stampMs / 1000,
+                                                    nonce: AppCrypto.randomBytes(DanmakuSigner.nonceBytes),
+                                                    stampMs: stampMs, body: bodyData)
+            var headers: [(String, String)] = [
+                ("User-Agent", DanmakuService.userAgent), ("Accept", "application/json"),
+                ("X-XS-From-Web", "0"), ("Sdk-Version", "2"), ("Content-Type", "application/json; charset=utf-8"),
+            ]
+            if !device.dToken.isEmpty { headers.append(("x-tt-dt", device.dToken)) }
+            headers += extra + signing
+            for (key, value) in headers { options.headers[key] = value }
+            let response = try await http.post(url, json: bodyData, options: options)
+            guard let payload = try? JSONValue.parse(response.data) else { throw HongguoError(.upstream, "红果接口返回了无法识别的内容") }
+            return payload
+        }
+        return retryTransient ? try await TransientReadRetry.run(operation: sendOnce) : try await sendOnce()
     }
 }
 
@@ -48,10 +51,9 @@ struct OfficialSeriesStats: Sendable, Equatable {
     private static let cache = TTLCache<OfficialSeriesStats>(limit: 64)
 
     static func load(_ seriesId: String, http: HTTPClient = .shared) async throws -> OfficialSeriesStats {
-        if let cached = await cache.get(seriesId) { return cached }
-        let stats = try parse(try await request(seriesId, http: http), seriesId: seriesId)
-        await cache.set(seriesId, stats, ttl: 60)
-        return stats
+        try await cache.load(seriesId, ttl: 60) {
+            try parse(try await request(seriesId, http: http), seriesId: seriesId)
+        }
     }
 
     static func request(_ seriesId: String, http: HTTPClient = .shared) async throws -> JSONValue {
@@ -93,11 +95,13 @@ struct OfficialSeriesReviews: Sendable, Equatable {
 
     /// The first page is cached for a minute, so the detail view and the player overlay share it.
     static func load(_ seriesId: String, cursor: String = "", count: Int = 10, http: HTTPClient = .shared) async throws -> OfficialSeriesReviews {
-        let key = "\(seriesId):\(count)"
-        if cursor.isEmpty, let cached = await cache.get(key) { return cached }
-        let reviews = try parse(try await request(seriesId, cursor: cursor, count: count, http: http))
-        if cursor.isEmpty { await cache.set(key, reviews, ttl: 60) }
-        return reviews
+        if cursor.isEmpty {
+            let key = "\(seriesId):\(count)"
+            return try await cache.load(key, ttl: 60) {
+                try parse(try await request(seriesId, cursor: "", count: count, http: http))
+            }
+        }
+        return try parse(try await request(seriesId, cursor: cursor, count: count, http: http))
     }
 
     static func request(_ seriesId: String, cursor: String = "", count: Int = 10, http: HTTPClient = .shared) async throws -> JSONValue {

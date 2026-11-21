@@ -142,4 +142,112 @@ final class AccountServiceTests: XCTestCase {
         XCTAssertFalse(AccountDataAccess.shouldRetryTransientRead(AppSourceError(.securityBlocked, "blocked")))
         XCTAssertFalse(AccountDataAccess.shouldRetryTransientRead(AppSourceError(.invalidResponse, "bad json")))
     }
+
+    func testReportNotInterestedBodyMatchesOfficialSchema() {
+        let dislike = AccountDataAccess.reportNotInterestedBody(seriesId: "7500000000000000001", recall: false)
+        XCTAssertEqual(dislike["report_type"] as? Int, 4)
+        let dislikeData = dislike["book_feed_dislike_data"] as? [String: Any]
+        XCTAssertEqual(dislikeData?["book_id"] as? String, "7500000000000000001")
+        XCTAssertEqual(dislikeData?["group_id"] as? String, "7500000000000000001")
+        XCTAssertEqual(dislikeData?["op_type"] as? Int, 0)
+        XCTAssertEqual(dislikeData?["reason_id"] as? Int, 0)
+        XCTAssertEqual(dislikeData?["target_id"] as? Int, 0)
+
+        let recall = AccountDataAccess.reportNotInterestedBody(seriesId: "7500000000000000001", recall: true)
+        XCTAssertEqual(recall["report_type"] as? Int, 4)
+        let recallData = recall["book_feed_dislike_data"] as? [String: Any]
+        XCTAssertEqual(recallData?["book_id"] as? String, "7500000000000000001")
+        XCTAssertEqual(recallData?["op_type"] as? Int, 1)
+    }
+
+    func testTransientReadRetryRecoversOnceAndSkipsHardErrors() async throws {
+        final class Counter: @unchecked Sendable {
+            private let lock = NSLock()
+            private var value = 0
+            func next() -> Int { lock.withLock { value += 1; return value } }
+            var count: Int { lock.withLock { value } }
+        }
+
+        let flaky = Counter()
+        let recovered = try await TransientReadRetry.run(delayNanoseconds: 1_000_000) {
+            if flaky.next() == 1 {
+                throw HongguoError(.network, "connection lost")
+            }
+            return "ok"
+        }
+        XCTAssertEqual(recovered, "ok")
+        XCTAssertEqual(flaky.count, 2)
+
+        let nonRetryable = Counter()
+        do {
+            _ = try await TransientReadRetry.run(delayNanoseconds: 1_000_000) { () async throws -> String in
+                _ = nonRetryable.next()
+                throw AppSourceError(.http, "HTTP 403", status: 403)
+            }
+            XCTFail("expected 403 to throw without retry")
+        } catch let error as AppSourceError {
+            XCTAssertEqual(error.status, 403)
+        }
+        XCTAssertEqual(nonRetryable.count, 1)
+
+        let expiredDeadline = Counter()
+        do {
+            _ = try await TransientReadRetry.run(deadline: Date().addingTimeInterval(0.1), delayNanoseconds: 1_000_000) { () async throws -> String in
+                _ = expiredDeadline.next()
+                throw AppSourceError(.timeout, "timed out")
+            }
+            XCTFail("expected expired deadline to skip retry")
+        } catch let error as AppSourceError {
+            XCTAssertEqual(error.code, .timeout)
+        }
+        XCTAssertEqual(expiredDeadline.count, 1)
+    }
+
+    func testTTLCacheCoalescesConcurrentLoadsAndSurvivesSingleWaiterCancel() async throws {
+        final class Counter: @unchecked Sendable {
+            private let lock = NSLock()
+            private var value = 0
+            func increment() -> Int { lock.withLock { value += 1; return value } }
+            var count: Int { lock.withLock { value } }
+        }
+
+        let cache = TTLCache<String>(limit: 8)
+        let calls = Counter()
+
+        async let first = cache.load("k1", ttl: 60) {
+            let n = calls.increment()
+            try await Task.sleep(nanoseconds: 50_000_000)
+            return "val-\(n)"
+        }
+        async let second = cache.load("k1", ttl: 60) {
+            let n = calls.increment()
+            try await Task.sleep(nanoseconds: 50_000_000)
+            return "val-\(n)"
+        }
+        let (a, b) = try await (first, second)
+        XCTAssertEqual(a, "val-1")
+        XCTAssertEqual(b, "val-1")
+        XCTAssertEqual(calls.count, 1, "concurrent callers must share one in-flight request")
+
+        let cancelCalls = Counter()
+        let waiterA = Task {
+            try await cache.load("k2", ttl: 60) {
+                let n = cancelCalls.increment()
+                try await Task.sleep(nanoseconds: 80_000_000)
+                return "survived-\(n)"
+            }
+        }
+        let waiterB = Task {
+            try await cache.load("k2", ttl: 60) {
+                let n = cancelCalls.increment()
+                try await Task.sleep(nanoseconds: 80_000_000)
+                return "survived-\(n)"
+            }
+        }
+        try await Task.sleep(nanoseconds: 15_000_000)
+        waiterA.cancel()
+        let resultB = try await waiterB.value
+        XCTAssertEqual(resultB, "survived-1")
+        XCTAssertEqual(cancelCalls.count, 1)
+    }
 }
