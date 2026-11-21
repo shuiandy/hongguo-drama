@@ -55,16 +55,31 @@ public struct EpisodeSocial: Sendable, Equatable {
     public struct Reply: Sendable, Equatable, Identifiable {
         public var id: String
         public var author: String
+        /// Reply author's numeric user id (`common.user_info.base_info.user_id`), sent as `reply_to_userid` when replying to this reply.
+        public var authorId: String
         public var avatar: String
         public var content: String
         public var createdAt: Date?
         public var likes: Int
         /// Nickname of the user being replied to when replying to another reply; "" for direct replies to the comment.
         public var replyToAuthor: String
+        /// Thread parent reply id (`parent_reply_id`) for nested replies; "" for direct replies to the comment.
+        public var parentReplyId: String
 
-        public init(id: String, author: String, avatar: String, content: String, createdAt: Date?, likes: Int, replyToAuthor: String = "") {
-            self.id = id; self.author = author; self.avatar = avatar; self.content = content
-            self.createdAt = createdAt; self.likes = likes; self.replyToAuthor = replyToAuthor
+        public init(
+            id: String,
+            author: String,
+            authorId: String = "",
+            avatar: String,
+            content: String,
+            createdAt: Date?,
+            likes: Int,
+            replyToAuthor: String = "",
+            parentReplyId: String = ""
+        ) {
+            self.id = id; self.author = author; self.authorId = authorId; self.avatar = avatar
+            self.content = content; self.createdAt = createdAt; self.likes = likes
+            self.replyToAuthor = replyToAuthor; self.parentReplyId = parentReplyId
         }
     }
 
@@ -617,7 +632,9 @@ public enum EpisodeSocialService {
         commentId: String,
         text: String,
         replyToReplyId: String = "",
+        parentReplyId: String = "",
         replyToUserId: String = "",
+        replyToAuthor: String = "",
         offsetMs: Int64 = 0,
         accountId: String? = nil,
         http: HTTPClient = .shared
@@ -637,7 +654,8 @@ public enum EpisodeSocialService {
         }
         try Task.checkCancellation()
         let body = postReplyBody(seriesId: seriesId, vid: vid, commentId: commentId, text: trimmed,
-                                 replyToReplyId: replyToReplyId, replyToUserId: replyToUserId, offsetMs: offsetMs)
+                                 replyToReplyId: replyToReplyId, parentReplyId: parentReplyId,
+                                 replyToUserId: replyToUserId, offsetMs: offsetMs)
         let payload: JSONValue
         do {
             payload = try await AppCommentClient.post(
@@ -651,10 +669,19 @@ public enum EpisodeSocialService {
             Task { await AccountService.shared.notifyPossibleAuthFailure() }
             throw HongguoError(.unavailable, "登录已过期，请重新扫码登录")
         }
+        let resolvedParent: String = {
+            let cleanParent = parentReplyId.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleanParent.matchesDigits(min: 1, max: 30) { return cleanParent }
+            let cleanReply = replyToReplyId.trimmingCharacters(in: .whitespacesAndNewlines)
+            return cleanReply.matchesDigits(min: 1, max: 30) ? cleanReply : ""
+        }()
         return try parsePostedReply(
             payload,
             fallbackText: trimmed,
             fallbackAuthor: saved.profile?.nickname ?? "",
+            fallbackAuthorId: saved.profile?.id ?? "",
+            fallbackReplyToAuthor: replyToAuthor.trimmingCharacters(in: .whitespacesAndNewlines),
+            fallbackParentReplyId: resolvedParent,
             onAuthExpired: {
                 Task { await AccountService.shared.notifyPossibleAuthFailure() }
             }
@@ -667,6 +694,7 @@ public enum EpisodeSocialService {
         commentId: String,
         text: String,
         replyToReplyId: String = "",
+        parentReplyId: String = "",
         replyToUserId: String = "",
         offsetMs: Int64 = 0
     ) -> [String: Any] {
@@ -686,7 +714,8 @@ public enum EpisodeSocialService {
         let toReply = replyToReplyId.trimmingCharacters(in: .whitespacesAndNewlines)
         if toReply.matchesDigits(min: 1, max: 30) {
             body["reply_to_replyid"] = toReply
-            body["parent_reply_id"] = toReply
+            let parent = parentReplyId.trimmingCharacters(in: .whitespacesAndNewlines)
+            body["parent_reply_id"] = parent.matchesDigits(min: 1, max: 30) ? parent : toReply
             let toUser = replyToUserId.trimmingCharacters(in: .whitespacesAndNewlines)
             if !toUser.isEmpty { body["reply_to_userid"] = toUser }
         }
@@ -697,6 +726,9 @@ public enum EpisodeSocialService {
         _ payload: JSONValue,
         fallbackText: String,
         fallbackAuthor: String,
+        fallbackAuthorId: String = "",
+        fallbackReplyToAuthor: String = "",
+        fallbackParentReplyId: String = "",
         now: Date = Date(),
         onAuthExpired: (() -> Void)? = nil
     ) throws -> EpisodeSocial.Reply {
@@ -712,13 +744,26 @@ public enum EpisodeSocialService {
         let row = payload["data"]["reply"]
         if var parsed = parseReplyRow(row) {
             if parsed.author.isEmpty { parsed.author = fallbackAuthor }
+            if parsed.authorId.isEmpty { parsed.authorId = fallbackAuthorId }
+            if parsed.replyToAuthor.isEmpty { parsed.replyToAuthor = fallbackReplyToAuthor }
+            if parsed.parentReplyId.isEmpty { parsed.parentReplyId = fallbackParentReplyId }
             if parsed.createdAt == nil { parsed.createdAt = now }
             return parsed
         }
         let rid = row["reply_id"].idString
             ?? payload["data"]["reply_id"].idString
             ?? DownloadNaming.sha256Prefix("\(fallbackAuthor)\u{0}\(now.timeIntervalSince1970)\u{0}\(fallbackText)", 32)
-        return .init(id: rid, author: fallbackAuthor, avatar: "", content: fallbackText, createdAt: now, likes: 0)
+        return .init(
+            id: rid,
+            author: fallbackAuthor,
+            authorId: fallbackAuthorId,
+            avatar: "",
+            content: fallbackText,
+            createdAt: now,
+            likes: 0,
+            replyToAuthor: fallbackReplyToAuthor,
+            parentReplyId: fallbackParentReplyId
+        )
     }
 
     /// Fetches one page of replies for an episode comment from the official App comment API
@@ -778,25 +823,31 @@ public enum EpisodeSocialService {
               !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         let base = common["user_info"]["base_info"]
         let author = String((base["user_name"].string ?? "").prefix(200))
+        let authorId = base["user_id"].nonZeroIdString
+            ?? common["user_info"]["user_id"].nonZeroIdString
+            ?? ""
         let rawAvatar = [base["user_avatar"].string, base["expand_user_avatar"].string]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty } ?? ""
         let created = date(common["create_timestamp"])
         let content = String(rawText.prefix(20000))
         let rid = row["reply_id"].idString ?? DownloadNaming.sha256Prefix("\(author)\u{0}\(created?.timeIntervalSince1970 ?? 0)\u{0}\(content)", 32)
-        let toReplyId = row["reply_to_reply_id"].idString ?? ""
-        let rawReplyToAuthor = (!toReplyId.isEmpty && toReplyId != "0")
+        let toReplyId = row["reply_to_reply_id"].nonZeroIdString ?? row["reply_to_replyid"].nonZeroIdString ?? ""
+        let parentReplyId = row["parent_reply_id"].nonZeroIdString ?? ""
+        let rawReplyToAuthor = !toReplyId.isEmpty
             ? (row["reply_to_user_info"]["base_info"]["user_name"].string ?? "")
             : ""
         let replyToAuthor = String(rawReplyToAuthor.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
         return .init(
             id: rid,
             author: author,
+            authorId: authorId,
             avatar: secure(rawAvatar),
             content: content,
             createdAt: created,
             likes: integer(row["stat"]["digg_count"]) ?? 0,
-            replyToAuthor: replyToAuthor
+            replyToAuthor: replyToAuthor,
+            parentReplyId: parentReplyId
         )
     }
 
