@@ -226,6 +226,58 @@ final class EpisodeSocialTests: XCTestCase {
         XCTAssertEqual((clamped["business_param"] as? [String: Any])?["offset"] as? Int64, 0)
     }
 
+    func testPostReplyBodyMatchesOfficialSchema() {
+        let body = EpisodeSocialService.postReplyBody(
+            seriesId: Self.sid, vid: "7000000000000000011", commentId: "88001", text: "同感", offsetMs: 3_000
+        )
+        XCTAssertEqual(body["aid"] as? Int, 8662)
+        XCTAssertEqual(body["commit_source"] as? Int, 10)
+        XCTAssertEqual(body["group_id"] as? String, "7000000000000000011")
+        XCTAssertEqual(body["group_type"] as? Int, 30)
+        XCTAssertEqual(body["reply_to_comment_id"] as? String, "88001")
+        XCTAssertEqual(body["text"] as? String, "同感")
+        XCTAssertNil(body["reply_to_replyid"])
+        XCTAssertNil(body["parent_reply_id"])
+        XCTAssertEqual((body["business_param"] as? [String: Any])?["book_id"] as? String, Self.sid)
+
+        let nested = EpisodeSocialService.postReplyBody(
+            seriesId: Self.sid, vid: "7000000000000000011", commentId: "88001", text: "对",
+            replyToReplyId: "77002", replyToUserId: "123456"
+        )
+        XCTAssertEqual(nested["reply_to_replyid"] as? String, "77002")
+        XCTAssertEqual(nested["parent_reply_id"] as? String, "77002")
+        XCTAssertEqual(nested["reply_to_userid"] as? String, "123456")
+    }
+
+    func testParsePostedReplyFullMinimalAndErrors() throws {
+        let full = try JSONValue.parse(#"""
+        {"code":0,"data":{"reply":{"reply_id":"66001","stat":{"digg_count":0},
+          "Common":{"create_timestamp":1794000500,"content":{"text":"说得对"},
+            "user_info":{"base_info":{"user_name":"示例作者","user_avatar":"http://example.com/u.jpg"}}}}}}
+        """#)
+        let parsed = try EpisodeSocialService.parsePostedReply(full, fallbackText: "说得对", fallbackAuthor: "本地名")
+        XCTAssertEqual(parsed.id, "66001")
+        XCTAssertEqual(parsed.author, "示例作者")
+        XCTAssertEqual(parsed.avatar, "https://example.com/u.jpg")
+
+        let now = Date(timeIntervalSince1970: 1_794_000_600)
+        let minimal = try JSONValue.parse(#"{"code":0,"data":{"reply":{"reply_id":"66002"}}}"#)
+        let fallback = try EpisodeSocialService.parsePostedReply(minimal, fallbackText: "冲", fallbackAuthor: "本地用户", now: now)
+        XCTAssertEqual(fallback.id, "66002")
+        XCTAssertEqual(fallback.author, "本地用户")
+        XCTAssertEqual(fallback.content, "冲")
+        XCTAssertEqual(fallback.createdAt, now)
+
+        var expired = false
+        XCTAssertThrowsError(try EpisodeSocialService.parsePostedReply(
+            try JSONValue.parse(#"{"code":103006}"#), fallbackText: "x", fallbackAuthor: "", onAuthExpired: { expired = true }))
+        XCTAssertTrue(expired)
+        XCTAssertThrowsError(try EpisodeSocialService.parsePostedReply(
+            try JSONValue.parse(#"{"code":103099,"message":"内容包含敏感词"}"#), fallbackText: "x", fallbackAuthor: "")) { error in
+            XCTAssertEqual((error as? HongguoError)?.message, "内容包含敏感词")
+        }
+    }
+
     func testParsePostedCommentFullMinimalAndErrors() throws {
         let full = try JSONValue.parse(#"""
         {

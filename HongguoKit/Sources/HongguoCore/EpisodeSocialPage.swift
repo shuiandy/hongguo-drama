@@ -579,6 +579,120 @@ public enum EpisodeSocialService {
         )
     }
 
+    /// Replies to an episode comment through `/novel/commentapi/reply/add/v1/` (signed in).
+    /// Field names follow official 7.4.3 `FQCRpcAddReplyRequest` (KMP `AddReplyRequest`):
+    /// `reply_to_comment_id`, `reply_to_userid`, `reply_to_replyid`, `parent_reply_id`, plus the
+    /// same `commit_source` / `group_type` / `data_type` / `business_param` set as `postComment`.
+    /// Replying to the comment itself leaves the three reply-to-reply fields out.
+    public static func postReply(
+        seriesId: String,
+        vid: String,
+        commentId: String,
+        text: String,
+        replyToReplyId: String = "",
+        replyToUserId: String = "",
+        offsetMs: Int64 = 0,
+        accountId: String? = nil,
+        http: HTTPClient = .shared
+    ) async throws -> EpisodeSocial.Reply {
+        guard seriesId.matchesDigits(min: 6, max: 30), vid.matchesDigits(min: 6, max: 30),
+              commentId.matchesDigits(min: 1, max: 30) else {
+            throw HongguoError(.input, "评论编号无效")
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw HongguoError(.input, "请输入回复内容") }
+        guard trimmed.count <= 1000 else { throw HongguoError(.input, "回复内容不能超过 1000 字") }
+        guard !MacTestRunner.isActive, let saved = try KeychainCredentialStore().load() else {
+            throw HongguoError(.input, "请先登录再回复")
+        }
+        if let accountId, saved.profile?.id != accountId {
+            throw HongguoError(.cancelled, "账号已切换")
+        }
+        try Task.checkCancellation()
+        let body = postReplyBody(seriesId: seriesId, vid: vid, commentId: commentId, text: trimmed,
+                                 replyToReplyId: replyToReplyId, replyToUserId: replyToUserId, offsetMs: offsetMs)
+        let payload: JSONValue
+        do {
+            payload = try await AppCommentClient.post(
+                "/novel/commentapi/reply/add/v1/",
+                body: body,
+                headers: [("Comment-Source", "4"), ("Server-Channel", "18"), ("Cookie", saved.cookie)],
+                http: http
+            )
+        } catch let error as HTTPStatusError where error.status == 401 {
+            Task { await AccountService.shared.notifyPossibleAuthFailure() }
+            throw HongguoError(.unavailable, "登录已过期，请重新扫码登录")
+        }
+        return try parsePostedReply(
+            payload,
+            fallbackText: trimmed,
+            fallbackAuthor: saved.profile?.nickname ?? "",
+            onAuthExpired: {
+                Task { await AccountService.shared.notifyPossibleAuthFailure() }
+            }
+        )
+    }
+
+    static func postReplyBody(
+        seriesId: String,
+        vid: String,
+        commentId: String,
+        text: String,
+        replyToReplyId: String = "",
+        replyToUserId: String = "",
+        offsetMs: Int64 = 0
+    ) -> [String: Any] {
+        var body: [String: Any] = [
+            "aid": 8662,
+            "commit_source": 10,
+            "group_id": vid,
+            "group_type": 30,
+            "data_type": 4,
+            "reply_to_comment_id": commentId,
+            "text": text,
+            "business_param": [
+                "book_id": seriesId,
+                "offset": max(0, offsetMs),
+            ],
+        ]
+        let toReply = replyToReplyId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if toReply.matchesDigits(min: 1, max: 30) {
+            body["reply_to_replyid"] = toReply
+            body["parent_reply_id"] = toReply
+            let toUser = replyToUserId.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !toUser.isEmpty { body["reply_to_userid"] = toUser }
+        }
+        return body
+    }
+
+    static func parsePostedReply(
+        _ payload: JSONValue,
+        fallbackText: String,
+        fallbackAuthor: String,
+        now: Date = Date(),
+        onAuthExpired: (() -> Void)? = nil
+    ) throws -> EpisodeSocial.Reply {
+        let code = payload["code"].signedInt ?? -1
+        let msg = AccountService.cleanText(payload["message"].string ?? payload["msg"].string)
+        if code == 103_006 {
+            onAuthExpired?()
+            throw HongguoError(.unavailable, "登录已过期，请重新扫码登录")
+        }
+        guard code == 0 else {
+            throw HongguoError(.upstream, msg.isEmpty ? "回复发表失败" : msg)
+        }
+        let row = payload["data"]["reply"]
+        if var parsed = parseReplyRow(row) {
+            if parsed.author.isEmpty { parsed.author = fallbackAuthor }
+            if parsed.createdAt == nil { parsed.createdAt = now }
+            return parsed
+        }
+        let rid = row["reply_id"].idString
+            ?? payload["data"]["reply_id"].idString
+            ?? DownloadNaming.sha256Prefix("\(fallbackAuthor)\u{0}\(now.timeIntervalSince1970)\u{0}\(fallbackText)", 32)
+        return .init(id: rid, author: fallbackAuthor, avatar: "", content: fallbackText, createdAt: now, likes: 0)
+    }
+
     /// Fetches one page of replies for an episode comment from the official App comment API
     /// (`/novel/commentapi/reply/list/<commentId>/v1/`, `comment_source=504, server_channel=18, comment_type=4`).
     public static func repliesPage(
@@ -619,37 +733,43 @@ public enum EpisodeSocialService {
         var seen = Set<String>()
         var parsed: [EpisodeSocial.Reply] = []
         for row in rawList {
-            let common = row["Common"].isNull ? row["common"] : row["Common"]
-            guard let rawText = common["content"]["text"].string,
-                  !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-            let base = common["user_info"]["base_info"]
-            let author = String((base["user_name"].string ?? "").prefix(200))
-            let rawAvatar = [base["user_avatar"].string, base["expand_user_avatar"].string]
-                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .first { !$0.isEmpty } ?? ""
-            let created = date(common["create_timestamp"])
-            let content = String(rawText.prefix(20000))
-            let rid = row["reply_id"].idString ?? DownloadNaming.sha256Prefix("\(author)\u{0}\(created?.timeIntervalSince1970 ?? 0)\u{0}\(content)", 32)
-            guard seen.insert(rid).inserted else { continue }
-            let toReplyId = row["reply_to_reply_id"].idString ?? ""
-            let rawReplyToAuthor = (!toReplyId.isEmpty && toReplyId != "0")
-                ? (row["reply_to_user_info"]["base_info"]["user_name"].string ?? "")
-                : ""
-            let replyToAuthor = String(rawReplyToAuthor.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
-            parsed.append(.init(
-                id: rid,
-                author: author,
-                avatar: secure(rawAvatar),
-                content: content,
-                createdAt: created,
-                likes: integer(row["stat"]["digg_count"]) ?? 0,
-                replyToAuthor: replyToAuthor
-            ))
+            guard let reply = parseReplyRow(row), seen.insert(reply.id).inserted else { continue }
+            parsed.append(reply)
         }
         let listInfo = data["comment_list_info"].isNull ? data["common_list_info"] : data["comment_list_info"]
         let nextCursor = listInfo["cursor"].string ?? listInfo["cursor"].idString ?? ""
         let hasMore = listInfo["has_more"].bool == true && !nextCursor.isEmpty && !rawList.isEmpty
         return ReplyPage(replies: parsed, total: integer(listInfo["total"]), cursor: nextCursor, hasMore: hasMore)
+    }
+
+    /// One reply row (`reply_list[]`, or `data.reply` after posting): text and author live in a
+    /// capitalised `Common` block. Nil for a row without text.
+    static func parseReplyRow(_ row: JSONValue) -> EpisodeSocial.Reply? {
+        let common = row["Common"].isNull ? row["common"] : row["Common"]
+        guard let rawText = common["content"]["text"].string,
+              !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let base = common["user_info"]["base_info"]
+        let author = String((base["user_name"].string ?? "").prefix(200))
+        let rawAvatar = [base["user_avatar"].string, base["expand_user_avatar"].string]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty } ?? ""
+        let created = date(common["create_timestamp"])
+        let content = String(rawText.prefix(20000))
+        let rid = row["reply_id"].idString ?? DownloadNaming.sha256Prefix("\(author)\u{0}\(created?.timeIntervalSince1970 ?? 0)\u{0}\(content)", 32)
+        let toReplyId = row["reply_to_reply_id"].idString ?? ""
+        let rawReplyToAuthor = (!toReplyId.isEmpty && toReplyId != "0")
+            ? (row["reply_to_user_info"]["base_info"]["user_name"].string ?? "")
+            : ""
+        let replyToAuthor = String(rawReplyToAuthor.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
+        return .init(
+            id: rid,
+            author: author,
+            avatar: secure(rawAvatar),
+            content: content,
+            createdAt: created,
+            likes: integer(row["stat"]["digg_count"]) ?? 0,
+            replyToAuthor: replyToAuthor
+        )
     }
 
     /// Counts and times arrive as numbers or as digit strings.
