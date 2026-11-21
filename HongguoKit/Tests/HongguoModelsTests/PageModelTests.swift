@@ -286,3 +286,15 @@ final class AccountRosterTests: XCTestCase {
         XCTAssertEqual(roster.mostRecent?.nickname, "小红果")
     }
 }
+
+@MainActor
+final class SettingsDefaultsTests: XCTestCase {
+    /// 自动连播 is on unless the viewer turns it off.
+    func testAutoNextIsOnByDefault() {
+        XCTAssertTrue(AppSettings().autoNext)
+        let library = LibraryModel(offline: true, account: AccountModel(mode: .offline), backend: FixtureBackend())
+        XCTAssertTrue(library.settings.autoNext)
+        library.settings.danmaku.enabled = false
+        XCTAssertTrue(library.settings.autoNext)
+    }
+}
