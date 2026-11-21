@@ -92,6 +92,8 @@ struct RankBadge: View {
 
 struct PosterGrid: View {
     let items: [SeriesSummary]
+    /// Click plays the series instead of opening its detail page (the actor page, as in the official app).
+    var clickPlays = false
     var onAppearLast: (() -> Void)?
 
     private let columns = [GridItem(.adaptive(minimum: 132, maximum: 180), spacing: 18)]
@@ -99,21 +101,23 @@ struct PosterGrid: View {
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: 24) {
             ForEach(items) { item in
-                PosterCell(item: item)
+                PosterCell(item: item, clickPlays: clickPlays)
                     .onAppear { if item.id == items.last?.id { onAppearLast?() } }
             }
         }
     }
 }
 
-/// One grid cell: click opens the detail page, the glass play button on hover starts episode 1.
+/// One grid cell: click opens the detail page (or plays, with `clickPlays`), the glass play button
+/// on hover starts episode 1.
 struct PosterCell: View {
     let item: SeriesSummary
+    var clickPlays = false
     @Environment(AppModel.self) private var model
     @State private var hovering = false
 
     var body: some View {
-        Button { model.open(item) } label: { PosterCard(summary: item, hovering: hovering) }
+        Button { if clickPlays { playFirst() } else { model.open(item) } } label: { PosterCard(summary: item, hovering: hovering) }
             .buttonStyle(.plain)
             .overlay(alignment: .top) {
                 if hovering {
@@ -130,6 +134,7 @@ struct PosterCell: View {
             .onHover { value in withAnimation(.easeOut(duration: 0.15)) { hovering = value } }
             .contextMenu {
                 Button("立即播放第 1 集") { playFirst() }
+                if clickPlays { Button("查看详情") { model.open(item) } }
                 Button(model.isFavorite(item.seriesId) ? "取消收藏" : "收藏") {
                     model.toggleFavorite(seriesId: item.seriesId, title: item.title, cover: item.cover)
                 }

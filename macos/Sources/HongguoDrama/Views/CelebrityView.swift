@@ -3,7 +3,8 @@ import HongguoCore
 
 /// An actor's page: picture, name, the role in the series it was opened from and their
 /// introduction (all from the series detail's cast), then their works from the App's actor works
-/// read (one batch, as the official app shows it, with the total). A work opens its detail page.
+/// read (one batch, as the official app shows it, with the total). Clicking a work plays it, as in
+/// the official app; its context menu opens the detail page.
 struct CelebrityView: View {
     let member: EpisodeSocial.CastMember
     @Environment(AppModel.self) private var model
@@ -31,7 +32,7 @@ struct CelebrityView: View {
                             LoadStateView(error: error, isLoading: isLoading) { Task { await load() } }
                         }
                     } else {
-                        PosterGrid(items: works)
+                        PosterGrid(items: works, clickPlays: true)
                         if let total, total > works.count {
                             Text("红果只返回了其中 \(works.count) 部").font(.system(size: 12)).foregroundStyle(.secondary)
                         }
