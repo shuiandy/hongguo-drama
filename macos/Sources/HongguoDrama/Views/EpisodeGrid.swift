@@ -11,21 +11,22 @@ struct EpisodeGrid: View {
     var minimumCellWidth: CGFloat = 52
     let onSelect: (Episode) -> Void
 
-    static let rangeSize = 30
     @State private var range = 0
 
+    private var groups: [ClosedRange<Int>] { EpisodeRanges.ranges(total: episodes.count) }
+
     private var ranges: [GlassOption<Int>] {
-        guard episodes.count > Self.rangeSize else { return [] }
-        return stride(from: 0, to: episodes.count, by: Self.rangeSize).map { start in
-            let end = min(start + Self.rangeSize, episodes.count)
-            return GlassOption(label: "\(start + 1)–\(end)", value: start / Self.rangeSize)
+        guard groups.count > 1 else { return [] }
+        return groups.enumerated().map { i, group in
+            GlassOption(label: "\(group.lowerBound)–\(group.upperBound)", value: i)
         }
     }
 
     private var visible: ArraySlice<Episode> {
-        guard !ranges.isEmpty else { return episodes[...] }
-        let start = min(range * Self.rangeSize, max(0, episodes.count - 1))
-        return episodes[start..<min(start + Self.rangeSize, episodes.count)]
+        let groups = self.groups
+        guard !groups.isEmpty else { return episodes[...] }
+        let group = groups[min(range, groups.count - 1)]
+        return episodes[(group.lowerBound - 1)..<group.upperBound]
     }
 
     var body: some View {
@@ -60,7 +61,7 @@ struct EpisodeGrid: View {
 
     private func jumpToCurrent() {
         guard let current, current >= 1, !ranges.isEmpty else { return }
-        range = (current - 1) / Self.rangeSize
+        range = EpisodeRanges.index(of: current, total: episodes.count)
     }
 }
 

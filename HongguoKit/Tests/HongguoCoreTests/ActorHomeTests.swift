@@ -111,4 +111,23 @@ final class ActorHomeTests: XCTestCase {
             XCTFail("unexpected \(error)")
         }
     }
+
+    func testAppendingMixedWorksPreservesRoutingAndRejectsStalePages() throws {
+        let first = SeriesSummary(seriesId: "1", title: "已上线", cover: "")
+        let second = SeriesSummary(seriesId: "2", title: "待上线", cover: "")
+        var page = ActorWorksPage(items: [first], cursor: "p2", hasMore: true)
+        let next = ActorWorksPage(items: [first, second, second], upcomingIds: ["2"],
+                                  upcomingNote: "可预约", cursor: "p3", hasMore: true)
+        page.append(next, requestedCursor: "p2")
+        XCTAssertEqual(page.items.map(\.seriesId), ["1", "2"])
+        XCTAssertFalse(page.isUpcoming("1"))
+        XCTAssertTrue(page.isUpcoming("2"))
+        XCTAssertEqual(page.upcomingNote, "可预约")
+        let saved = page
+        page.append(next, requestedCursor: "p2")
+        XCTAssertEqual(page, saved)
+        page.append(next, requestedCursor: "p3")
+        XCTAssertFalse(page.hasMore)
+    }
+
 }

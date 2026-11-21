@@ -49,23 +49,20 @@ final class AccountSync {
     private var model: AppModel { AppModel.shared }
     private var enabled: Bool { model.settings.accountWriteSync }
 
-    /// The signed-in account id, or nil. Checked again before every write.
-    private func accountId() async -> String? {
-        await AccountService.shared.status().profile?.id
-    }
-
     // MARK: Pull
 
     /// Brings the account's favourites and likes here and writes up what the account lacks.
     func pull() async {
-        guard !isPulling, let id = await accountId() else { return }
+        let account = AccountState.shared
+        guard !isPulling, let token = account.session.current else { return }
+        let id = token.accountId
         isPulling = true
-        defer { isPulling = false }
+        defer { if account.session.accepts(token) { isPulling = false } }
         async let shelfTask = Self.capture { try await AccountDataAccess.bookshelfVideos() }
         async let likesTask = Self.capture { try await AccountDataAccess.likedVideos(userId: id) }
         async let reservationsTask = Self.capture { try await AccountDataAccess.reservations() }
         let shelfResult = await shelfTask, likesResult = await likesTask, reservationsResult = await reservationsTask
-        guard await accountId() == id else { return }
+        guard account.session.accepts(token) else { return }
         var problems: [String] = []
         switch shelfResult {
         case .success(let rows):
@@ -94,8 +91,10 @@ final class AccountSync {
     func cancelReservation(_ item: AccountDataAccess.Reservation) {
         let itemId = item.subscribeItemId.isEmpty ? item.seriesId : item.subscribeItemId
         guard itemId.allSatisfy(\.isNumber), !itemId.isEmpty else { return }
-        let previous = reservations
-        reservations.removeAll { $0.seriesId == item.seriesId || $0.subscribeItemId == itemId }
+        let matches: (AccountDataAccess.Reservation) -> Bool = { $0.seriesId == item.seriesId || $0.subscribeItemId == itemId }
+        guard AccountState.shared.session.current != nil,
+              let previous = reservations.enumerated().first(where: { matches($0.element) }) else { return }
+        reservations.removeAll(where: matches)
         let online = item.isOnline
         enqueue("reservation:\(itemId)") { account in
             // One request each, no second try with the other one.
@@ -105,7 +104,7 @@ final class AccountSync {
                 try await AccountDataAccess.setReservation(accountId: account, itemId: itemId, reserved: false)
             }
         } failure: { [weak self] text in
-            self?.reservations = previous
+            if let self { AccountListRollback.restore(&self.reservations, prior: previous, matching: matches) }
             return "预约同步失败：\(text)"
         }
     }
@@ -218,7 +217,13 @@ final class AccountSync {
     }
 
     /// Forgets the pending writes when the account signs out.
-    func signedOut() {
+    func resetSession() {
+        isPulling = false
+        cloudFavoriteCount = 0
+        cloudLikeCount = 0
+        lastProgressUpload = .distantPast
+        lastPull = .distantPast
+        progressError = ""
         shelf = []
         likes = []
         reservations = []
@@ -235,15 +240,19 @@ final class AccountSync {
                          _ write: @escaping @Sendable (String) async throws -> Void,
                          success: @escaping @MainActor () -> Void = {},
                          failure: @escaping @MainActor (String) -> String) {
+        let state = AccountState.shared
+        guard let token = state.session.current else { return }
         let previous = writes[key]
         let task = Task { @MainActor [weak self] in
             await previous?.value
-            guard let self, !Task.isCancelled, let account = await self.accountId() else { return }
+            guard let self, !Task.isCancelled, state.session.accepts(token) else { return }
             do {
-                try await write(account)
+                try await write(token.accountId)
+                guard state.session.accepts(token) else { return }
                 success()
                 if !quiet { self.message = "" }
             } catch {
+                guard state.session.accepts(token) else { return }
                 if error is CancellationError || (error as? HongguoError)?.kind == .cancelled { return }
                 let text = failure(Self.text(error))
                 if !quiet { self.message = text }
@@ -255,13 +264,11 @@ final class AccountSync {
     /// Keeps the "seen on both sides" list in step with a local change, so the next pull does not
     /// read a fresh local add as "removed elsewhere" or write a removal back up.
     private func remember(_ present: Bool, id: String, in list: String) {
-        Task { @MainActor in
-            guard let account = await accountId() else { return }
-            let key = "accountSync.\(list).\(account)"
-            var seen = Set(defaults.stringArray(forKey: key) ?? [])
-            if present { seen.insert(id) } else { seen.remove(id) }
-            defaults.set(Array(seen), forKey: key)
-        }
+        guard let account = AccountState.shared.session.current?.accountId else { return }
+        let key = "accountSync.\(list).\(account)"
+        var seen = Set(defaults.stringArray(forKey: key) ?? [])
+        if present { seen.insert(id) } else { seen.remove(id) }
+        defaults.set(Array(seen), forKey: key)
     }
 
     private static func text(_ error: Error) -> String {

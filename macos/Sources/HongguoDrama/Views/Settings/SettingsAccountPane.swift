@@ -87,7 +87,6 @@ struct SettingsAccountPane: View {
     private func logout() {
         Task {
             let warning = await AccountService.shared.logout()
-            AccountSync.shared.signedOut()
             account.profile = nil
             account.message = warning
         }
