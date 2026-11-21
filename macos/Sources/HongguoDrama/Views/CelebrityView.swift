@@ -84,7 +84,6 @@ struct CelebrityView: View {
         return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(worksTab?.name ?? "作品").font(.system(size: 20, weight: .heavy))
-                if let total = worksTab?.total, total > 0 { Text("共 \(total) 部").font(.system(size: 12)).foregroundStyle(.secondary) }
                 Spacer(minLength: 0)
                 if let items = page?.items, items.count > 1 {
                     Picker("排序", selection: $order) {
@@ -95,9 +94,9 @@ struct CelebrityView: View {
                     .fixedSize()
                 }
             }
-            if let subs = worksTab?.subTabs, subs.count > 1 { subTabBar(subs) }
+            if let subs = home?.worksSubTabs, subs.count > 1 { subTabBar(subs) }
             if let page {
-                if !page.upcomingNote.isEmpty, let upcoming = worksTab?.subTabs.first(where: { $0.name == "预约" }), upcoming.type != subTab {
+                if !page.upcomingNote.isEmpty, let upcoming = home?.worksSubTabs.first(where: { $0.name == "预约" }), upcoming.type != subTab {
                     Button { subTab = upcoming.type } label: {
                         GlassTag(text: page.upcomingNote, systemImage: "calendar", trailingSystemImage: "chevron.right")
                     }
@@ -149,7 +148,7 @@ struct CelebrityView: View {
             let loaded = try await ActorHomeService.home(userId: member.profileUserId)
             home = loaded
             guard let tab = loaded.worksTab else { error = "这位演员的主页没有作品"; return }
-            subTab = tab.subTabs.first?.type ?? 0
+            subTab = (loaded.worksSubTabs.first ?? tab.subTabs.first)?.type ?? 0
         } catch {
             self.error = describe(error)
         }

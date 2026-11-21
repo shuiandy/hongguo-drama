@@ -34,6 +34,12 @@ public struct ActorHome: Sendable, Equatable {
     public var worksTab: Tab? {
         tabs.first { ActorHomeService.worksTabTypes.contains($0.type) } ?? tabs.first { ["作品", "剧作"].contains($0.name) }
     }
+
+    /// The works tab's sub tabs the apps can show: all but 剧评 (121), whose list holds review posts,
+    /// not series.
+    public var worksSubTabs: [Tab] {
+        (worksTab?.subTabs ?? []).filter { $0.type != ActorHomeService.reviewSubTabType && $0.name != "剧评" }
+    }
 }
 
 /// One list of an actor's home page.
@@ -56,6 +62,7 @@ public enum ActorHomeService {
     static let commentSource = 1506
     static let serverChannel = 0
     static let worksTabTypes = [23, 8]
+    static let reviewSubTabType = 121
     private static let homeCache = TTLCache<ActorHome>(limit: 64)
     private static let pageCache = TTLCache<ActorWorksPage>(limit: 128)
 
@@ -112,7 +119,7 @@ public enum ActorHomeService {
                          subTabs: (value["sub_tabs"].array ?? []).compactMap(tab))
         }
         return ActorHome(tabs: (data["tabs"].array ?? []).compactMap(tab),
-                         highlight: EpisodeSocialService.integer(data["hightlight"]["tab_type"]))
+                         highlight: EpisodeSocialService.integer(data["hightlight"]) ?? EpisodeSocialService.integer(data["hightlight"]["tab_type"]))
     }
 
     static func parseWorks(_ json: JSONValue) throws -> ActorWorksPage {

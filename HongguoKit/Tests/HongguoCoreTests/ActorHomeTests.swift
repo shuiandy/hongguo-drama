@@ -56,6 +56,8 @@ final class ActorHomeTests: XCTestCase {
         let works = try XCTUnwrap(home.worksTab)
         XCTAssertEqual(works.type, 23)
         XCTAssertEqual(works.subTabs.map(\.name), ["全部", "剧作", "预约", "合集", "剧评"])
+        XCTAssertEqual(home.worksSubTabs.map(\.name), ["全部", "剧作", "预约", "合集"], "剧评 holds posts, not series")
+        XCTAssertEqual(home.highlight, 23, "a bare number is read too")
     }
 
     func testWorksListReadsReleasedAndUpcomingSeries() throws {
