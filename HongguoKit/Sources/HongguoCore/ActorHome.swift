@@ -40,6 +40,13 @@ public struct ActorHome: Sendable, Equatable {
     public var worksSubTabs: [Tab] {
         (worksTab?.subTabs ?? []).filter { $0.type != ActorHomeService.reviewSubTabType && $0.name != "剧评" }
     }
+
+    /// The sub tab the page opens on: the server's highlight (剧作 22 on the current client, as the
+    /// official app opens), else the first one shown.
+    public var defaultSubTab: Tab? {
+        let subs = worksSubTabs
+        return subs.first { $0.type == highlight } ?? subs.first
+    }
 }
 
 /// One list of an actor's home page.

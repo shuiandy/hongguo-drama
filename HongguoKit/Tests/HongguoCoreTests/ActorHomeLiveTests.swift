@@ -3,9 +3,10 @@ import XCTest
 @testable import HongguoCore
 
 /// `HONGGUO_LIVE=1 swift test --filter ActorHomeLiveTests` (optional `HONGGUO_PROBE=剧名`, a
-/// live-action drama): the cast from the App detail, then the first actor's home page tabs and the
-/// 剧作 lists as the apps read them. One App search and up to four App reads. Each step logs to
-/// stderr as it starts and ends and gives up after 25 s. Prints names, titles and counts only.
+/// live-action drama): the cast from the App detail, then the first actor's home page tabs, the sub
+/// tab the apps open on and 全部, then one single video from 全部 opened as a series. One App
+/// search and up to seven App reads. Each step logs to stderr as it starts and ends and gives up
+/// after 25 s. Prints names, titles and counts only.
 final class ActorHomeLiveTests: XCTestCase {
     struct StepTimeout: Error, CustomStringConvertible {
         let name: String
@@ -70,7 +71,12 @@ final class ActorHomeLiveTests: XCTestCase {
             print("ACTOR HOME\n" + lines.joined(separator: "\n"))
             return XCTFail("no 剧作 tab")
         }
-        for sub in works.subTabs.prefix(2) {
+        // The sub tab the apps open on (the highlight, 剧作), then 全部, which also holds single videos.
+        var subs = [home.defaultSubTab].compactMap { $0 }
+        if let all = home.worksSubTabs.first(where: { $0.type == 100 }), !subs.contains(all) { subs.append(all) }
+        lines.append("opens on: \(home.defaultSubTab?.name ?? "-")")
+        var single: SeriesSummary?
+        for sub in subs {
             try await Task.sleep(for: .seconds(1))
             do {
                 let page = try await Self.step("works \(sub.name)") { try await ActorHomeService.works(userId: actor.profileUserId, tab: works.type, subTab: sub.type) }
@@ -80,7 +86,20 @@ final class ActorHomeLiveTests: XCTestCase {
                 for card in page.items.prefix(3) { lines.append("  \(card.title): \(card.episodeLabel) \(card.heat)") }
                 let hottest = ActorHomeService.hottestFirst(page.items).prefix(3).map(\.heat)
                 lines.append("  hottest first: \(hottest.joined(separator: ", "))")
+                if single == nil { single = page.items.first { $0.episodeCount == 0 && $0.heat.isEmpty && !page.upcomingIds.contains($0.seriesId) } }
             } catch { lines.append("\(sub.name): \(error)") }
+        }
+        // A single video in 全部 plays like a one-episode series: the series read sends it on to the
+        // album read, which answers one creator video (content_type 1001) for its own id.
+        if let single {
+            try await Task.sleep(for: .seconds(1))
+            do {
+                let episodes = try await Self.step("single video") { try await SeriesService().episodes(seriesId: single.seriesId) }
+                lines.append("single video \(single.title): episodes=\(episodes.episodes.count) title=\(episodes.title)")
+                XCTAssertEqual(episodes.episodes.count, 1, "a single video opens as one episode")
+            } catch { lines.append("single video \(single.title): \(error)"); XCTFail("single video did not resolve: \(error)") }
+        } else {
+            lines.append("no single video in the lists read")
         }
         print("ACTOR HOME\n" + lines.joined(separator: "\n"))
     }

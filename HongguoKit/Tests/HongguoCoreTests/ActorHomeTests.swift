@@ -43,12 +43,13 @@ final class ActorHomeTests: XCTestCase {
         XCTAssertEqual(works.total, 52)
         XCTAssertEqual(works.subTabs.map(\.name), ["全部", "预约"])
         XCTAssertEqual(works.subTabs.map(\.type), [100, 20])
+        XCTAssertEqual(home.defaultSubTab?.name, "全部", "a highlight that names no sub tab opens the first")
         XCTAssertThrowsError(try ActorHomeService.parseHome(try JSONValue.parse(#"{"code":103001,"message":"参数错误"}"#)))
     }
 
     func testCurrentClientWorksTabIs作品() throws {
         let home = try ActorHomeService.parseHome(try JSONValue.parse(#"""
-        {"code":0,"data":{"hightlight":23,"tabs":[
+        {"code":0,"data":{"hightlight":22,"tabs":[
           {"tab_type":23,"name":"作品","total":220,"sub_tabs":[{"tab_type":100,"name":"全部","total":220},{"tab_type":22,"name":"剧作","total":45},
             {"tab_type":20,"name":"预约","total":7},{"tab_type":13,"name":"合集","total":0},{"tab_type":121,"name":"剧评","total":2}]},
           {"tab_type":7,"name":"红果圈","total":1000}]}}
@@ -57,7 +58,8 @@ final class ActorHomeTests: XCTestCase {
         XCTAssertEqual(works.type, 23)
         XCTAssertEqual(works.subTabs.map(\.name), ["全部", "剧作", "预约", "合集", "剧评"])
         XCTAssertEqual(home.worksSubTabs.map(\.name), ["全部", "剧作", "预约", "合集"], "剧评 holds posts, not series")
-        XCTAssertEqual(home.highlight, 23, "a bare number is read too")
+        XCTAssertEqual(home.highlight, 22, "a bare number is read too")
+        XCTAssertEqual(home.defaultSubTab?.name, "剧作", "the page opens on the server's highlight, as the official app does")
     }
 
     func testWorksListReadsReleasedAndUpcomingSeries() throws {
