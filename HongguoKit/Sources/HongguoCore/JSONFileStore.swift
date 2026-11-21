@@ -12,10 +12,8 @@ public struct JSONFileStore<Value: Codable>: Sendable {
         url = directory.appendingPathComponent(name)
     }
 
-    public static var defaultDirectory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("HongguoDrama", isDirectory: true)
-    }
+    /// `StorageRoot.appFolder`: Application Support/HongguoDrama unless the app chose another base.
+    public static var defaultDirectory: URL { StorageRoot.appFolder }
 
     public func load(default fallback: @autoclosure () -> Value) -> Value {
         guard let data = try? Data(contentsOf: url) else { return fallback() }
