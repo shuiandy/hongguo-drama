@@ -387,6 +387,11 @@ public final class PlaybackSession {
             stopForSleepTimer()
             return
         }
+        // 自动连播 off (the Mac and tvOS settings; on by default, the iOS app has no switch for it).
+        guard app.library.settings.autoNext else {
+            engine.pause()
+            return
+        }
         if let nextNumber = nextPlayableEpisode(after: episodeNumber),
            case .playEpisode(let number) = flow.selectEpisode(nextNumber) {
             begin(episode: number, at: 0)
