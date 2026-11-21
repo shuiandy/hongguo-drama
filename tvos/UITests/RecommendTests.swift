@@ -4,14 +4,7 @@ import XCTest
 /// place, Back returns to the feed. Offline and muted.
 final class RecommendTests: XCTestCase {
     func testDownChangesClipAndPressOpensSeries() {
-        // Start from the home screen with the previous test's app fully gone: launched while
-        // tvOS is still switching away from it, the app came up as a black, half-size window.
-        XCUIApplication().terminate()
-        XCUIRemote.shared.press(.home)
-        Thread.sleep(forTimeInterval: 2)
-        let app = XCUIApplication()
-        app.launchArguments = ["-HongguoOfflineFixtures", "YES", "-HongguoMuted", "YES"]
-        app.launch()
+        let app = freshLaunch([])
         let main = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '观看完整剧集'")).firstMatch
         XCTAssertTrue(main.waitForExistence(timeout: 10), "the app opens on 推荐")
         let next = app.staticTexts["下一部"]

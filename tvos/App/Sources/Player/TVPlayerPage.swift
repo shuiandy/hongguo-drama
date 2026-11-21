@@ -23,11 +23,13 @@ struct TVPlayerPage: View {
     @State private var nowPlaying = NowPlaying()
     @Environment(\.scenePhase) private var scenePhase
     @FocusState private var focus: Focus?
+    /// Bumped to hand the focus back to the picture (the remote surface) when what had it goes.
+    @State private var surfaceFocus = 0
 
-    enum Panel: Equatable { case episodes, speed, quality }
+    enum Panel: Equatable { case episodes, speed, quality, comments }
     /// The same choices as the iOS player's speed menu.
     static let rates: [Float] = [0.75, 1, 1.25, 1.5, 2, 3]
-    enum Focus: Hashable { case next, episodes, danmaku, speed, quality, panel(Int) }
+    enum Focus: Hashable { case next, episodes, comments, danmaku, speed, quality, panel(Int) }
 
     init(target: PlayerTarget, app: TVAppModel) {
         self.app = app
@@ -54,7 +56,7 @@ struct TVPlayerPage: View {
                 }
                 status
                     .position(x: video.midX, y: video.midY)
-                RemoteSurface(isActive: panel == nil,
+                RemoteSurface(isActive: panel == nil, focusRequest: surfaceFocus,
                               onSelect: clickOrPlayKey,
                               onStep: { step($0) }, onScrub: { scrub($0) },
                               onSwipeDown: swipeDown, onMenu: back)
@@ -64,7 +66,7 @@ struct TVPlayerPage: View {
                         .transition(.opacity)
                 }
                 if panel == nil {
-                    NextEpisodeButton(session: session, focus: $focus)
+                    NextEpisodeButton(session: session, focus: $focus) { surfaceFocus += 1 }
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                         .padding(.trailing, 90).padding(.bottom, controlsVisible ? 260 : 90)
                 }
@@ -144,6 +146,9 @@ struct TVPlayerPage: View {
                 HStack(spacing: 28) {
                     Button { open(.episodes) } label: { Label("选集", systemImage: "square.grid.3x3") }
                         .focused($focus, equals: .episodes)
+                    Button { open(.comments) } label: { Label("评论", systemImage: "text.bubble") }
+                        .focused($focus, equals: .comments)
+                        .disabled(session.currentEpisode == nil)
                     let danmakuOn = app.library.settings.danmaku.enabled
                     Button { toggleDanmaku() } label: {
                         Label(danmakuOn ? "弹幕 开" : "弹幕 关", systemImage: danmakuOn ? "captions.bubble.fill" : "captions.bubble")
@@ -157,7 +162,7 @@ struct TVPlayerPage: View {
                 }
                 .focusSection()
                 // Up from the buttons puts the controls away and the remote back on the picture.
-                .onMoveCommand { if $0 == .up { controlsVisible = false; focus = nil } }
+                .onMoveCommand { if $0 == .up { controlsVisible = false; focus = nil; surfaceFocus += 1 } }
             }
         }
         .padding(.horizontal, 90)
@@ -180,6 +185,10 @@ struct TVPlayerPage: View {
                 close()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        case .comments:
+            if let episode = session.currentEpisode {
+                CommentsSidePanel(seriesId: session.target.seriesId, vid: episode.vid) { close() }
+            }
         case .speed:
             SidePanel(title: "倍速") {
                 ForEach(Array(Self.rates.enumerated()), id: \.offset) { index, rate in
@@ -248,7 +257,7 @@ struct TVPlayerPage: View {
     private func back() {
         if panel != nil { close(); return }
         // The controls' buttons have the focus: put them away first.
-        if focus != nil, controlsVisible { controlsVisible = false; focus = nil; return }
+        if focus != nil, controlsVisible { controlsVisible = false; focus = nil; surfaceFocus += 1; return }
         exit()
     }
 
@@ -260,6 +269,7 @@ struct TVPlayerPage: View {
     private func close() {
         panel = nil
         focus = nil
+        surfaceFocus += 1
     }
 
     private func toggleDanmaku() {
@@ -279,6 +289,7 @@ struct TVPlayerPage: View {
         try? await Task.sleep(for: .seconds(5))
         guard !Task.isCancelled, engine.isPlaying, panel == nil, scrubTo == nil else { return }
         controlsVisible = false
+        surfaceFocus += 1
     }
 
     private func exit() {
@@ -310,6 +321,8 @@ struct TVPlayerPage: View {
 private struct NextEpisodeButton: View {
     let session: PlaybackSession
     var focus: FocusState<TVPlayerPage.Focus?>.Binding
+    /// It went (the episode moved on): the picture takes the focus back.
+    var gone: () -> Void
 
     var body: some View {
         let engine = session.engine
@@ -321,7 +334,8 @@ private struct NextEpisodeButton: View {
                     .focused(focus, equals: .next)
             }
         }
-        .onChange(of: shows) { _, now in if now { focus.wrappedValue = .next } }
+        // It takes the focus when it shows and hands it back to the picture when it goes.
+        .onChange(of: shows) { _, now in if now { focus.wrappedValue = .next } else { gone() } }
     }
 }
 

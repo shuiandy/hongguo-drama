@@ -10,12 +10,19 @@ struct TheaterPage: View {
     @Environment(TVAppModel.self) private var app
     @State private var shelves: [TheaterModel] = []
     @State private var tint = Color.gray
+    @State private var releases: NewReleasesPage.Tab?
 
     var body: some View {
         ZStack {
             AmbientBackground(tint: tint)
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 36) {
+                    // 新剧 and 追剧日历, as the iOS 剧场's chips.
+                    HStack(spacing: 30) {
+                        Button("新剧", systemImage: "sparkles") { releases = .recommended }
+                        Button("追剧日历", systemImage: "calendar") { releases = .calendar }
+                    }
+                    .focusSection()
                     if let record = app.library.history().first {
                         ContinueCard(record: record) { follow(SeriesSummary(seriesId: record.seriesId, title: record.title, cover: record.cover)) }
                     }
@@ -27,8 +34,17 @@ struct TheaterPage: View {
                 .padding(.vertical, 40)
             }
             .scrollClipDisabled()
+            if let releases {
+                NewReleasesPage(tab: releases) { self.releases = nil }
+                    .transition(.opacity)
+            }
         }
         .onAppear {
+            switch app.launch.route {
+            case .newReleases where releases == nil && shelves.isEmpty: releases = .recommended
+            case .calendar where releases == nil && shelves.isEmpty: releases = .calendar
+            default: break
+            }
             if shelves.isEmpty {
                 shelves = CatalogKind.categories.map { kind in
                     let model = TheaterModel(backend: app.backend)

@@ -3,10 +3,7 @@ import XCTest
 /// 我的 and 扫码登录, offline and muted: no request is made and nobody signs in.
 final class MeTests: XCTestCase {
     private func launch(_ extra: [String] = []) -> XCUIApplication {
-        let app = XCUIApplication()
-        app.launchArguments = ["-HongguoOfflineFixtures", "YES", "-HongguoMuted", "YES", "-HongguoRoute", "me"] + extra
-        app.launch()
-        return app
+        freshLaunch(["-HongguoRoute", "me"] + extra)
     }
 
     func testSignedOutCardOpensLoginAndBack() {

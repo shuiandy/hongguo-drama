@@ -75,7 +75,8 @@ final class TVAppModel: PlayerHost {
         // Accounts saved: choose one first; none: straight to 推荐.
         showsAccountPicker = launch.route == .accounts || (!roster.entries.isEmpty && launch.route == .recommend)
         // The series page and player routes open over 推荐.
-        selectedTab = [.detail, .player, .playerControls, .playerEpisodes, .accounts].contains(launch.route) ? .recommend : launch.route
+        selectedTab = [.detail, .player, .playerControls, .playerEpisodes, .accounts].contains(launch.route) ? .recommend
+            : [.newReleases, .calendar].contains(launch.route) ? .theater : launch.route
         showsLogin = launch.arguments.showsLogin
         player.isMuted = launch.muted
         // A muted run (automated tests on a Mac) must not claim the audio output at all.

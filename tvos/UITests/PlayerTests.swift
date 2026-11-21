@@ -3,10 +3,7 @@ import XCTest
 /// The player and the series page driven with the Siri Remote, offline and muted.
 final class PlayerTests: XCTestCase {
     private func launch(route: String) -> XCUIApplication {
-        let app = XCUIApplication()
-        app.launchArguments = ["-HongguoOfflineFixtures", "YES", "-HongguoMuted", "YES", "-HongguoRoute", route]
-        app.launch()
-        return app
+        freshLaunch(["-HongguoRoute", route])
     }
 
     private let remote = XCUIRemote.shared
@@ -31,9 +28,10 @@ final class PlayerTests: XCTestCase {
     }
 
     func testRightClickGoesForwardTenSeconds() throws {
-        let app = launch(route: "player-controls")
-        XCTAssertTrue(app.buttons["选集"].waitForExistence(timeout: 10))
-        remote.press(.select) // pause, so the clock holds still
+        let app = launch(route: "player")
+        XCTAssertTrue(app.staticTexts["离线示例，没有视频画面"].waitForExistence(timeout: 10))
+        remote.press(.select) // pause and show the controls, so the clock holds still
+        XCTAssertTrue(app.buttons["选集"].waitForExistence(timeout: 5))
         let before = try XCTUnwrap(elapsed(app))
         remote.press(.right)
         let deadline = Date().addingTimeInterval(3)
@@ -60,6 +58,7 @@ final class PlayerTests: XCTestCase {
     func testTheaterToSeriesPageToPlayer() {
         let app = launch(route: "theater")
         XCTAssertTrue(app.staticTexts["真人剧"].waitForExistence(timeout: 10))
+        remote.press(.down) // 新剧 / 追剧日历
         remote.press(.down) // 继续观看
         remote.press(.down) // the first shelf
         remote.press(.select)
@@ -122,7 +121,37 @@ final class PlayerTests: XCTestCase {
         let gone = NSPredicate(format: "exists == false")
         expectation(for: gone, evaluatedWith: next)
         waitForExpectations(timeout: 10)
+        Thread.sleep(forTimeInterval: 1) // the picture takes the focus back from the button that went
         remote.press(.playPause) // pause, to show the controls
         XCTAssertTrue(app.staticTexts["第2集 / 共60集"].waitForExistence(timeout: 5))
+    }
+
+    /// 评论 in the player: the episode's comments, read only; Back closes the panel first.
+    func testCommentsPanel() {
+        let app = launch(route: "player")
+        XCTAssertTrue(app.staticTexts["离线示例，没有视频画面"].waitForExistence(timeout: 10))
+        remote.press(.select) // controls
+        XCTAssertTrue(app.buttons["评论"].waitForExistence(timeout: 5))
+        remote.press(.down) // to 选集
+        remote.press(.right) // 评论
+        expectation(for: NSPredicate(format: "hasFocus == true"), evaluatedWith: app.buttons["评论"])
+        waitForExpectations(timeout: 5)
+        remote.press(.select)
+        XCTAssertTrue(app.staticTexts["422条评论"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["示例用户甲"].exists)
+        remote.press(.menu)
+        XCTAssertFalse(app.staticTexts["422条评论"].waitForExistence(timeout: 2))
+    }
+
+    /// 新剧推荐 and 追剧日历 (opened from 剧场; here by route).
+    func testNewReleasesAndCalendar() {
+        let app = launch(route: "new")
+        XCTAssertTrue(app.buttons["新剧推荐"].waitForExistence(timeout: 10))
+        let calendar = launch(route: "calendar")
+        XCTAssertTrue(calendar.staticTexts["今天"].waitForExistence(timeout: 10), "the calendar's days")
+        XCTAssertTrue(calendar.buttons["真人剧"].exists, "the content filter")
+        remote.press(.menu)
+        XCTAssertFalse(calendar.staticTexts["今天"].waitForExistence(timeout: 3), "Back closes it")
+        XCTAssertTrue(calendar.buttons["新剧"].exists, "back on 剧场")
     }
 }

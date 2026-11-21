@@ -3,10 +3,7 @@ import XCTest
 /// 选择账号 with the three made-up sample accounts: no login behind them and no request.
 final class AccountPickerTests: XCTestCase {
     private func launch() -> XCUIApplication {
-        let app = XCUIApplication()
-        app.launchArguments = ["-HongguoOfflineFixtures", "YES", "-HongguoMuted", "YES", "-HongguoRoute", "accounts"]
-        app.launch()
-        return app
+        freshLaunch(["-HongguoRoute", "accounts"])
     }
 
     private func recommendButton(_ app: XCUIApplication) -> XCUIElement {

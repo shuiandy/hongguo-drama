@@ -4,10 +4,7 @@ import XCTest
 /// route switch opens the tab it names.
 final class LaunchTests: XCTestCase {
     private func launch(route: String) -> XCUIApplication {
-        let app = XCUIApplication()
-        app.launchArguments = ["-HongguoOfflineFixtures", "YES", "-HongguoMuted", "YES", "-HongguoRoute", route]
-        app.launch()
-        return app
+        freshLaunch(["-HongguoRoute", route])
     }
 
     func testSixTopTabs() {

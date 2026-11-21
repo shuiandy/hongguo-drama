@@ -15,6 +15,8 @@ struct LaunchOptions: Sendable {
         case playerControls = "player-controls", playerEpisodes = "player-episodes"
         /// 选择账号 (with made-up accounts in sample runs).
         case accounts
+        /// 新剧推荐 and 追剧日历, over 剧场.
+        case newReleases = "new", calendar
     }
 
     var arguments: LaunchArguments

@@ -8,6 +8,8 @@ import UIKit
 struct RemoteSurface: UIViewRepresentable {
     /// Takes focus and input only while true (a panel takes over otherwise).
     var isActive: Bool
+    /// Changing it asks the focus system to move the focus here (what had it went away).
+    var focusRequest: Int = 0
     var onSelect: () -> Void
     var onStep: (_ direction: Int) -> Void
     /// Horizontal swipe: the fraction of the surface's width moved so far, then nil when it ends.
@@ -27,11 +29,20 @@ struct RemoteSurface: UIViewRepresentable {
             view.isActive = isActive
             view.setNeedsFocusUpdate()
         }
+        if view.focusRequest != focusRequest {
+            view.focusRequest = focusRequest
+            DispatchQueue.main.async {
+                guard view.isActive, let system = UIFocusSystem.focusSystem(for: view) else { return }
+                system.requestFocusUpdate(to: view)
+                system.updateFocusIfNeeded()
+            }
+        }
     }
 
     final class SurfaceView: UIView {
         var handlers: RemoteSurface?
         var isActive = true
+        var focusRequest = 0
         private var panStart: CGPoint = .zero
         private var scrubbing = false
 
