@@ -26,6 +26,8 @@ targets:
         product: AppLogic
       - package: HongguoKit
         product: HongguoModels
+      - package: HongguoKit
+        product: HongguoPlayerKit
     info:
       path: App/Info.plist
       properties:
@@ -51,6 +53,23 @@ targets:
         # kept in the repository: pass DEVELOPMENT_TEAM on the command line for a device build.
         CODE_SIGN_STYLE: Automatic
         ENABLE_USER_SCRIPT_SANDBOXING: YES
+  HongguoDramaTVTests:
+    type: bundle.unit-test
+    platform: tvOS
+    sources:
+      - path: UnitTests
+    dependencies:
+      - target: HongguoDramaTV
+      - package: HongguoKit
+        product: HongguoPlayerKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.shuiandy.hongguo-drama.tvos.tests
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        BUNDLE_LOADER: $(TEST_HOST)
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/HongguoDramaTV.app/HongguoDramaTV
   HongguoDramaTVUITests:
     type: bundle.ui-testing
     platform: tvOS
@@ -70,6 +89,7 @@ schemes:
     build:
       targets:
         HongguoDramaTV: all
+        HongguoDramaTVTests: [test]
         HongguoDramaTVUITests: [test]
     run:
       config: Debug
@@ -79,4 +99,5 @@ schemes:
     test:
       config: Debug
       targets:
+        - HongguoDramaTVTests
         - HongguoDramaTVUITests
