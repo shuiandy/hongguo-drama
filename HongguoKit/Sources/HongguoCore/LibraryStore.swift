@@ -185,8 +185,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     }
 }
 
-/// JSON persistence in `~/Library/Application Support/HongguoDrama`.
-/// Writes are atomic; a damaged file is moved aside instead of crashing the app.
+/// JSON persistence in `StorageRoot.appFolder` (`~/Library/Application Support/HongguoDrama`
+/// unless the app chose another base). Writes are atomic; a damaged file is moved aside instead
+/// of crashing the app. With a mirror (`StorageRoot.mirror`), the settings and the most recent
+/// `mirrorLimit` watch records are also kept in `UserDefaults` and read back when the file is
+/// gone (a base folder the system may purge, like tvOS Caches).
 public final class LibraryStore: @unchecked Sendable {
     public static let shared = LibraryStore()
 
@@ -196,17 +199,29 @@ public final class LibraryStore: @unchecked Sendable {
         var settings = AppSettings()
     }
 
+    /// Watch records kept in the mirror, newest first. A few dozen stay well under the platform's
+    /// small `UserDefaults` budget.
+    public static let mirrorLimit = 40
+    static let mirrorKey = "HongguoDrama.libraryMirror"
+
     private let url: URL
+    private let mirror: UserDefaults?
     private let queue = DispatchQueue(label: "HongguoDrama.LibraryStore")
     private var snapshot: Snapshot
 
-    public init(directory: URL? = nil) {
-        let base = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("HongguoDrama", isDirectory: true)
+    public init(directory: URL? = nil, mirror: UserDefaults? = StorageRoot.mirror) {
+        let base = directory ?? StorageRoot.appFolder
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
         url = base.appendingPathComponent("library.json")
-        if let data = try? Data(contentsOf: url) {
+        self.mirror = mirror
+        if !FileManager.default.fileExists(atPath: url.path),
+           let data = mirror?.data(forKey: Self.mirrorKey),
+           let restored = try? JSONDecoder.library.decode(Snapshot.self, from: data) {
+            // The file was purged with its folder: start from the mirrored copy and write it back.
+            snapshot = restored
+            if let encoded = try? JSONEncoder.library.encode(restored) { try? encoded.write(to: url, options: [.atomic]) }
+        } else if let data = try? Data(contentsOf: url) {
             if let decoded = try? JSONDecoder.library.decode(Snapshot.self, from: data) {
                 snapshot = decoded
             } else {
@@ -378,6 +393,16 @@ public final class LibraryStore: @unchecked Sendable {
     private func persistLocked() {
         guard let data = try? JSONEncoder.library.encode(snapshot) else { return }
         try? data.write(to: url, options: [.atomic])
+        if let mirror { mirror.set(mirrorData(), forKey: Self.mirrorKey) }
+    }
+
+    /// The same snapshot shape with only the newest `mirrorLimit` records, every field kept
+    /// (the account a record belongs to included).
+    private func mirrorData() -> Data? {
+        var small = snapshot
+        let newest = snapshot.history.values.sorted { $0.updatedAt > $1.updatedAt }.prefix(Self.mirrorLimit)
+        small.history = Dictionary(uniqueKeysWithValues: newest.map { ($0.seriesId, $0) })
+        return try? JSONEncoder.library.encode(small)
     }
 }
 
