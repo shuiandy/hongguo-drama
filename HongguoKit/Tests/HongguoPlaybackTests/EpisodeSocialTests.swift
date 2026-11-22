@@ -430,4 +430,70 @@ final class EpisodeSocialTests: XCTestCase {
         XCTAssertEqual(fallbackItems["aid"], "8662")
         XCTAssertNil(fallbackItems["device_id"])
     }
+
+    func testNestedReplyParsingAndPostBody() throws {
+        let nestedJSON = try JSONValue.parse(#"""
+        {
+          "reply_id": "9102",
+          "reply_to_reply_id": "9101",
+          "parent_reply_id": "9100",
+          "reply_to_user_info": {"base_info": {"user_id": "55001", "user_name": "回复甲"}},
+          "stat": {"digg_count": 7},
+          "Common": {
+            "create_timestamp": 1794000200,
+            "content": {"text": "确实[赞]"},
+            "user_info": {"base_info": {"user_id": "55002", "user_name": "回复乙", "user_avatar": "http://example.com/u2.jpg"}}
+          }
+        }
+        """#)
+        let row = try XCTUnwrap(EpisodeSocialService.parseReplyRow(nestedJSON))
+        XCTAssertEqual(row.id, "9102")
+        XCTAssertEqual(row.author, "回复乙")
+        XCTAssertEqual(row.authorId, "55002")
+        XCTAssertEqual(row.replyToAuthor, "回复甲")
+        XCTAssertEqual(row.parentReplyId, "9100")
+
+        let directNestedBody = EpisodeSocialService.postReplyBody(
+            seriesId: Self.sid,
+            vid: "7000000000000000011",
+            commentId: "88001",
+            text: "同意",
+            replyToReplyId: "9101",
+            replyToUserId: "55001",
+            offsetMs: 3000
+        )
+        XCTAssertEqual(directNestedBody["reply_to_comment_id"] as? String, "88001")
+        XCTAssertEqual(directNestedBody["reply_to_replyid"] as? String, "9101")
+        XCTAssertEqual(directNestedBody["parent_reply_id"] as? String, "9101")
+        XCTAssertEqual(directNestedBody["reply_to_userid"] as? String, "55001")
+
+        let deepNestedBody = EpisodeSocialService.postReplyBody(
+            seriesId: Self.sid,
+            vid: "7000000000000000011",
+            commentId: "88001",
+            text: "加一",
+            replyToReplyId: "9102",
+            parentReplyId: "9100",
+            replyToUserId: "55002",
+            offsetMs: 3000
+        )
+        XCTAssertEqual(deepNestedBody["reply_to_replyid"] as? String, "9102")
+        XCTAssertEqual(deepNestedBody["parent_reply_id"] as? String, "9100")
+        XCTAssertEqual(deepNestedBody["reply_to_userid"] as? String, "55002")
+
+        let minimalReply = try JSONValue.parse(#"{"code":0,"data":{"reply_id":"9103"}}"#)
+        let posted = try EpisodeSocialService.parsePostedReply(
+            minimalReply,
+            fallbackText: "加一",
+            fallbackAuthor: "我",
+            fallbackAuthorId: "99999",
+            fallbackReplyToAuthor: "回复乙",
+            fallbackParentReplyId: "9100"
+        )
+        XCTAssertEqual(posted.id, "9103")
+        XCTAssertEqual(posted.author, "我")
+        XCTAssertEqual(posted.authorId, "99999")
+        XCTAssertEqual(posted.replyToAuthor, "回复乙")
+        XCTAssertEqual(posted.parentReplyId, "9100")
+    }
 }
