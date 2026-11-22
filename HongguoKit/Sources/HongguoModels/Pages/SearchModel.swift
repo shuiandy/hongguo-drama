@@ -27,6 +27,40 @@ public enum SearchRankBoard: CaseIterable, Hashable, Sendable {
     }
 }
 
+/// The search field's hint and what submitting an empty field searches for, as on the iOS search
+/// page: 热搜榜's first eight titles take turns as the hint, and an empty field searches the hint
+/// shown.
+public enum SearchHintRule {
+    /// The hints: the first eight titles of 热搜榜.
+    public static func hints(from hotSearch: [DiscoveryAccess.RankItem]) -> [String] {
+        hotSearch.prefix(8).map(\.title)
+    }
+
+    /// The hint shown at a turn (the turn counts up every time the hint changes); nil with no hints.
+    public static func hint(_ hints: [String], turn: Int) -> String? {
+        hints.isEmpty ? nil : hints[turn % hints.count]
+    }
+
+    /// What submitting the field searches for: what was typed, or the hint shown when nothing was.
+    public static func submission(typed: String, hint: String?) -> String {
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? (hint ?? "") : trimmed
+    }
+}
+
+/// Where a board item opens, as on the iOS search page: a playable series goes to the player, one
+/// not out yet to its series page as 待上线 (with its reservation id).
+public enum RankItemDestination: Equatable, Sendable {
+    case player(SeriesSummary)
+    case upcoming(SeriesSummary, subscribeItemId: String)
+
+    public init(_ item: DiscoveryAccess.RankItem) {
+        let summary = SeriesSummary(seriesId: item.seriesId, title: item.title, cover: item.cover,
+                                    episodeCount: item.episodeCount, description: item.intro)
+        self = item.playable ? .player(summary) : .upcoming(summary, subscribeItemId: item.subscribeItemId)
+    }
+}
+
 /// 搜索: local history (newest first, same key as the iOS app, `searchHistory`), typing
 /// suggestions from history and the official suggest endpoint, 猜你想搜 with 换一换, 热搜榜 /
 /// 热点话题榜 / 预约榜 with more pages, and the paged results of a submitted search. Moved
@@ -72,6 +106,9 @@ public final class SearchModel {
     }
 
     public var history: [String] { SearchHistoryRule.decode(historyText) }
+    /// The search field's hints (`SearchHintRule`), from 热搜榜 once it is loaded.
+    public var hints: [String] { SearchHintRule.hints(from: rankLists[.hotSearch] ?? []) }
+
     public var trimmedQuery: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     public func clearHistory() {
@@ -237,9 +274,11 @@ public final class SearchModel {
             }
             let page = try await DiscoveryAccess.ranking(selectedItem: "all", subSelectedItem: boardId)
             guard !Task.isCancelled else { return }
-            rankLists[board] = page.items
+            var seen = Set<String>()
+            let unique = page.items.filter { seen.insert($0.seriesId).inserted }
+            rankLists[board] = unique
             rankCursors[board] = page.hasMore ? page.cursor : nil
-            CoverPrefetch.prefetch(page.items.map(\.cover))
+            CoverPrefetch.prefetch(unique.map(\.cover))
         } catch is CancellationError {
         } catch {
             if rankLists[board]?.isEmpty ?? true { rankFailed[board] = describeError(error) }
@@ -252,13 +291,14 @@ public final class SearchModel {
         defer { rankLoading.remove(board) }
         do {
             let page = try await DiscoveryAccess.rankingMore(cursor: cursor, selectedItem: "all", subSelectedItem: boardId)
+            guard !Task.isCancelled else { return }
             let existing = Set((rankLists[board] ?? []).map(\.seriesId))
             let added = page.items.filter { !existing.contains($0.seriesId) }
             rankLists[board, default: []].append(contentsOf: added)
             rankCursors[board] = page.hasMore && !added.isEmpty ? page.cursor : nil
             CoverPrefetch.prefetch(added.map(\.cover))
         } catch {
-            rankCursors[board] = nil
+            // Keep the cursor intact so a transient network failure can be retried by tapping 查看更多 again.
         }
     }
 

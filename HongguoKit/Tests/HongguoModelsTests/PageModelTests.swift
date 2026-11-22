@@ -298,3 +298,45 @@ final class SettingsDefaultsTests: XCTestCase {
         XCTAssertTrue(library.settings.autoNext)
     }
 }
+
+@MainActor
+final class SearchRulesTests: XCTestCase {
+    private func item(_ id: String, playable: Bool = true, subscribe: String = "") -> DiscoveryAccess.RankItem {
+        DiscoveryAccess.RankItem(seriesId: id, title: "剧\(id)", cover: "c\(id)", episodeCount: 60, recommendText: "",
+                                 metaLine: "", intro: "简介\(id)", metricTags: [], badgeText: "", playable: playable,
+                                 subscribeItemId: subscribe)
+    }
+
+    func testHintsAreTheFirstEightHotSearchTitlesInTurn() {
+        let hints = SearchHintRule.hints(from: (1...10).map { item("\($0)") })
+        XCTAssertEqual(hints, (1...8).map { "剧\($0)" })
+        XCTAssertEqual(SearchHintRule.hint(hints, turn: 0), "剧1")
+        XCTAssertEqual(SearchHintRule.hint(hints, turn: 9), "剧2")
+        XCTAssertNil(SearchHintRule.hint([], turn: 3))
+    }
+
+    func testEmptyFieldSearchesTheHint() {
+        XCTAssertEqual(SearchHintRule.submission(typed: "  ", hint: "剧1"), "剧1")
+        XCTAssertEqual(SearchHintRule.submission(typed: " 总裁 ", hint: "剧1"), "总裁")
+        XCTAssertEqual(SearchHintRule.submission(typed: "", hint: nil), "")
+    }
+
+    func testBoardItemOpensPlayerOrUpcomingPage() {
+        guard case .player(let playable) = RankItemDestination(item("1")) else { return XCTFail("playable opens the player") }
+        XCTAssertEqual(playable.seriesId, "1")
+        XCTAssertEqual(playable.episodeCount, 60)
+        XCTAssertEqual(playable.description, "简介1")
+        XCTAssertEqual(RankItemDestination(item("2", playable: false, subscribe: "s2")),
+                       .upcoming(SeriesSummary(seriesId: "2", title: "剧2", cover: "c2", episodeCount: 60, description: "简介2"),
+                                 subscribeItemId: "s2"))
+    }
+
+    func testModelHintsFollowTheOfflineHotBoard() async {
+        let model = SearchModel(backend: FixtureBackend())
+        XCTAssertEqual(model.hints, [])
+        await model.loadBoard(.hotSearch)
+        XCTAssertFalse(model.hints.isEmpty)
+        XCTAssertLessThanOrEqual(model.hints.count, 8)
+        XCTAssertEqual(model.hints.first, model.rankLists[.hotSearch]?.first?.title)
+    }
+}
