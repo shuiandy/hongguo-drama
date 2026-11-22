@@ -561,8 +561,9 @@ public final class PlayerEngine: NSObject {
                     hit.layerView.onReady = nil
                     hit.layerView.playerLayer.player = nil
                     hit.layerView.removeFromSuperview()
-                    made = (hit.item, hit.route, hit.loader)
-                    PlaybackLog.note("warm hit vid=\(vid.suffix(6))")
+                    // The warm item belongs to the standby player; the active player needs its own item.
+                    made = (Self.itemForAnotherPlayer(hit.item), hit.route, hit.loader)
+                    PlaybackLog.note("warm hit (new item) vid=\(vid.suffix(6))")
                 } else {
                     prepared = try await EpisodeResolver.shared.prepare(vid: vid, seriesId: seriesId,
                                                                         preferredShortSide: preferredShortSide, force: force)
@@ -699,7 +700,9 @@ public final class PlayerEngine: NSObject {
             buffered = 0
             videoSize = .zero
             PlaybackLog.note("warm hit (pip/airplay detach) vid=\(vid.suffix(6))")
-            start(hit.item, startAt: startAt, token: token)
+            // The warm item was given to the standby player, so the kept player gets a new item
+            // on the same asset (and the same resource loader).
+            start(Self.itemForAnotherPlayer(hit.item), startAt: startAt, token: token)
             return
         }
 
@@ -961,6 +964,19 @@ public final class PlayerEngine: NSObject {
 
     public func hasWarmItem(vid: String, preferredShortSide: Int?) -> Bool {
         warm[vid]?.matches(preferredShortSide) == true
+    }
+
+    /// An `AVPlayerItem` stays bound to the first `AVPlayer` it was given, even after that player
+    /// lets go of it: handing it to a second player throws ("An AVPlayerItem cannot be associated
+    /// with more than one instance of AVPlayer") and aborts the app. This hit the picture in picture
+    /// path, which keeps the active player and so could not take over the warm standby player:
+    /// when an episode ended in PiP and the next one was warm, the app was killed.
+    /// A new item on the same asset keeps the asset's resource loader and anything it already loaded.
+    static func itemForAnotherPlayer(_ item: AVPlayerItem) -> AVPlayerItem {
+        let fresh = AVPlayerItem(asset: item.asset)
+        fresh.preferredPeakBitRate = item.preferredPeakBitRate
+        fresh.preferredMaximumResolution = item.preferredMaximumResolution
+        return fresh
     }
 
     private func takeWarm(vid: String, shortSide: Int?) -> Warm? {
