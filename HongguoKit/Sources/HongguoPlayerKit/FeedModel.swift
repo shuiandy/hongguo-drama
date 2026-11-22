@@ -618,6 +618,13 @@ public final class FeedModel {
     /// then the card shows and plays that episode.
     public private(set) var cardEpisodes: [String: PlayerHandoff] = [:]
 
+    /// Where the card's clip was when the feed was covered (观看完整剧集, another screen). If the
+    /// player page then plays something else, coming back reloads the clip, from its parked
+    /// player when there is one, and must go on from here: loading it at 0 made the parked
+    /// player seek back to the start while its last frame stayed up (a frozen picture, then the
+    /// clip again from the beginning). Used by the next activation only.
+    private var returnPosition: (vid: String, time: Double)?
+
     public func episodeNumber(of seriesId: String) -> Int { cardEpisodes[seriesId]?.episode ?? 1 }
 
     /// The episode id the card plays, when known without a request.
@@ -638,6 +645,8 @@ public final class FeedModel {
         // it alone. Stopping it here cut off the player page's clip when the feed finished loading
         // its first page underneath.
         guard isVisible else { return }
+        let resume = returnPosition
+        returnPosition = nil
         guard let item = items[safe: index] else { engine.stop(); return }
         failed[item.seriesId] = nil
         app.library.recordFeedImpression(item.seriesId)
@@ -692,7 +701,11 @@ public final class FeedModel {
                     engine.loadOffline(vid: firstVid)
                 } else {
                     FeedLog.swipe("load card=\(item.seriesId) warm=\(warm)")
-                    engine.load(vid: firstVid, seriesId: item.seriesId, preferredShortSide: app.library.settings.preferredQuality)
+                    // Back on the clip the feed left: on from where it was, not from 0.
+                    let startAt = resume.flatMap { $0.vid == firstVid ? $0.time : nil } ?? 0
+                    if startAt > 0 { PlaybackLog.note("feed return vid=\(firstVid.suffix(6)) at=\(Int(startAt))") }
+                    engine.load(vid: firstVid, seriesId: item.seriesId, startAt: startAt,
+                                preferredShortSide: app.library.settings.preferredQuality)
                 }
                 loadDanmakuIfWanted()
                 if synopses[item.seriesId] == nil {
@@ -936,6 +949,9 @@ public final class FeedModel {
             previousPlayer = nil
             // When the player page continues this clip, the player keeps running untouched.
             guard !handedOff else { return }
+            if let vid = engine.currentVid, let item = items[safe: flow.feedIndex], knownClipVid(of: item.seriesId) == vid {
+                returnPosition = (vid, max(0, engine.currentTime))
+            }
             wasPlayingBeforeHide = engine.wantsPlayback
             recordFeedHistory(finished: false)
             // Otherwise drop a clip that is still being resolved, so it cannot start under
@@ -950,6 +966,7 @@ public final class FeedModel {
         let clip = knownClipVid(of: item.seriesId)
         let isPlayingIt = clip != nil && engine.currentVid == clip
         handedOff = isPlayingIt
+        if isPlayingIt, let clip { returnPosition = (clip, max(0, engine.currentTime)) }
         app.openPlayer(item, startEpisode: episodeNumber(of: item.seriesId), startAt: isPlayingIt ? engine.currentTime : 0,
                        continuesCurrentClip: isPlayingIt, resumeIfAheadOfCurrentClip: true)
     }
