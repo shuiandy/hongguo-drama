@@ -14,7 +14,8 @@ final class MeTests: XCTestCase {
     func testSignedOutCardOpensLoginAndBack() {
         let app = launch()
         XCTAssertTrue(app.staticTexts["未登录"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["云端观看记录"].exists)
+        XCTAssertTrue(app.buttons["自动连播"].exists)
+        XCTAssertFalse(app.buttons["云端观看记录"].exists, "no history switch, as on iOS")
         XCUIRemote.shared.press(.down)
         let signIn = app.buttons["扫码登录"]
         waitForFocus(signIn)
@@ -29,12 +30,12 @@ final class MeTests: XCTestCase {
     func testDownReachesEveryRow() {
         let app = launch()
         XCTAssertTrue(app.staticTexts["未登录"].waitForExistence(timeout: 10))
-        for title in ["扫码登录", "切换账号", "默认清晰度", "默认倍速", "弹幕", "自动连播", "云端观看记录"] {
+        for title in ["扫码登录", "切换账号", "默认清晰度", "默认倍速", "弹幕", "自动连播"] {
             XCUIRemote.shared.press(.down)
             waitForFocus(app.buttons[title])
         }
         // A press on a settings row moves it to its next value.
-        let row = app.buttons["云端观看记录"]
+        let row = app.buttons["自动连播"]
         let before = row.value as? String
         XCUIRemote.shared.press(.select)
         expectation(for: NSPredicate { _, _ in (row.value as? String) != before }, evaluatedWith: NSObject())

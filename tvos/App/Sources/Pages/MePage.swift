@@ -8,8 +8,10 @@ import SwiftUI
 /// account is (picture, name, id); it takes no focus. On the right, one column of full-width
 /// rows, so up and down on the remote reach every one of them and nothing sits beside a row:
 /// 账号 (扫码登录 or 退出登录 with a confirmation, 切换账号) and the settings the TV uses, all kept in
-/// the shared library's settings (默认清晰度, 默认倍速, 弹幕, 自动连播, 云端观看记录). A press on a
-/// settings row moves it to its next value. 点赞 and 预约 are lists of series and live on 追剧.
+/// the shared library's settings (默认清晰度, 默认倍速, 弹幕, 自动连播). A press on a settings row moves
+/// it to its next value. 点赞 and 预约 are lists of series and live on 追剧. As on iOS there is no
+/// switch for the account's watch history: signed in, it always syncs both ways.
+/// No row has an icon, so every title starts at the same place.
 struct MePage: View {
     @Environment(TVAppModel.self) private var app
     @State private var confirmsSignOut = false
@@ -92,11 +94,11 @@ struct MePage: View {
         return VStack(alignment: .leading, spacing: 14) {
             header("账号")
             if app.account.isSignedIn {
-                SettingRow(title: "退出登录", systemImage: "rectangle.portrait.and.arrow.right") { confirmsSignOut = true }
+                SettingRow(title: "退出登录") { confirmsSignOut = true }
             } else {
-                SettingRow(title: "扫码登录", systemImage: "qrcode") { app.showsLogin = true }
+                SettingRow(title: "扫码登录") { app.showsLogin = true }
             }
-            SettingRow(title: "切换账号", systemImage: "person.2") { app.showsAccountPicker = true }
+            SettingRow(title: "切换账号") { app.showsAccountPicker = true }
 
             header("播放")
             SettingRow(title: "默认清晰度", value: settings.preferredQuality.map { "\($0)P" } ?? "自动") {
@@ -114,11 +116,8 @@ struct MePage: View {
                 app.library.settings.autoNext.toggle()
             }
 
-            header("同步")
-            SettingRow(title: "云端观看记录", value: settings.cloudHistorySync ? "开" : "关") {
-                app.library.settings.cloudHistorySync.toggle()
-            }
-            Text("按下遥控器切换到下一个选项").font(.caption).foregroundStyle(.tertiary)
+            Text("按下遥控器切换到下一个选项。登录后，观看历史、收藏、点赞与预约会与红果账号双向同步。")
+                .font(.caption).foregroundStyle(.tertiary)
                 .padding(.top, 8)
         }
         .frame(maxWidth: 1000, alignment: .leading)
@@ -134,14 +133,12 @@ struct MePage: View {
 /// (an action). The system's button gives the focus effect.
 private struct SettingRow: View {
     let title: String
-    var systemImage: String? = nil
     var value: String? = nil
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 18) {
-                if let systemImage { Image(systemName: systemImage) }
                 Text(title)
                 Spacer(minLength: 20)
                 if let value { Text(value).foregroundStyle(.secondary) }
