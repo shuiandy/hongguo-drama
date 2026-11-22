@@ -331,6 +331,14 @@ final class SearchRulesTests: XCTestCase {
                                  subscribeItemId: "s2"))
     }
 
+    func testBoardSubtitle() {
+        var reserved = item("1"); reserved.metricTags = ["预告", "12.3万人预约"]
+        XCTAssertEqual(reserved.boardSubtitle, "12.3万人预约")
+        XCTAssertEqual(item("2").boardSubtitle, "全60集")
+        var unknown = item("3"); unknown.episodeCount = 0; unknown.metaLine = "都市 · 逆袭"
+        XCTAssertEqual(unknown.boardSubtitle, "都市 · 逆袭")
+    }
+
     func testModelHintsFollowTheOfflineHotBoard() async {
         let model = SearchModel(backend: FixtureBackend())
         XCTAssertEqual(model.hints, [])

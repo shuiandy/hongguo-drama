@@ -31,6 +31,9 @@ public enum SearchRankBoard: CaseIterable, Hashable, Sendable {
 /// page: 热搜榜's first eight titles take turns as the hint, and an empty field searches the hint
 /// shown.
 public enum SearchHintRule {
+    /// How long each hint stays before the next takes its turn (only while nothing is typed).
+    public static let interval: Duration = .seconds(3.5)
+
     /// The hints: the first eight titles of 热搜榜.
     public static func hints(from hotSearch: [DiscoveryAccess.RankItem]) -> [String] {
         hotSearch.prefix(8).map(\.title)
@@ -45,6 +48,15 @@ public enum SearchHintRule {
     public static func submission(typed: String, hint: String?) -> String {
         let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? (hint ?? "") : trimmed
+    }
+}
+
+extension DiscoveryAccess.RankItem {
+    /// The small line under a board item's title, as on the iOS search page: its reservation
+    /// figure (a tag with 预约, never 预告), else 全N集, else the board's own meta line.
+    public var boardSubtitle: String {
+        metricTags.filter { $0 != "预告" }.first(where: { $0.contains("预约") })
+            ?? (episodeCount > 0 ? "全\(episodeCount)集" : metaLine)
     }
 }
 
