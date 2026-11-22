@@ -3,37 +3,22 @@ import HongguoModels
 import HongguoPlayerKit
 import SwiftUI
 
-/// 剧场: a large 继续观看 card for the series watched last, then one shelf per category (真人剧,
-/// 漫剧, AI 剧), each the shared TheaterModel (the same paging rules as the iOS 剧场 grid). The
-/// page's colour follows the focused cover.
+/// 剧场, in the iOS 剧场's order: one row of chips (the categories 真人剧 / 漫剧 / AI 剧, the 题材
+/// filter, then 排行榜, 追剧日历 and 新剧), and under it the chosen category's grid, the shared
+/// TheaterModel (the same paging rules as the iOS grid). The page's colour follows the focused
+/// cover.
 struct TheaterPage: View {
     @Environment(TVAppModel.self) private var app
-    @State private var shelves: [TheaterModel] = []
+    @State private var model: TheaterModel?
     @State private var tint = Color.gray
     @State private var releases: NewReleasesPage.Tab?
 
     var body: some View {
         ZStack {
             AmbientBackground(tint: tint)
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 36) {
-                    // 新剧 and 追剧日历, as the iOS 剧场's chips.
-                    HStack(spacing: 30) {
-                        Button("新剧", systemImage: "sparkles") { releases = .recommended }
-                        Button("追剧日历", systemImage: "calendar") { releases = .calendar }
-                    }
-                    .focusSection()
-                    if let record = app.library.history().first {
-                        ContinueCard(record: record) { follow(SeriesSummary(seriesId: record.seriesId, title: record.title, cover: record.cover)) }
-                    }
-                    ForEach(shelves, id: \.kind) { model in
-                        TheaterShelf(model: model, onFocus: follow)
-                    }
-                }
-                .padding(.horizontal, 80)
-                .padding(.vertical, 40)
+            if let model {
+                TheaterContent(model: model, releases: $releases, onFocus: follow)
             }
-            .scrollClipDisabled()
             if let releases {
                 NewReleasesPage(tab: releases) { self.releases = nil }
                     .transition(.opacity)
@@ -41,17 +26,11 @@ struct TheaterPage: View {
         }
         .onAppear {
             switch app.launch.route {
-            case .newReleases where releases == nil && shelves.isEmpty: releases = .recommended
-            case .calendar where releases == nil && shelves.isEmpty: releases = .calendar
+            case .newReleases where releases == nil && model == nil: releases = .recommended
+            case .calendar where releases == nil && model == nil: releases = .calendar
             default: break
             }
-            if shelves.isEmpty {
-                shelves = CatalogKind.categories.map { kind in
-                    let model = TheaterModel(backend: app.backend)
-                    model.kind = kind
-                    return model
-                }
-            }
+            if model == nil { model = TheaterModel(backend: app.backend) }
         }
     }
 
@@ -63,69 +42,74 @@ struct TheaterPage: View {
     }
 }
 
-/// One category's shelf: loads its first page when shown, more as the focus nears the end.
-private struct TheaterShelf: View {
-    let model: TheaterModel
+private struct TheaterContent: View {
+    @Environment(TVAppModel.self) private var app
+    @Bindable var model: TheaterModel
+    @Binding var releases: NewReleasesPage.Tab?
     let onFocus: (SeriesSummary) -> Void
 
+    private static let columns = Array(repeating: GridItem(.fixed(PosterMetrics.width), spacing: PosterMetrics.spacing, alignment: .top), count: 6)
+
     var body: some View {
-        Group {
-            switch model.phase {
-            case .failed(let message) where model.items.isEmpty:
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(model.kind.label).font(.title3.weight(.semibold))
-                    Text(message).foregroundStyle(.secondary)
-                    Button("重试") { Task { await model.load(forceRefresh: true) } }
-                }
-            case .loading where model.items.isEmpty, .idle:
-                VStack(alignment: .leading, spacing: 20) {
-                    Text(model.kind.label).font(.title3.weight(.semibold))
-                    ProgressView().frame(height: PosterMetrics.height)
-                }
-            default:
-                Shelf(title: model.kind.label, items: model.items, onFocus: onFocus,
-                      onNearEnd: { if model.hasMore { Task { await model.loadMore() } } })
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 40) {
+                chips
+                grid
             }
+            .padding(.horizontal, 80)
+            .padding(.vertical, 40)
         }
-        .task(id: model.filterKey) { if model.items.isEmpty { await model.load(forceRefresh: false) } }
+        .scrollClipDisabled()
+        .task(id: model.filterKey) { await model.load(forceRefresh: false) }
     }
-}
 
-/// 继续观看: the series watched last, wide, with where it was left and a progress bar.
-struct ContinueCard: View {
-    @Environment(TVAppModel.self) private var app
-    let record: WatchRecord
-    let onFocus: () -> Void
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("继续观看").font(.title3.weight(.semibold))
-            Button {
-                app.openPlayer(SeriesSummary(seriesId: record.seriesId, title: record.title, cover: record.cover,
-                                             episodeCount: record.total))
-            } label: {
-                HStack(spacing: 36) {
-                    PosterImage(series: SeriesSummary(seriesId: record.seriesId, title: record.title, cover: record.cover))
-                        .frame(width: 180, height: 257)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text(record.title).font(.title2.weight(.bold)).lineLimit(1)
-                        Text(record.total > 0 ? "看到第\(record.episodeIndex)集 · 共\(record.total)集" : "看到第\(record.episodeIndex)集")
-                            .foregroundStyle(.secondary)
-                        ProgressView(value: Double(record.episodeIndex), total: Double(max(record.total, record.episodeIndex, 1)))
-                            .frame(width: 520)
-                        Label("继续播放", systemImage: "play.fill").font(.callout.weight(.semibold))
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(28)
-                .frame(width: 1100, alignment: .leading)
+    private var chips: some View {
+        HStack(spacing: 28) {
+            ForEach(CatalogKind.categories) { kind in
+                // Choosing another category clears the genre and its list (in the model).
+                ChipButton(title: kind.label, active: model.kind == kind) { model.kind = kind }
             }
-            .buttonStyle(.card)
-            .focused($focused)
-            .onChange(of: focused) { _, now in if now { onFocus() } }
+            Menu {
+                Picker("题材", selection: $model.genre) {
+                    Text("全部题材").tag(GenreChoice?.none)
+                    ForEach(model.genres) { Text($0.label).tag(Optional($0)) }
+                }
+            } label: {
+                Label(model.genre?.label ?? "筛选", systemImage: "line.3.horizontal.decrease")
+                    .font(.callout)
+            }
+            .disabled(model.genres.isEmpty)
+            Spacer(minLength: 20)
+            ChipButton(title: "排行榜", systemImage: "flame.fill", tint: Theme.red) { app.selectedTab = .ranking }
+            ChipButton(title: "追剧日历", systemImage: "calendar", tint: Theme.orange) { releases = .calendar }
+            ChipButton(title: "新剧", systemImage: "sparkles", tint: Theme.gold) { releases = .recommended }
         }
         .focusSection()
+    }
+
+    @ViewBuilder private var grid: some View {
+        switch model.phase {
+        case .failed(let message) where model.items.isEmpty:
+            LoadStateView(state: .failed(message)) { Task { await model.load(forceRefresh: true) } }
+                .frame(height: 500)
+        case .loading where model.items.isEmpty, .idle:
+            LoadStateView(state: .loading).frame(height: 500)
+        case .loaded where model.items.isEmpty:
+            LoadStateView(state: .empty("这里还没有剧")).frame(height: 500)
+        default:
+            LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 50) {
+                ForEach(Array(model.items.enumerated()), id: \.element.id) { index, series in
+                    PosterCard(series: series, onFocus: {
+                        onFocus(series)
+                        if index >= model.items.count - 6, model.hasMore { Task { await model.loadMore() } }
+                    }) { app.openDetail(series) }
+                }
+            }
+            .focusSection()
+            if model.hasMore {
+                Button("加载更多") { Task { await model.loadMore() } }
+                    .frame(maxWidth: .infinity)
+            }
+        }
     }
 }

@@ -8,10 +8,10 @@ Apple TV App（tvOS 26+），只写界面、焦点和遥控器交互。取源、
 | --- | --- | --- |
 | 选择账号 | 启动时本机存过账号就先显示：圆形头像一排、最近用的默认焦点、添加账号、不登录使用、长按移除 | `AccountRoster`、`AccountModel` |
 | 推荐 | 左信息、中视频、右下一部；「观看完整剧集」是唯一焦点，上下换剧，按下进完整剧原地接着播；播放时标签栏淡出 | `FeedModel` |
-| 剧场 | 新剧和追剧日历入口、继续观看大卡、真人剧/漫剧/AI 剧三排货架 | `TheaterModel`、`NewDramaModel`、`CalendarModel` |
+| 剧场 | 照 iOS 剧场的顺序：一行胶囊（真人剧/漫剧/AI 剧、题材筛选、排行榜、追剧日历、新剧），下面是所选分类的网格 | `TheaterModel`、`NewDramaModel`、`CalendarModel` |
 | 排行 | 左侧分类和榜单，右侧带名次的海报网格 | `RankingModel` |
 | 追剧 | 收藏和历史两排带进度的货架，长按取消收藏或删除记录 | `MeModel`、`LibraryModel` |
-| 搜索 | 系统 `.searchable`、历史、猜你想搜、热搜榜/预约榜/热点话题榜、结果网格 | `SearchModel` |
+| 搜索 | 照 iOS 新搜索页的顺序：排行/追剧日历/上新入口、历史、猜你想搜、三个榜单合在一张卡里切换（查看更多手动加载）、结果网格；搜索框提示轮换热搜榜，空框提交搜提示词，榜单项能播进播放器、未上线进待上线详情 | `SearchModel`、`SearchHintRule`、`RankItemDestination` |
 | 我的 | 账号卡（扫码登录、退出登录、切换账号）、点赞、预约、设置 | `MeModel`、`LibraryModel` |
 | 详情 | 左封面右信息、每行 12 个集数格子按 30 集分段、演员（进演员页）、相关推荐 | `SeriesDetailModel`、`CelebrityModel` |
 | 播放器 | 9:16 全高居中，两侧封面主色；选集、评论（只读）、弹幕、倍速、画质；最后 5 秒下一集 | `PlayerEngine`、`PlaybackSession`、`EpisodePanelModel`、`CommentListModel` |
