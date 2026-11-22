@@ -24,4 +24,69 @@ final class RecommendTests: XCTestCase {
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(main.waitForExistence(timeout: 5), "back to the feed")
     }
+
+    private func launchFocused() -> (XCUIApplication, XCUIElement) {
+        let app = freshLaunch([])
+        let main = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '观看完整剧集'")).firstMatch
+        XCTAssertTrue(main.waitForExistence(timeout: 10))
+        waitForFocus(main)
+        return (app, main)
+    }
+
+    private func waitForFocus(_ element: XCUIElement) {
+        expectation(for: NSPredicate(format: "hasFocus == true"), evaluatedWith: element)
+        waitForExpectations(timeout: 5)
+    }
+
+    /// What the page says (the clip's series and the next one): which clip is showing.
+    private func shown(_ app: XCUIApplication) -> Set<String> {
+        Set(app.staticTexts.allElementsBoundByIndex.map(\.label))
+    }
+
+    /// One press, then longer than the one-clip-per-swipe gate before the next.
+    private func press(_ button: XCUIRemote.Button) {
+        XCUIRemote.shared.press(button)
+        Thread.sleep(forTimeInterval: 0.8)
+    }
+
+    /// Up is the clip before, also while the tab bar shows: down, down, up is the second clip,
+    /// and the focus stays on 观看完整剧集.
+    func testUpGoesBackAClipNotToTheTabBar() {
+        let (app, main) = launchFocused()
+        press(.down)
+        let second = shown(app)
+        press(.down)
+        XCTAssertNotEqual(shown(app), second, "the third clip")
+        press(.up)
+        XCTAssertEqual(shown(app), second, "up is the clip before")
+        XCTAssertTrue(main.hasFocus, "the focus stays on the button")
+        XCTAssertFalse(app.tabBars.firstMatch.exists, "past the first clip the tab bar is not there to take the focus")
+    }
+
+    /// Only on the first clip does up go to the tab bar.
+    func testUpOnTheFirstClipGoesToTheTabBar() {
+        let (app, main) = launchFocused()
+        let first = shown(app)
+        press(.up)
+        waitForFocus(app.tabBars.buttons["推荐"])
+        XCTAssertFalse(main.hasFocus)
+        press(.down)
+        waitForFocus(main)
+        XCTAssertEqual(shown(app), first, "still the first clip")
+    }
+
+    /// Past the first clip, Back brings the tab bar in with the focus on it; down returns to the
+    /// button and the bar goes again, so up is the clip before once more.
+    func testBackShowsTheTabBarPastTheFirstClip() {
+        let (app, main) = launchFocused()
+        let first = shown(app)
+        press(.down)
+        XCUIRemote.shared.press(.menu)
+        waitForFocus(app.tabBars.buttons["推荐"])
+        press(.down)
+        waitForFocus(main)
+        press(.up)
+        XCTAssertEqual(shown(app), first, "up is the clip before, not the tab bar")
+        XCTAssertTrue(main.hasFocus)
+    }
 }

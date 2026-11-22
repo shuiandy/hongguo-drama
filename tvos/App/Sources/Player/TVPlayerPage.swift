@@ -200,8 +200,9 @@ struct TVPlayerPage: View {
                     .buttonStyle(ScrubberButtonStyle())
                     .focused($focus, equals: .scrubber)
                     // Left and right change the position only here, while the bar has the focus.
-                    // With a move handler on it the focus engine no longer moves the focus from
-                    // the bar, so down is passed on to the buttons here.
+                    // On the simulator down from the bar did not reach the buttons once it had a
+                    // move handler (why is not established: on 推荐 up still reaches the tab bar
+                    // past one), so down is passed on to the buttons here.
                     .onMoveCommand { direction in
                         switch direction {
                         case .left: step(-1)

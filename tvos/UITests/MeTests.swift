@@ -60,4 +60,23 @@ final class MeTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["登录红果账号"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["跳过"].exists)
     }
+
+    /// After a sync that could not read a list (shown with sample data, nothing is requested):
+    /// the same text as iOS under the account, and 重试同步 as a row the remote reaches.
+    func testSyncFailureShowsTheTextAndARetryRow() {
+        let app = launch(["-HongguoAccountPreview", "YES", "-HongguoSyncFailurePreview", "YES"])
+        XCTAssertTrue(app.staticTexts["示例用户"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '同步失败'")).firstMatch.exists)
+        for title in ["退出登录", "切换账号", "重试同步", "默认清晰度"] {
+            XCUIRemote.shared.press(.down)
+            waitForFocus(app.buttons[title])
+        }
+    }
+
+    /// 追剧 shows the same text with 重试 above the lists.
+    func testSyncFailureOnFollowing() {
+        let app = freshLaunch(["-HongguoRoute", "following", "-HongguoAccountPreview", "YES", "-HongguoSyncFailurePreview", "YES"])
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '同步失败'")).firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["重试"].exists)
+    }
 }

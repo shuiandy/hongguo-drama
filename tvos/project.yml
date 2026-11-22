@@ -38,7 +38,7 @@ targets:
           - zh-Hans
         CFBundleShortVersionString: "0.1.0"
         # Date-based (yyyymmddNN), like the iOS app.
-        CFBundleVersion: "2026112201"
+        CFBundleVersion: "2026112202"
         ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}
         UIUserInterfaceStyle: Dark

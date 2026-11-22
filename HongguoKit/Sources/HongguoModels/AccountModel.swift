@@ -168,6 +168,14 @@ public final class AccountModel {
     }
 
     public var isSignedIn: Bool { profile != nil }
+
+    /// The made-up account (preview mode only) as if its last sync could not read the lists: the
+    /// same message and `hasListFailure` a real failure leaves. Nothing is requested.
+    public func showPreviewListFailure() {
+        guard mode == .preview else { return }
+        listFailureMessage = "同步失败 · 收藏：示例数据，没有真的请求"
+        message = listFailureMessage
+    }
     /// Sign-in needs the real website; sample runs have no network.
     public var canSignIn: Bool { mode == .live }
 

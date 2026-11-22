@@ -22,6 +22,25 @@ struct FollowingPage: View {
             }
         }
         .onAppear { if me == nil { me = MeModel(library: app.library, account: app.account) } }
+        // The lists' page syncs on the way in, as the iOS 我的 (where these lists live) does.
+        .task {
+            await app.account.restoreIfNeeded(refresh: false)
+            await app.library.syncAccount(force: app.account.hasListFailure)
+        }
+    }
+
+    /// The account's message above the lists, with 重试 after a list could not be read: the
+    /// same text and the same forced sync as the iOS 我的 page.
+    @ViewBuilder private var syncNotice: some View {
+        if !app.account.message.isEmpty {
+            HStack(spacing: 24) {
+                Text(app.account.message).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                if app.account.hasListFailure {
+                    Button("重试") { Task { await app.library.syncAccount(force: true) } }
+                }
+            }
+            .focusSection()
+        }
     }
 
     @ViewBuilder private func content(_ me: MeModel) -> some View {
@@ -31,10 +50,14 @@ struct FollowingPage: View {
         let likes = likeItems(me)
         let reservations = reservationItems(me)
         if favorites.isEmpty, history.isEmpty, likes.isEmpty, reservations.isEmpty {
-            LoadStateView(state: .empty("还没有在追的剧"))
+            VStack(spacing: 40) {
+                syncNotice
+                LoadStateView(state: .empty("还没有在追的剧"))
+            }
         } else {
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 40) {
+                    syncNotice
                     if !favorites.isEmpty {
                         row("收藏", favorites.map { item in
                             Card(series: item.series, progress: item.progress) {

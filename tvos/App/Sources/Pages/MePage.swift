@@ -37,6 +37,11 @@ struct MePage: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .focusSection()
         }
+        // As the iOS 我的: a sync on the way in, forced when the last one failed.
+        .task {
+            await app.account.restoreIfNeeded(refresh: false)
+            await app.library.syncAccount(force: app.account.hasListFailure)
+        }
         .alert("退出登录？", isPresented: $confirmsSignOut) {
             Button("退出登录", role: .destructive) {
                 Task {
@@ -99,6 +104,10 @@ struct MePage: View {
                 SettingRow(title: "扫码登录") { app.showsLogin = true }
             }
             SettingRow(title: "切换账号") { app.showsAccountPicker = true }
+            // As iOS's 重试: only after a list could not be read, the same forced sync.
+            if app.account.hasListFailure {
+                SettingRow(title: "重试同步") { Task { await app.library.syncAccount(force: true) } }
+            }
 
             header("播放")
             SettingRow(title: "默认清晰度", value: settings.preferredQuality.map { "\($0)P" } ?? "自动") {

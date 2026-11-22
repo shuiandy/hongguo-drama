@@ -6,9 +6,12 @@ import SwiftUI
 /// 推荐: the shared FeedModel (the official recommend feed live, the sample rows offline; the same
 /// prefetch, history, exposure and 不感兴趣 rules as the iOS feed) in three columns: the series on
 /// the left, the clip in the middle (9:16, full height), the next one on the right. The one button,
-/// 观看完整剧集, holds the focus: up and down on the remote change the clip (up goes back to the
-/// tab bar while it shows), pressing it opens the whole series and carries on in place. The tab bar
-/// fades while a clip plays. The app opens here and starts playing (silent with -HongguoMuted).
+/// 观看完整剧集, holds the focus: down is the next clip and up the one before, whether or not the
+/// tab bar shows, one clip per swipe; only on the first clip does up go to the tab bar. Back brings
+/// the tab bar in and moves the focus there. Pressing the button opens the whole series and carries
+/// on in place. The tab bar shows on the first clip (so up reaches it); past it, it shows only after
+/// Back (the system moves the focus up there), so the focus engine cannot take up there. The app
+/// opens here and starts playing (silent with -HongguoMuted).
 struct RecommendPage: View {
     @Environment(TVAppModel.self) private var app
     @State private var feed: FeedModel?
@@ -40,10 +43,23 @@ private struct RecommendContent: View {
     @Environment(TVAppModel.self) private var app
     @Environment(\.scenePhase) private var scenePhase
     @Bindable var feed: FeedModel
-    @State private var tabBarShown = true
     @State private var tint = Color.gray
-    @State private var hideToken = 0
     @FocusState private var mainFocused: Bool
+    /// Back took the focus up to the tab bar (the system does that itself); until it comes down.
+    @State private var tabBarSummoned = false
+    /// When the clip last changed: one swipe on the clickpad changes one clip.
+    @State private var lastMove = Date.distantPast
+    static let moveGate: TimeInterval = 0.4
+
+    private var currentIndex: Int? {
+        feed.currentID.flatMap { id in feed.items.firstIndex { $0.seriesId == id } }
+    }
+
+    /// The tab bar is on screen (and so reachable by up) on the first clip, and anywhere while
+    /// the focus is up there after Back.
+    private var tabBarVisible: Bool {
+        tabBarSummoned || (currentIndex ?? 0) == 0
+    }
 
     private var visible: Bool {
         app.selectedTab == .recommend && app.playerTarget == nil && app.detailTarget == nil && !app.showsAccountPicker
@@ -66,7 +82,11 @@ private struct RecommendContent: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         ZStack {
                             Color.black
+                            // Rebuilt for each engine, as on iOS: the feed hands the clip to another
+                            // engine on most swipes, and a view kept from the last one shows its
+                            // frozen last frame while the new one plays.
                             VideoSurface(engine: feed.engine)
+                                .id(ObjectIdentifier(feed.engine))
                             status
                         }
                         .frame(width: videoWidth, height: proxy.size.height)
@@ -78,8 +98,13 @@ private struct RecommendContent: View {
             }
         }
         .ignoresSafeArea()
-        .toolbar(tabBarShown ? .visible : .hidden, for: .tabBar)
-        .animation(.easeInOut(duration: 0.4), value: tabBarShown)
+        .toolbar(tabBarVisible ? .visible : .hidden, for: .tabBar)
+        .animation(.easeInOut(duration: 0.4), value: tabBarVisible)
+        // Back moves the focus to the tab bar even while it is hidden: show it then. When the focus
+        // comes back down, past the first clip it goes away again.
+        .onChange(of: mainFocused) { _, focused in
+            if focused { tabBarSummoned = false } else if visible { tabBarSummoned = true }
+        }
         .task(id: feed.tab) { await feed.load() }
         .onAppear { feed.setVisible(visible) }
         .onDisappear { feed.setVisible(false) }
@@ -97,14 +122,6 @@ private struct RecommendContent: View {
         }
         .onChange(of: feed.engine.isPlaying) { _, playing in
             UIApplication.shared.isIdleTimerDisabled = playing && visible
-            if playing { hideToken += 1 } else { tabBarShown = true }
-        }
-        .task(id: hideToken) {
-            // The tab bar fades a few seconds into a clip, unless the focus is on it.
-            guard hideToken > 0 else { return }
-            try? await Task.sleep(for: .seconds(3))
-            guard !Task.isCancelled, feed.engine.isPlaying, mainFocused else { return }
-            tabBarShown = false
         }
     }
 
@@ -130,8 +147,8 @@ private struct RecommendContent: View {
                 .onAppear(perform: takeFocus)
                 .onMoveCommand(perform: move)
                 .onPlayPauseCommand { feed.engine.togglePlay() }
-                // Back brings the tab bar in while it is hidden; when it shows, Back is the system's.
-                .onExitCommand(perform: tabBarShown ? nil : { tabBarShown = true })
+                // Back is the system's: it moves the focus to the tab bar (shown then, above).
+                .onExitCommand(perform: nil)
                 Text("上下切换短剧").font(.caption).foregroundStyle(.tertiary)
             }
             .frame(maxWidth: 560, alignment: .leading)
@@ -176,17 +193,32 @@ private struct RecommendContent: View {
     // MARK: Remote
 
     private func move(_ direction: MoveCommandDirection) {
-        guard let current = feed.currentID, let index = feed.items.firstIndex(where: { $0.seriesId == current }) else { return }
+        guard let index = currentIndex else { return }
+        let now = Date()
         switch direction {
         case .down:
-            if let upcoming = feed.items[safe: index + 1] { feed.currentID = upcoming.seriesId }
+            guard let upcoming = feed.items[safe: index + 1] else { return }
+            guard now.timeIntervalSince(lastMove) >= Self.moveGate else { return note("down ignored") }
+            lastMove = now
+            note("down to=\(index + 1)")
+            feed.currentID = upcoming.seriesId
         case .up:
-            // While the tab bar shows, up is the focus engine's way back to it.
-            guard !tabBarShown, index > 0 else { return }
+            // The first clip: up is the focus engine's, to the tab bar (shown on the first clip).
+            if index == 0 { return }
+            guard now.timeIntervalSince(lastMove) >= Self.moveGate else { return note("up ignored") }
+            lastMove = now
+            note("up to=\(index - 1)")
             feed.currentID = feed.items[index - 1].seriesId
         default:
             break
         }
+    }
+
+    /// Each remote move with the time to the millisecond, so a device log shows whether one swipe
+    /// arrives as more than one move.
+    private func note(_ text: String) {
+        let ms = Int(Date().timeIntervalSince1970 * 1000) % 100_000
+        PlaybackLog.note("feed move \(text) ms=\(ms)")
     }
 
     /// Asks for the focus a few times: right after launch the tab bar can still be taking it.
@@ -194,7 +226,8 @@ private struct RecommendContent: View {
         Task { @MainActor in
             for _ in 0..<10 where !mainFocused {
                 try? await Task.sleep(for: .milliseconds(300))
-                guard visible else { return }
+                // Not while the tab bar was asked for: the focus is meant to be up there.
+                guard visible, !tabBarSummoned else { return }
                 mainFocused = true
             }
         }
@@ -208,3 +241,4 @@ private struct RecommendContent: View {
         }
     }
 }
+

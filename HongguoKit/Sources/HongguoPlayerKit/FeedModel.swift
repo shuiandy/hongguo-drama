@@ -751,6 +751,14 @@ public final class FeedModel {
         incoming.takeFeedSettingsAndWarmItems(from: outgoing)
         app.player = incoming
         takeEngine()
+        // The feed's video view must follow the new engine (rebuilt for it, `.id(engine)`);
+        // otherwise its picture stays on the parked engine's last frame while this one plays.
+        // Written down so a device log shows it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self, weak incoming] in
+            guard let self, let incoming, self.isVisible, self.engine === incoming,
+                  incoming.layerView.window == nil else { return }
+            PlaybackLog.note("feed engine has no surface vid=\(incoming.currentVid?.suffix(6) ?? "-")")
+        }
         return resume
     }
 

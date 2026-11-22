@@ -18,9 +18,13 @@ public struct LaunchArguments: Sendable, Equatable {
     public var showsLogin: Bool
     /// Ask each read-only account endpoint once and write the shape of the replies.
     public var accountProbe: Bool
+    /// With `accountPreview`: show the made-up account as if its last sync failed (sample runs
+    /// only; nothing is requested), to look at and test the failure text and 重试.
+    public var syncFailurePreview: Bool
 
     public init(offlineFixtures: Bool = false, muted: Bool = false, route: String = "", seriesId: String = "",
-                accountPreview: Bool = false, showsLogin: Bool = false, accountProbe: Bool = false) {
+                accountPreview: Bool = false, showsLogin: Bool = false, accountProbe: Bool = false,
+                syncFailurePreview: Bool = false) {
         self.offlineFixtures = offlineFixtures
         self.muted = muted
         self.route = route
@@ -28,6 +32,7 @@ public struct LaunchArguments: Sendable, Equatable {
         self.accountPreview = accountPreview
         self.showsLogin = showsLogin
         self.accountProbe = accountProbe
+        self.syncFailurePreview = syncFailurePreview
     }
 
     public init(defaults: UserDefaults, environment: [String: String]) {
@@ -38,7 +43,8 @@ public struct LaunchArguments: Sendable, Equatable {
             seriesId: defaults.string(forKey: "HongguoSeries") ?? "",
             accountPreview: defaults.bool(forKey: "HongguoAccountPreview"),
             showsLogin: defaults.bool(forKey: "HongguoShowLogin"),
-            accountProbe: defaults.bool(forKey: "HongguoAccountProbe")
+            accountProbe: defaults.bool(forKey: "HongguoAccountProbe"),
+            syncFailurePreview: defaults.bool(forKey: "HongguoSyncFailurePreview")
         )
     }
 
