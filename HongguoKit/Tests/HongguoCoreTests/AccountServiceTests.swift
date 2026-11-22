@@ -250,4 +250,118 @@ final class AccountServiceTests: XCTestCase {
         XCTAssertEqual(resultB, "survived-1")
         XCTAssertEqual(cancelCalls.count, 1)
     }
+
+    func testSMSLoginMixHexNormalizeAndFullFlow() async throws {
+        XCTAssertEqual(AccountService.mixHex("24"), "3731")
+        XCTAssertEqual(AccountService.mixHex("0"), "35")
+        XCTAssertEqual(try AccountService.normalizeMobile("138 0013-8000"), "+8613800138000")
+        XCTAssertEqual(try AccountService.normalizeMobile("+86 13800138000"), "+8613800138000")
+        XCTAssertEqual(try AccountService.normalizeMobile("415-555-0199", countryCode: "+1"), "+14155550199")
+        XCTAssertThrowsError(try AccountService.normalizeMobile("12345"))
+        XCTAssertThrowsError(try AccountService.normalizeMobile("23800138000", countryCode: "+86"))
+
+        final class PassportRecorder: @unchecked Sendable {
+            let lock = NSLock()
+            var calls: [(URL, String, [String: String], String)] = []
+            var sendReturnsCaptcha = false
+            var omitSetCookie = false
+            func record(_ url: URL, _ method: String, _ headers: [String: String], _ body: Data?) {
+                lock.withLock { calls.append((url, method, headers, body.map { String(decoding: $0, as: UTF8.self) } ?? "")) }
+            }
+        }
+
+        let recorder = PassportRecorder()
+        let store = MemoryCredentialStore()
+        let fakePng = Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] + Array(repeating: UInt8(0x41), count: 24)).base64EncodedString()
+        let account = AccountService(
+            store: store,
+            webRequest: { url, _ in
+                // Simulate web passport rejecting an App-issued SMS session so passport fallback is exercised.
+                return self.response(url, json: #"{"message":"error","data":{"description":"会话过期"}}"#)
+            },
+            passportRequest: { url, method, headers, body in
+                recorder.record(url, method, headers, body)
+                switch url.path(percentEncoded: false) {
+                case "/passport/mobile/send_code/":
+                    if recorder.sendReturnsCaptcha {
+                        return self.response(url, json: #"{"message":"error","data":{"description":"请输入图形验证码","captcha":"\#(fakePng)"}}"#,
+                                             headers: ["Set-Cookie": "passport_csrf_token=csrf1; Path=/; Domain=snssdk.com"])
+                    }
+                    return self.response(url, json: #"{"message":"success","data":{"retry_time":60,"mobile_ticket":"tok1"}}"#,
+                                         headers: ["Set-Cookie": "passport_csrf_token=csrf1; Path=/; Domain=snssdk.com"])
+                case "/passport/mobile/sms_login/":
+                    let setCookie = recorder.omitSetCookie
+                        ? "passport_csrf_token=csrf1; Path=/; Domain=snssdk.com"
+                        : "sessionid=sms_sess; Path=/; Domain=snssdk.com, sid_tt=sms_sid; Path=/; Domain=snssdk.com"
+                    return self.response(url, json: #"{"message":"success","data":{"user_id_str":"7654321","screen_name":"手机用户","session_key":"fallback_sess"}}"#,
+                                         headers: ["Set-Cookie": setCookie])
+                case "/passport/account/info/v2/":
+                    return self.response(url, json: #"{"message":"success","data":{"user_id_str":"7654321","name":"手机用户"}}"#)
+                default:
+                    return self.response(url, status: 404)
+                }
+            },
+            accountRequest: { _, _ in .null },
+            identity: {
+                PlaybackIdentity(deviceId: "1234567890123456789", iid: "2234567890123456789", cdid: "01234567-89ab-cdef-0123-456789abcdef")
+            }
+        )
+
+        // 1. Captcha response surfaced cleanly
+        recorder.sendReturnsCaptcha = true
+        let captchaStatus = try await account.sendSMSCode(phone: "13800138000")
+        guard case .captchaRequired(let image, let msg) = captchaStatus else {
+            return XCTFail("expected captchaRequired")
+        }
+        XCTAssertFalse(image.isEmpty)
+        XCTAssertEqual(msg, "请输入图形验证码")
+
+        // 2. Send SMS code with captcha
+        recorder.sendReturnsCaptcha = false
+        let sent = try await account.sendSMSCode(phone: "13800138000", captcha: "ab12")
+        XCTAssertEqual(sent, .sent(retryTime: 60))
+
+        // 3. Login with SMS code forwards CSRF token and saves session
+        let loginResult = try await account.loginWithSMSCode(phone: "13800138000", code: "123456")
+        guard case .signedIn(let profile, let warning) = loginResult else {
+            return XCTFail("expected signedIn")
+        }
+        XCTAssertEqual(profile, AccountProfile(id: "7654321", nickname: "手机用户"))
+        XCTAssertEqual(warning, "")
+        XCTAssertTrue(store.current?.cookie.contains("sessionid=sms_sess") == true)
+
+        let loginCall = recorder.calls.first { $0.0.path(percentEncoded: false) == "/passport/mobile/sms_login/" }!
+        XCTAssertEqual(loginCall.1, "POST")
+        XCTAssertEqual(loginCall.2["x-tt-passport-csrf-token"], "csrf1")
+        XCTAssertTrue(loginCall.3.contains("mix_mode=1"))
+        XCTAssertTrue(loginCall.3.contains("mobile=\(AccountService.mixHex("+8613800138000"))"))
+        XCTAssertTrue(loginCall.3.contains("code=\(AccountService.mixHex("123456"))"))
+
+        // 4. Revalidate falls back to security.snssdk.com when web passport rejects an App session
+        let restored = AccountService(
+            store: store,
+            webRequest: { url, _ in self.response(url, json: #"{"message":"error","data":{"description":"会话过期"}}"#) },
+            passportRequest: { url, _, headers, _ in
+                XCTAssertEqual(url.path(percentEncoded: false), "/passport/account/info/v2/")
+                XCTAssertTrue((headers["Cookie"] ?? "").contains("sessionid=sms_sess"))
+                return self.response(url, json: #"{"message":"success","data":{"user_id_str":"7654321","name":"手机用户"}}"#)
+            },
+            accountRequest: { _, _ in .null },
+            identity: {
+                PlaybackIdentity(deviceId: "1234567890123456789", iid: "2234567890123456789", cdid: "01234567-89ab-cdef-0123-456789abcdef")
+            }
+        )
+        let status = await restored.status()
+        XCTAssertEqual(status.profile?.id, "7654321")
+        // Give background revalidate a moment to verify via passport fallback without clearing store.
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertNotNil(store.current, "passport fallback must keep App-issued SMS session alive")
+
+        // 5. Fallback to data.session_key when Set-Cookie omits sessionid
+        recorder.omitSetCookie = true
+        _ = await account.logout()
+        let fallbackResult = try await account.loginWithSMSCode(phone: "13800138000", code: "654321")
+        guard case .signedIn = fallbackResult else { return XCTFail("expected session_key fallback sign-in") }
+        XCTAssertTrue(store.current?.cookie.contains("sessionid=fallback_sess") == true)
+    }
 }
