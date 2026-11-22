@@ -41,6 +41,17 @@ public enum AccountLoginStatus: Equatable, Sendable {
     case signedIn(AccountProfile, storageWarning: String)
 }
 
+public enum AccountSMSCodeStatus: Equatable, Sendable {
+    case sent(retryTime: Int)
+    case captchaRequired(image: Data, message: String)
+}
+
+public enum AccountSMSLoginStatus: Equatable, Sendable {
+    case signedIn(AccountProfile, storageWarning: String)
+    case captchaRequired(image: Data, message: String)
+    case cancelled
+}
+
 /// Saved credentials: the website cookie and the last verified profile.
 public struct AccountCredentials: Codable, Equatable, Sendable {
     public var cookie: String
@@ -124,6 +135,9 @@ struct CookieJar: Sendable {
 
     var header: String { values.filter { !$0.0.isEmpty && !$0.1.isEmpty }.map { "\($0.0)=\($0.1)" }.joined(separator: "; ") }
     var hasSession: Bool { values.contains { ($0.0 == "sessionid" || $0.0 == "sessionid_ss") && !$0.1.isEmpty } }
+    func value(for name: String) -> String? {
+        values.first { $0.0 == name && !$0.1.isEmpty }?.1
+    }
 }
 
 public actor AccountService {
@@ -136,10 +150,12 @@ public actor AccountService {
     ]
 
     public typealias WebRequest = @Sendable (_ url: URL, _ headers: [String: String]) async throws -> HTTPResponse
+    public typealias PassportRequest = @Sendable (_ url: URL, _ method: String, _ headers: [String: String], _ body: Data?) async throws -> HTTPResponse
     public typealias AccountRequest = @Sendable (_ url: String, _ headers: [(String, String)]) async throws -> JSONValue
 
     private let store: AccountCredentialStore
     private let webRequest: WebRequest
+    private let passportRequest: PassportRequest
     private let accountRequest: AccountRequest
     private let identity: @Sendable () async throws -> PlaybackIdentity
     private let deviceToken: @Sendable () async -> String
@@ -157,13 +173,14 @@ public actor AccountService {
     private var generation = 0
     private var login: (id: String, token: String, jar: CookieJar, expiresAt: Date)?
     private var loginGeneration = 0
+    private var smsSessionJar = CookieJar()
 
     public init(store: AccountCredentialStore = KeychainCredentialStore()) {
-        self.init(store: store, webRequest: nil, accountRequest: nil, identity: nil)
+        self.init(store: store, webRequest: nil, passportRequest: nil, accountRequest: nil, identity: nil)
     }
 
     /// Injectable requests for tests.
-    init(store: AccountCredentialStore, webRequest: WebRequest?, accountRequest: AccountRequest?,
+    init(store: AccountCredentialStore, webRequest: WebRequest?, passportRequest: PassportRequest? = nil, accountRequest: AccountRequest?,
          identity: (@Sendable () async throws -> PlaybackIdentity)?, now: @escaping @Sendable () -> Date = { Date() }) {
         self.store = store
         self.now = now
@@ -175,6 +192,25 @@ public actor AccountService {
             options.maxRedirects = 0
             options.acceptStatus = 100...599
             return try await HTTPClient.shared.get(url, options: options)
+        }
+        if let passportRequest {
+            self.passportRequest = passportRequest
+        } else if webRequest != nil {
+            // Keep offline tests that inject only `webRequest` strictly offline.
+            self.passportRequest = { _, _, _, _ in throw HongguoError(.input, "会话过期") }
+        } else {
+            self.passportRequest = { url, method, headers, body in
+                var request = URLRequest(url: url)
+                request.httpMethod = method
+                request.httpBody = body
+                var options = HTTPClient.Options()
+                options.headers = headers
+                options.timeout = 12
+                options.maxBytes = 2 * 1024 * 1024
+                options.maxRedirects = 0
+                options.acceptStatus = 100...599
+                return try await HTTPClient.shared.send(request, options: options)
+            }
         }
         let transport = AppTransport(http: .shared)
         self.accountRequest = accountRequest ?? { url, headers in
@@ -324,11 +360,51 @@ public actor AccountService {
         latestPerSeries(try parseHistoryPage(payload).items)
     }
 
+    /// Official ByteDance Passport `tta_hexMixedString` (each UTF-8 byte XOR 0x05, lowercase hex).
+    static func mixHex(_ value: String) -> String {
+        value.utf8.map { String(format: "%02x", $0 ^ 5) }.joined()
+    }
+
+    /// Normalizes a user-entered phone number into the `+<country><digits>` form sent by
+    /// `SSNewDefaultLoginView.getInputTextWithRegion` (e.g. `"+8613800138000"`).
+    public static func normalizeMobile(_ phone: String, countryCode: String = "+86") throws -> String {
+        let stripped = phone.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "[\\s\\-()]", with: "", options: .regularExpression)
+        guard !stripped.isEmpty else { throw HongguoError(.input, "请输入手机号") }
+        if stripped.hasPrefix("+") {
+            let digits = String(stripped.dropFirst())
+            guard digits.matchesDigits(min: 7, max: 15) else {
+                throw HongguoError(.input, "手机号格式不正确")
+            }
+            return "+\(digits)"
+        }
+        guard stripped.matchesDigits(min: 5, max: 15) else {
+            throw HongguoError(.input, "手机号格式不正确")
+        }
+        let codeDigits = countryCode.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)
+        let prefix = codeDigits.isEmpty ? "86" : codeDigits
+        if prefix == "86" {
+            guard stripped.count == 11, stripped.hasPrefix("1") else {
+                throw HongguoError(.input, "请输入 11 位中国大陆手机号")
+            }
+        }
+        return "+\(prefix)\(stripped)"
+    }
+
+    static func parseCaptchaImage(_ payload: JSONValue) -> Data? {
+        let raw = (payload["data"]["captcha"].string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+        let base64 = raw.components(separatedBy: "base64,").last ?? raw
+        guard let data = Data(base64Encoded: base64), data.count > 16 else { return nil }
+        return data
+    }
+
     /// Error text safe to show: no URLs or session cookies.
     static func safeMessage(_ error: Error, fallback: String = "账号操作失败，请稍后重试") -> String {
         var text = (error as? HongguoError)?.message ?? (error as? AppSourceError)?.message ?? fallback
         text = text.replacingOccurrences(of: "https?://\\S+", with: "[地址]", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: "(sessionid|sid_tt|passport_csrf_token)=[^;\\s]+", with: "$1=[已隐藏]", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: "(sessionid|sid_tt|passport_csrf_token|session_key|mobile_ticket)=[^;\\s]+", with: "$1=[已隐藏]", options: [.regularExpression, .caseInsensitive])
         return String(text.prefix(160))
     }
 
@@ -374,7 +450,46 @@ public actor AccountService {
 
     private func verify(_ cookie: String) async throws -> AccountProfile {
         var jar = CookieJar(cookie)
-        return try Self.parseProfile(try await webJSON("/passport/account/info/v2/", jar: &jar))
+        do {
+            return try Self.parseProfile(try await webJSON("/passport/account/info/v2/", jar: &jar))
+        } catch let webError {
+            do {
+                return try await verifyViaPassport(cookie: cookie)
+            } catch {
+                throw webError
+            }
+        }
+    }
+
+    private func verifyViaPassport(cookie: String) async throws -> AccountProfile {
+        let device = try await identity()
+        let dToken = await deviceToken()
+        let signed = try AppLegacySigner.shared.passportGet(
+            path: "/passport/account/info/v2/",
+            identity: device,
+            dToken: dToken,
+            nowMillis: Int64(now().timeIntervalSince1970 * 1000)
+        )
+        var jar = CookieJar(cookie)
+        let payload = try await sendPassport(signed, method: "GET", jar: &jar)
+        return try Self.parseProfile(payload)
+    }
+
+    private func sendPassport(_ signed: AppLegacySigner.Signed, method: String, jar: inout CookieJar) async throws -> JSONValue {
+        guard let url = URL(string: signed.url) else { throw HongguoError(.format, "红果登录地址无效") }
+        var headers = Dictionary(uniqueKeysWithValues: signed.headers)
+        let cookieHeader = jar.header
+        if !cookieHeader.isEmpty { headers["Cookie"] = cookieHeader }
+        if let csrf = jar.value(for: "passport_csrf_token"), !csrf.isEmpty {
+            headers["x-tt-passport-csrf-token"] = csrf
+        }
+        let body = signed.body.map { Data($0) }
+        let response = try await passportRequest(url, method, headers, body)
+        jar.absorb(response)
+        guard response.status == 200 else { throw HongguoError(.upstream, "红果登录请求失败（HTTP \(response.status)）") }
+        guard !response.data.isEmpty, response.data.count <= 2 * 1024 * 1024 else { throw HongguoError(.upstream, "红果登录响应异常") }
+        guard let payload = try? JSONValue.parse(response.data) else { throw HongguoError(.format, "红果登录响应格式异常") }
+        return payload
     }
 
     // MARK: Public API
@@ -533,6 +648,103 @@ public actor AccountService {
         return .signedIn(next, storageWarning: signIn(cookie: jar.header, profile: next))
     }
 
+    /// Sends an SMS login verification code through the official ByteDance Passport endpoint
+    /// (`/passport/mobile/send_code/`, `smsCodeType=24`, `mix_mode=1`).
+    public func sendSMSCode(phone: String, countryCode: String = "+86", captcha: String = "") async throws -> AccountSMSCodeStatus {
+        let normalized = try Self.normalizeMobile(phone, countryCode: countryCode)
+        let device = try await identity()
+        let dToken = await deviceToken()
+        var form: [(String, String)] = [
+            ("mix_mode", "1"),
+            ("mobile", Self.mixHex(normalized)),
+            ("type", Self.mixHex("24")),
+            ("unbind_exist", Self.mixHex("0")),
+            ("is6Digits", "1"),
+        ]
+        let trimmedCaptcha = captcha.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedCaptcha.isEmpty {
+            form.append(("captcha", trimmedCaptcha))
+        }
+        let signed = try AppLegacySigner.shared.passportForm(
+            path: "/passport/mobile/send_code/",
+            form: form,
+            identity: device,
+            dToken: dToken,
+            nowMillis: Int64(now().timeIntervalSince1970 * 1000)
+        )
+        var jar = smsSessionJar
+        let payload = try await sendPassport(signed, method: "POST", jar: &jar)
+        smsSessionJar = jar
+        let message = (payload["message"].string ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+        if message == "success" {
+            let retry = payload["data"]["retry_time"].signedInt ?? 60
+            return .sent(retryTime: max(30, min(300, retry)))
+        }
+        let desc = Self.cleanText(payload["data"]["description"].string ?? payload["message"].string)
+        if let image = Self.parseCaptchaImage(payload) {
+            return .captchaRequired(image: image, message: desc.isEmpty ? "请输入图形验证码" : desc)
+        }
+        throw HongguoError(.upstream, desc.isEmpty ? "发送验证码失败，请稍后重试" : desc)
+    }
+
+    /// Signs in with a phone number and SMS verification code through `/passport/mobile/sms_login/`.
+    public func loginWithSMSCode(phone: String, countryCode: String = "+86", code: String, captcha: String = "") async throws -> AccountSMSLoginStatus {
+        let normalized = try Self.normalizeMobile(phone, countryCode: countryCode)
+        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedCode.matchesDigits(min: 4, max: 8) else {
+            throw HongguoError(.input, "请输入有效的短信验证码")
+        }
+        loginGeneration += 1
+        let attempt = loginGeneration, token = generation
+        login = nil
+        let device = try await identity()
+        let dToken = await deviceToken()
+        var form: [(String, String)] = [
+            ("mix_mode", "1"),
+            ("mobile", Self.mixHex(normalized)),
+            ("code", Self.mixHex(trimmedCode)),
+        ]
+        let trimmedCaptcha = captcha.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedCaptcha.isEmpty {
+            form.append(("captcha", trimmedCaptcha))
+        }
+        let signed = try AppLegacySigner.shared.passportForm(
+            path: "/passport/mobile/sms_login/",
+            form: form,
+            identity: device,
+            dToken: dToken,
+            nowMillis: Int64(now().timeIntervalSince1970 * 1000)
+        )
+        var jar = smsSessionJar
+        let payload = try await sendPassport(signed, method: "POST", jar: &jar)
+        smsSessionJar = jar
+        guard attempt == loginGeneration, token == generation else { return .cancelled }
+        let message = (payload["message"].string ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+        if message != "success" {
+            let desc = Self.cleanText(payload["data"]["description"].string ?? payload["message"].string)
+            if let image = Self.parseCaptchaImage(payload) {
+                return .captchaRequired(image: image, message: desc.isEmpty ? "请输入图形验证码" : desc)
+            }
+            throw HongguoError(.upstream, desc.isEmpty ? "短信登录失败，请检查验证码后重试" : desc)
+        }
+        if !jar.hasSession, let sessionKey = payload["data"]["session_key"].nonEmptyString {
+            jar.set("sessionid", sessionKey)
+            jar.set("sessionid_ss", sessionKey)
+        }
+        guard jar.hasSession else {
+            throw HongguoError(.upstream, "登录未返回有效会话，请重试")
+        }
+        let next: AccountProfile
+        if let direct = try? Self.parseProfile(payload) {
+            next = direct
+        } else {
+            next = try await verify(jar.header)
+        }
+        guard attempt == loginGeneration, token == generation else { return .cancelled }
+        smsSessionJar = CookieJar()
+        return .signedIn(next, storageWarning: signIn(cookie: jar.header, profile: next))
+    }
+
     public func cancelLogin(_ loginId: String? = nil) {
         if let loginId, let login, login.id != loginId { return }
         loginGeneration += 1
@@ -548,6 +760,7 @@ public actor AccountService {
         profile = nil
         cachedHistory = nil
         login = nil
+        smsSessionJar = CookieJar()
         restored = true
         restoreError = ""
         PersistentAppDevice.invalidateAuthCache()

@@ -488,6 +488,82 @@ struct AppLegacySigner {
     }
 
     static let metadataPaths = ["/reading/distribution/category/landpage/v1/", "/reading/bookapi/bookmall/cell/change/v"]
+    static let passportHost = "https://security.snssdk.com"
+    static let passportPaths = [
+        "/passport/mobile/send_code/",
+        "/passport/mobile/sms_login/",
+        "/passport/account/info/v2/",
+    ]
+
+    /// Signed form-encoded POST for ByteDance Passport mobile endpoints (`security.snssdk.com`).
+    func passportForm(path: String, form: [(String, String)], identity: PlaybackIdentity,
+                      dToken: String = "", nowMillis: Int64, version: ClientVersion = .current) throws -> Signed {
+        guard Self.passportPaths.contains(path) else { throw HongguoError(.input, "不支持的通行证接口") }
+        guard [identity.deviceId, identity.iid].allSatisfy({ $0.matchesDigits(min: 1, max: 30) && $0.contains(where: { $0 != "0" }) }),
+              identity.cdid.range(of: "^[a-fA-F0-9-]{36}$", options: .regularExpression) != nil else {
+            throw HongguoError(.input, "账号设备身份无效")
+        }
+        let bodyString = AppCrypto.encodeQuery(form)
+        let payload = Array(bodyString.utf8)
+        let bodyMd5 = AppCrypto.md5(payload)
+        let device = Self.merged(Self.versioned(version.code, version.name),
+                                 [("iid", identity.iid), ("device_id", identity.deviceId), ("cdid", identity.cdid),
+                                  ("is_from_ttaccountsdk", "1")])
+        let ts = UInt32(nowMillis / 1000)
+        for n in 0..<128 {
+            let ticket = String(nowMillis + Int64(n))
+            let query = AppCrypto.encodeQuery(device + [("ts", String(ts)), ("_rticket", ticket)])
+            let url = "\(Self.passportHost)\(path)?\(query)"
+            guard Self.branch(querySm3: AppCrypto.sm3(Array(query.utf8)), bodyMd5: bodyMd5, ts: ts) == 0 else { continue }
+            let headers: [(String, String)] = [
+                ("User-Agent", version.searchUA), ("Accept", "application/json"), ("Accept-Encoding", "identity"),
+                ("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8"),
+                ("x-ss-stub", AppCrypto.hex(bodyMd5, uppercase: true)),
+                ("x-ss-dp", "8662"), ("x-tt-store-region", "cn"), ("x-tt-store-region-src", "did"),
+                ("x-ss-req-ticket", ticket), ("x-tt-request-tag", "t=0;n=0"), ("sdk-version", "2"),
+                ("passport-sdk-version", "50561"), ("x-xs-from-web", "0"), ("x-khronos", String(ts)),
+                ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
+                ("x-gorgon", Self.xGorgon(query: query, body: payload, ts: ts, random: random32() >> 16)), ("x-helios", helios(ts: ts)),
+                ("x-medusa", try medusa(url: url, body: payload, ts: ts, deviceId: identity.deviceId, versionName: version.name, nowMillis: nowMillis)),
+                ("x-tt-dt", dToken),
+            ]
+            return Signed(url: url, query: query, headers: headers, body: payload)
+        }
+        throw HongguoError(.format, "无法生成登录请求签名")
+    }
+
+    /// Signed GET for ByteDance Passport endpoints (`security.snssdk.com`, e.g. `/passport/account/info/v2/`).
+    func passportGet(path: String, values: [(String, String)] = [], identity: PlaybackIdentity,
+                     dToken: String = "", nowMillis: Int64, version: ClientVersion = .current) throws -> Signed {
+        guard Self.passportPaths.contains(path) else { throw HongguoError(.input, "不支持的通行证接口") }
+        guard [identity.deviceId, identity.iid].allSatisfy({ $0.matchesDigits(min: 1, max: 30) && $0.contains(where: { $0 != "0" }) }),
+              identity.cdid.range(of: "^[a-fA-F0-9-]{36}$", options: .regularExpression) != nil else {
+            throw HongguoError(.input, "账号设备身份无效")
+        }
+        let device = Self.merged(Self.versioned(version.code, version.name),
+                                 [("iid", identity.iid), ("device_id", identity.deviceId), ("cdid", identity.cdid),
+                                  ("is_from_ttaccountsdk", "1")])
+        let ts = UInt32(nowMillis / 1000)
+        let fields = Self.merged(values, device)
+        for n in 0..<128 {
+            let ticket = String(nowMillis + Int64(n))
+            let query = AppCrypto.encodeQuery(fields + [("ts", String(ts)), ("_rticket", ticket)])
+            let url = "\(Self.passportHost)\(path)?\(query)"
+            guard Self.branch(querySm3: AppCrypto.sm3(Array(query.utf8)), bodyMd5: [UInt8](repeating: 0, count: 16), ts: ts) == 0 else { continue }
+            let headers: [(String, String)] = [
+                ("User-Agent", version.searchUA), ("Accept", "application/json"), ("Accept-Encoding", "identity"),
+                ("x-ss-dp", "8662"), ("x-tt-store-region", "cn"), ("x-tt-store-region-src", "did"),
+                ("x-ss-req-ticket", ticket), ("x-tt-request-tag", "t=0;n=0"), ("sdk-version", "2"),
+                ("passport-sdk-version", "50561"), ("x-xs-from-web", "0"), ("x-khronos", String(ts)),
+                ("x-ladon", AppCrypto.base64(AppCrypto.be32Bytes(ts))), ("x-argus", AppCrypto.base64(AppCrypto.le32(ts))),
+                ("x-gorgon", Self.xGorgon(query: query, body: nil, ts: ts, random: random32() >> 16)), ("x-helios", helios(ts: ts)),
+                ("x-medusa", try medusa(url: url, body: nil, ts: ts, deviceId: identity.deviceId, versionName: version.name, nowMillis: nowMillis)),
+                ("x-tt-dt", dToken),
+            ]
+            return Signed(url: url, query: query, headers: headers, body: nil)
+        }
+        throw HongguoError(.format, "无法生成账号验证签名")
+    }
 
     /// Port of `signedMetadataRequest` (catalogue lists), signed for the persistent device.
     func metadata(path: String, values: [(String, String)], payload: [UInt8]?, identity: PlaybackIdentity,

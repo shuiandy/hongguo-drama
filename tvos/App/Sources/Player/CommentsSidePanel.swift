@@ -18,7 +18,11 @@ struct CommentsSidePanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            Text(total.map { "\(CountText.short($0))条评论" } ?? "评论").font(.title3.weight(.semibold))
+            HStack {
+                Text(total.map { "\(CountText.short($0))条评论" } ?? "评论").font(.title3.weight(.semibold))
+                Spacer()
+                BackHint()
+            }
             switch model.phase {
             case .loading, .idle:
                 ProgressView().frame(maxWidth: .infinity)

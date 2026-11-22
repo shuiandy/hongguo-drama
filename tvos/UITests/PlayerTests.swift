@@ -16,22 +16,55 @@ final class PlayerTests: XCTestCase {
         return parts.count == 2 ? parts[0] * 60 + parts[1] : nil
     }
 
-    func testClickShowsControlsThenBackClosesThePlayer() {
+    private func waitForFocus(_ element: XCUIElement, _ message: String = "") {
+        expectation(for: NSPredicate(format: "hasFocus == true"), evaluatedWith: element)
+        waitForExpectations(timeout: 5)
+    }
+
+    /// Back goes one layer out each time: the controls first, then the player.
+    func testClickShowsControlsThenBackLeavesLayerByLayer() {
         let app = launch(route: "player")
         XCTAssertTrue(app.staticTexts["离线示例，没有视频画面"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["选集"].exists)
         remote.press(.select)
         XCTAssertTrue(app.buttons["选集"].waitForExistence(timeout: 5), "the click shows the controls")
+        waitForFocus(app.buttons["进度条"])
         remote.press(.menu)
-        XCTAssertTrue(app.tabBars.buttons["推荐"].waitForExistence(timeout: 5), "back closes the player")
-        XCTAssertFalse(app.buttons["选集"].exists, "the player's controls are gone")
+        XCTAssertFalse(app.buttons["选集"].waitForExistence(timeout: 2), "back puts the controls away")
+        XCTAssertTrue(app.staticTexts["离线示例，没有视频画面"].exists, "and the player stays")
+        remote.press(.menu)
+        XCTAssertTrue(app.tabBars.buttons["推荐"].waitForExistence(timeout: 5), "back again closes the player")
     }
 
-    func testRightClickGoesForwardTenSeconds() throws {
+    /// After Back puts the controls away the picture has the focus again: down (which only the
+    /// picture answers) brings the controls back, with the focus on 选集.
+    func testPictureTakesTheFocusBackWhenTheControlsGo() {
+        let app = launch(route: "player")
+        XCTAssertTrue(app.staticTexts["离线示例，没有视频画面"].waitForExistence(timeout: 10))
+        remote.press(.select)
+        waitForFocus(app.buttons["进度条"])
+        remote.press(.menu)
+        XCTAssertFalse(app.buttons["选集"].waitForExistence(timeout: 2), "back puts the controls away")
+        Thread.sleep(forTimeInterval: 1)
+        remote.press(.down)
+        XCTAssertTrue(app.buttons["选集"].waitForExistence(timeout: 5), "the picture answers the remote again")
+        waitForFocus(app.buttons["选集"])
+    }
+
+    /// Straight from the picture, one press of Back leaves the player.
+    func testBackOnThePictureClosesThePlayer() {
+        let app = launch(route: "player")
+        XCTAssertTrue(app.staticTexts["离线示例，没有视频画面"].waitForExistence(timeout: 10))
+        remote.press(.menu)
+        XCTAssertTrue(app.tabBars.buttons["推荐"].waitForExistence(timeout: 5))
+    }
+
+    func testRightOnTheProgressBarGoesForwardTenSeconds() throws {
         let app = launch(route: "player")
         XCTAssertTrue(app.staticTexts["离线示例，没有视频画面"].waitForExistence(timeout: 10))
         remote.press(.select) // pause and show the controls, so the clock holds still
         XCTAssertTrue(app.buttons["选集"].waitForExistence(timeout: 5))
+        waitForFocus(app.buttons["进度条"])
         let before = try XCTUnwrap(elapsed(app))
         remote.press(.right)
         let deadline = Date().addingTimeInterval(3)
@@ -40,12 +73,36 @@ final class PlayerTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(after, before + 9)
     }
 
-    func testDownOpensEpisodesAndBackClosesThePanelFirst() {
+    /// Down from the progress bar reaches the buttons, and left and right there move between the
+    /// buttons without touching the playback position.
+    func testLeftAndRightOnTheButtonsDoNotMoveThePosition() throws {
         let app = launch(route: "player")
         XCTAssertTrue(app.staticTexts["离线示例，没有视频画面"].waitForExistence(timeout: 10))
-        remote.press(.select)
+        remote.press(.select) // paused, the progress bar has the focus
         XCTAssertTrue(app.buttons["选集"].waitForExistence(timeout: 5))
+        waitForFocus(app.buttons["进度条"])
+        let before = try XCTUnwrap(elapsed(app))
         remote.press(.down)
+        waitForFocus(app.buttons["选集"])
+        remote.press(.right)
+        waitForFocus(app.buttons["评论"])
+        remote.press(.right)
+        remote.press(.left)
+        waitForFocus(app.buttons["评论"])
+        XCTAssertEqual(elapsed(app), before, "the position did not move")
+        remote.press(.up)
+        waitForFocus(app.buttons["进度条"])
+    }
+
+    /// Down on the picture brings the controls in with the focus on 选集; Back closes the panel
+    /// first, then the player.
+    func testDownShowsControlsOnEpisodesAndBackClosesThePanelFirst() {
+        let app = launch(route: "player")
+        XCTAssertTrue(app.staticTexts["离线示例，没有视频画面"].waitForExistence(timeout: 10))
+        remote.press(.down)
+        XCTAssertTrue(app.buttons["选集"].waitForExistence(timeout: 5), "down shows the controls, not the episode panel")
+        XCTAssertFalse(app.buttons["31-60"].exists)
+        waitForFocus(app.buttons["选集"])
         remote.press(.select)
         XCTAssertTrue(app.buttons["31-60"].waitForExistence(timeout: 5), "选集 opens the episode panel")
         remote.press(.menu)
@@ -104,8 +161,10 @@ final class PlayerTests: XCTestCase {
         for _ in 0..<7 { remote.press(.right) }
         let next = app.buttons["下一集"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
-        XCTAssertTrue(next.hasFocus, "下一集 takes the focus")
+        waitForFocus(next, "下一集 takes the focus")
         remote.press(.select)
+        Thread.sleep(forTimeInterval: 1) // the picture takes the focus back from the button that went
+        remote.press(.playPause) // pause, to show the controls with the episode number
         XCTAssertTrue(app.staticTexts["第2集 / 共60集"].waitForExistence(timeout: 5))
     }
 

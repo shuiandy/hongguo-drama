@@ -65,6 +65,10 @@ final class TVAppModel: PlayerHost {
         backend = launch.offlineFixtures ? FixtureBackend() : LiveBackend()
         account = AccountModel(mode: launch.arguments.accountMode)
         library = LibraryModel(offline: launch.offlineFixtures, account: account, backend: backend)
+        // As on iOS, which has no switch for it: the account's watch history always syncs. An
+        // earlier build had a 云端观看记录 row, so a stored "off" is turned back on.
+        if !launch.offlineFixtures, !library.settings.cloudHistorySync { library.settings.cloudHistorySync = true }
+        if launch.arguments.syncFailurePreview { account.showPreviewListFailure() }
         // Live: the saved accounts (an earlier single login becomes the first). Sample runs: an
         // empty roster in memory, or made-up accounts with `-HongguoRoute accounts`.
         if launch.offlineFixtures {
