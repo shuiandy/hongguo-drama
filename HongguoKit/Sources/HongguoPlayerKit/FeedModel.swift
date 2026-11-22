@@ -967,6 +967,10 @@ public final class FeedModel {
         let isPlayingIt = clip != nil && engine.currentVid == clip
         handedOff = isPlayingIt
         if isPlayingIt, let clip { returnPosition = (clip, max(0, engine.currentTime)) }
+        // Which card the button belonged to against the card the feed thinks is on screen and
+        // the clip the player holds: a mismatch here is the page and the feed disagreeing.
+        let cardIndex = items.firstIndex { $0.seriesId == item.seriesId } ?? -1
+        PlaybackLog.note("watch full card=\(cardIndex) feedIndex=\(flow.feedIndex) clip=\(clip.map { String($0.suffix(6)) } ?? "-") engine=\(engine.currentVid.map { String($0.suffix(6)) } ?? "-") at=\(Int(max(0, engine.currentTime)))")
         app.openPlayer(item, startEpisode: episodeNumber(of: item.seriesId), startAt: isPlayingIt ? engine.currentTime : 0,
                        continuesCurrentClip: isPlayingIt, resumeIfAheadOfCurrentClip: true)
     }
