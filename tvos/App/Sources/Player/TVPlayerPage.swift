@@ -35,6 +35,8 @@ struct TVPlayerPage: View {
     @FocusState private var focus: Focus?
     /// Bumped to hand the focus back to the picture (the remote surface) when what had it goes.
     @State private var surfaceFocus = 0
+    /// 下一集 is on screen (kept here by the button, so the page does not follow the clock).
+    @State private var nextShows = false
 
     enum Panel: Equatable { case episodes, speed, quality, comments }
     /// The same choices as the iOS player's speed menu.
@@ -67,9 +69,10 @@ struct TVPlayerPage: View {
                 }
                 status
                     .position(x: video.midX, y: video.midY)
-                // Focusable only while the picture is alone: with the controls or a panel up, the
-                // focus engine moves between what is drawn and nothing here listens.
-                RemoteSurface(isActive: panel == nil && !controlsVisible, focusRequest: surfaceFocus,
+                // Focusable only while the picture is alone: with the controls, a panel or 下一集
+                // up, the focus engine moves between what is drawn and nothing here listens.
+                // (SwiftUI cannot take the focus from this UIKit view, so it lets go itself.)
+                RemoteSurface(isActive: panel == nil && !controlsVisible && !nextShows, focusRequest: surfaceFocus,
                               onSelect: clickOrPlayKey, onStep: { step($0) }, onReveal: reveal, onMenu: back)
                     .ignoresSafeArea()
                 if hudVisible, !controlsVisible, panel == nil {
@@ -81,7 +84,7 @@ struct TVPlayerPage: View {
                         .transition(.opacity)
                 }
                 if panel == nil {
-                    NextEpisodeButton(session: session, focus: $focus) { surfaceFocus += 1 }
+                    NextEpisodeButton(session: session, focus: $focus, mayTakeFocus: { !controlsVisible && panel == nil }, showing: { nextShows = $0 }) { surfaceFocus += 1 }
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                         .padding(.trailing, 90).padding(.bottom, controlsVisible ? 330 : 90)
                 }
@@ -197,10 +200,13 @@ struct TVPlayerPage: View {
                     .buttonStyle(ScrubberButtonStyle())
                     .focused($focus, equals: .scrubber)
                     // Left and right change the position only here, while the bar has the focus.
+                    // With a move handler on it the focus engine no longer moves the focus from
+                    // the bar, so down is passed on to the buttons here.
                     .onMoveCommand { direction in
                         switch direction {
                         case .left: step(-1)
                         case .right: step(1)
+                        case .down: focus = .episodes
                         default: break
                         }
                     }
@@ -437,6 +443,10 @@ struct TVPlayerPage: View {
 private struct NextEpisodeButton: View {
     let session: PlaybackSession
     var focus: FocusState<TVPlayerPage.Focus?>.Binding
+    /// True while only the picture shows (no controls, no panel): then the button may take the focus.
+    var mayTakeFocus: () -> Bool
+    /// Tells the page whether the button is on screen.
+    var showing: (Bool) -> Void
     /// It went (the episode moved on): the picture takes the focus back.
     var gone: () -> Void
 
@@ -453,10 +463,19 @@ private struct NextEpisodeButton: View {
         // It takes the focus from the picture when it shows (not from a control in use) and
         // hands it back to the picture when it goes.
         .onChange(of: shows) { _, now in
-            if now {
-                if focus.wrappedValue == nil { focus.wrappedValue = .next }
-            } else {
-                gone()
+            showing(now)
+            if now { takeFocus() } else { gone() }
+        }
+    }
+
+    /// The button is only now being drawn: ask for the focus once it is, and again for a moment
+    /// until it has it.
+    private func takeFocus() {
+        Task { @MainActor in
+            for attempt in 0..<6 {
+                try? await Task.sleep(for: .milliseconds(attempt == 0 ? 50 : 120))
+                guard mayTakeFocus(), focus.wrappedValue != .next else { return }
+                focus.wrappedValue = .next
             }
         }
     }
