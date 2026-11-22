@@ -645,8 +645,9 @@ public final class FeedModel {
         // it alone. Stopping it here cut off the player page's clip when the feed finished loading
         // its first page underneath.
         guard isVisible else { return }
+        // Kept until a load uses it: the feed can activate more than once on its way back
+        // (the earlier activation's task is cancelled), and the last one must still see it.
         let resume = returnPosition
-        returnPosition = nil
         guard let item = items[safe: index] else { engine.stop(); return }
         failed[item.seriesId] = nil
         app.library.recordFeedImpression(item.seriesId)
@@ -655,6 +656,7 @@ public final class FeedModel {
         // Already on this clip (a rotation, a fold, or coming back from the player page):
         // keep the player as it is, preserving an intentional pause.
         if let vid = knownClipVid(of: item.seriesId), engine.currentVid == vid, [.ready, .loading, .offline].contains(engine.phase) {
+            returnPosition = nil
             let shouldPlay = wasPlayingBeforeHide
             wasPlayingBeforeHide = true
             if shouldPlay { engine.play() }
@@ -703,6 +705,7 @@ public final class FeedModel {
                     FeedLog.swipe("load card=\(item.seriesId) warm=\(warm)")
                     // Back on the clip the feed left: on from where it was, not from 0.
                     let startAt = resume.flatMap { $0.vid == firstVid ? $0.time : nil } ?? 0
+                    returnPosition = nil
                     if startAt > 0 { PlaybackLog.note("feed return vid=\(firstVid.suffix(6)) at=\(Int(startAt))") }
                     engine.load(vid: firstVid, seriesId: item.seriesId, startAt: startAt,
                                 preferredShortSide: app.library.settings.preferredQuality)
@@ -951,6 +954,7 @@ public final class FeedModel {
             guard !handedOff else { return }
             if let vid = engine.currentVid, let item = items[safe: flow.feedIndex], knownClipVid(of: item.seriesId) == vid {
                 returnPosition = (vid, max(0, engine.currentTime))
+                PlaybackLog.note("feed left vid=\(vid.suffix(6)) at=\(Int(max(0, engine.currentTime)))")
             }
             wasPlayingBeforeHide = engine.wantsPlayback
             recordFeedHistory(finished: false)
