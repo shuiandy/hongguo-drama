@@ -100,9 +100,19 @@ public protocol DramaBackend: Sendable {
         offsetMs: Int64,
         accountId: String?
     ) async throws -> EpisodeSocial.Comment
-    /// Replies to an episode comment under the signed-in account.
-    func postReply(seriesId: String, vid: String, commentId: String, text: String,
-                   offsetMs: Int64, accountId: String?) async throws -> EpisodeSocial.Reply
+    /// Replies to an episode comment (or to a nested reply when `replyToReplyId` is non-empty) under the signed-in account.
+    func postReply(
+        seriesId: String,
+        vid: String,
+        commentId: String,
+        text: String,
+        replyToReplyId: String,
+        parentReplyId: String,
+        replyToUserId: String,
+        replyToAuthor: String,
+        offsetMs: Int64,
+        accountId: String?
+    ) async throws -> EpisodeSocial.Reply
     /// The series' public score and first reviews. Read-only.
     func reviews(seriesId: String) async throws -> SeriesReviews
 }
@@ -186,10 +196,30 @@ public struct LiveBackend: DramaBackend {
         )
     }
 
-    public func postReply(seriesId: String, vid: String, commentId: String, text: String,
-                          offsetMs: Int64, accountId: String?) async throws -> EpisodeSocial.Reply {
-        try await EpisodeSocialService.postReply(seriesId: seriesId, vid: vid, commentId: commentId, text: text,
-                                                 offsetMs: offsetMs, accountId: accountId)
+    public func postReply(
+        seriesId: String,
+        vid: String,
+        commentId: String,
+        text: String,
+        replyToReplyId: String = "",
+        parentReplyId: String = "",
+        replyToUserId: String = "",
+        replyToAuthor: String = "",
+        offsetMs: Int64,
+        accountId: String?
+    ) async throws -> EpisodeSocial.Reply {
+        try await EpisodeSocialService.postReply(
+            seriesId: seriesId,
+            vid: vid,
+            commentId: commentId,
+            text: text,
+            replyToReplyId: replyToReplyId,
+            parentReplyId: parentReplyId,
+            replyToUserId: replyToUserId,
+            replyToAuthor: replyToAuthor,
+            offsetMs: offsetMs,
+            accountId: accountId
+        )
     }
 
     public func reviews(seriesId: String) async throws -> SeriesReviews {
@@ -292,11 +322,11 @@ public struct FixtureBackend: DramaBackend {
         let baseTime: TimeInterval = 1_794_000_000
         if commentId == "0" {
             let all: [EpisodeSocial.Reply] = [
-                .init(id: "f-r1", author: "示例回复甲", avatar: "", content: "同感，根本停不下来[笑哭]",
+                .init(id: "f-r1", author: "示例回复甲", authorId: "10001", avatar: "", content: "同感，根本停不下来[笑哭]",
                       createdAt: Date(timeIntervalSince1970: baseTime - 3_600), likes: 12),
-                .init(id: "f-r2", author: "示例回复乙", avatar: "", content: "我也一口气刷完的",
-                      createdAt: Date(timeIntervalSince1970: baseTime - 1_800), likes: 4, replyToAuthor: "示例回复甲"),
-                .init(id: "f-r3", author: "示例回复丙", avatar: "", content: "后面几集更爽",
+                .init(id: "f-r2", author: "示例回复乙", authorId: "10002", avatar: "", content: "我也一口气刷完的",
+                      createdAt: Date(timeIntervalSince1970: baseTime - 1_800), likes: 4, replyToAuthor: "示例回复甲", parentReplyId: "f-r1"),
+                .init(id: "f-r3", author: "示例回复丙", authorId: "10003", avatar: "", content: "后面几集更爽",
                       createdAt: Date(timeIntervalSince1970: baseTime - 600), likes: 1),
             ]
             return EpisodeSocialService.ReplyPage(replies: all, total: all.count, cursor: "3", hasMore: false)
@@ -338,12 +368,32 @@ public struct FixtureBackend: DramaBackend {
         )
     }
 
-    public func postReply(seriesId: String, vid: String, commentId: String, text: String,
-                          offsetMs: Int64, accountId: String?) async throws -> EpisodeSocial.Reply {
+    public func postReply(
+        seriesId: String,
+        vid: String,
+        commentId: String,
+        text: String,
+        replyToReplyId: String = "",
+        parentReplyId: String = "",
+        replyToUserId: String = "",
+        replyToAuthor: String = "",
+        offsetMs: Int64,
+        accountId: String?
+    ) async throws -> EpisodeSocial.Reply {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw HongguoError(.input, "请输入回复内容") }
-        return EpisodeSocial.Reply(id: "fixture-reply-\(UUID().uuidString)", author: "我", avatar: "",
-                                   content: trimmed, createdAt: Date(), likes: 0)
+        let resolvedParent = !parentReplyId.isEmpty ? parentReplyId : replyToReplyId
+        return EpisodeSocial.Reply(
+            id: "fixture-reply-\(UUID().uuidString)",
+            author: "我",
+            authorId: accountId ?? "fixture-me",
+            avatar: "",
+            content: trimmed,
+            createdAt: Date(),
+            likes: 0,
+            replyToAuthor: replyToAuthor,
+            parentReplyId: resolvedParent
+        )
     }
 
     public init() {}
