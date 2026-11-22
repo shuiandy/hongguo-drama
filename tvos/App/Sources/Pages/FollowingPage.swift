@@ -4,8 +4,9 @@ import HongguoModels
 import HongguoPlayerKit
 import SwiftUI
 
-/// 追剧: 收藏 and 历史 as two shelves with how far each series is watched, from the shared
-/// MeModel (signed out the device's lists; signed in the account's, with its history merged into
+/// 追剧: everything the viewer keeps, one shelf each: 收藏 and 历史 with how far each series is
+/// watched, then 点赞 and 预约 (they used to sit on 我的, which is now the account and settings
+/// only). From the shared MeModel (signed out the device's lists; signed in the account's, with its history merged into
 /// the device's). A long press offers 取消收藏 or 删除记录, which go through the shared models'
 /// write queue (the device's own list first, the account write after, put back if it fails).
 struct FollowingPage: View {
@@ -27,7 +28,9 @@ struct FollowingPage: View {
         let _ = app.library.libraryRevision
         let favorites = favoriteItems(me)
         let history = me.history
-        if favorites.isEmpty, history.isEmpty {
+        let likes = likeItems(me)
+        let reservations = reservationItems(me)
+        if favorites.isEmpty, history.isEmpty, likes.isEmpty, reservations.isEmpty {
             LoadStateView(state: .empty("还没有在追的剧"))
         } else {
             ScrollView(.vertical) {
@@ -53,6 +56,12 @@ struct FollowingPage: View {
                             }
                         })
                     }
+                    if !likes.isEmpty {
+                        Shelf(title: "点赞", items: likes, onFocus: follow)
+                    }
+                    if !reservations.isEmpty {
+                        Shelf(title: "预约", items: reservations, onFocus: follow)
+                    }
                 }
                 .padding(.horizontal, 80)
                 .padding(.vertical, 40)
@@ -77,6 +86,25 @@ struct FollowingPage: View {
                      progress: $0.episodeCount > 0 && $0.watchedEpisode > 0 ? Double($0.watchedEpisode) / Double($0.episodeCount) : nil)
         }
         return local + account
+    }
+
+    /// 点赞: the device's and the account's, as on the iOS 我的 page.
+    private func likeItems(_ me: MeModel) -> [SeriesSummary] {
+        let merged = me.likes
+        return merged.local.map { SeriesSummary(seriesId: $0.item.seriesId, title: $0.item.title, cover: $0.item.cover,
+                                                episodeCount: $0.item.episodeCount) }
+            + merged.account.map { SeriesSummary(seriesId: $0.seriesId, title: $0.title, cover: $0.cover,
+                                                 episodeCount: $0.episodeCount, episodeLabel: $0.detail) }
+    }
+
+    /// 预约: what is out already, what is still to come, and the device's own.
+    private func reservationItems(_ me: MeModel) -> [SeriesSummary] {
+        me.onlineReservations.map { SeriesSummary(seriesId: $0.seriesId, title: $0.title, cover: $0.cover,
+                                                  heat: $0.heatText, episodeLabel: "已上线") }
+            + me.upcomingReservations.map { SeriesSummary(seriesId: $0.seriesId, title: $0.title, cover: $0.cover,
+                                                          episodeLabel: $0.releaseText.isEmpty ? SeriesDetailModel.upcomingLabel : $0.releaseText) }
+            + me.localReservations.map { SeriesSummary(seriesId: $0.seriesId, title: $0.title, cover: $0.cover,
+                                                       episodeLabel: $0.releaseText) }
     }
 
     private func row(_ title: String, _ cards: [Card]) -> some View {

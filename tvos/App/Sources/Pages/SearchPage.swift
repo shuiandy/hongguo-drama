@@ -6,26 +6,21 @@ import SwiftUI
 
 /// 搜索: the system search field and keyboard (`.searchable`) over the shared SearchModel (the
 /// same history, suggestions, boards and paged results as the iOS search page), laid out in the
-/// iOS page's order. Before a search: the shortcuts 排行 / 追剧日历 / 上新, the history, 猜你想搜 and
-/// one card with 热搜榜 / 热点话题榜 / 预约榜; after one: the results grid. The field's hint takes
-/// turns through 热搜榜 (`SearchHintRule`) and an empty field searches the hint shown.
+/// iOS page's order. Before a search: the history, 猜你想搜 and one card with 热搜榜 / 热点话题榜 /
+/// 预约榜; after one: the results grid. The field's hint takes turns through 热搜榜
+/// (`SearchHintRule`) and an empty field searches the hint shown. The iOS page's shortcuts
+/// (排行, 追剧日历, 上新) are left out: 排行 is a top tab and the other two open from 剧场, one way
+/// in each.
 struct SearchPage: View {
     @Environment(TVAppModel.self) private var app
     @State private var model: SearchModel?
-    @State private var releases: NewReleasesPage.Tab?
 
     var body: some View {
-        ZStack {
-            NavigationStack {
-                if let model {
-                    SearchContent(model: model, releases: $releases)
-                } else {
-                    Color.clear
-                }
-            }
-            if let releases {
-                NewReleasesPage(tab: releases) { self.releases = nil }
-                    .transition(.opacity)
+        NavigationStack {
+            if let model {
+                SearchContent(model: model)
+            } else {
+                Color.clear
             }
         }
         .onAppear { if model == nil { model = SearchModel(backend: app.backend) } }
@@ -35,7 +30,6 @@ struct SearchPage: View {
 private struct SearchContent: View {
     @Environment(TVAppModel.self) private var app
     @Bindable var model: SearchModel
-    @Binding var releases: NewReleasesPage.Tab?
     @State private var board: SearchRankBoard = .hotSearch
     @State private var hintTurn = 0
 
@@ -85,12 +79,6 @@ private struct SearchContent: View {
     // MARK: Before a search
 
     @ViewBuilder private var landing: some View {
-        HStack(spacing: 28) {
-            ChipButton(title: "排行", systemImage: "flame.fill", tint: Theme.red) { app.selectedTab = .ranking }
-            ChipButton(title: "追剧日历", systemImage: "calendar", tint: Theme.orange) { releases = .calendar }
-            ChipButton(title: "上新", systemImage: "sparkles", tint: Theme.gold) { releases = .recommended }
-        }
-        .focusSection()
         if !model.history.isEmpty {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
@@ -109,6 +97,7 @@ private struct SearchContent: View {
                 }
                 .scrollClipDisabled()
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .focusSection()
         }
         if !model.suggestions.isEmpty {
@@ -136,6 +125,7 @@ private struct SearchContent: View {
                 }
                 .scrollClipDisabled()
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .focusSection()
         }
         rankCard
@@ -149,6 +139,7 @@ private struct SearchContent: View {
                     ChipButton(title: item.label, active: board == item) { board = item }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .focusSection()
             switch board {
             case .hotTopic: topics

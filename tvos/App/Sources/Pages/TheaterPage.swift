@@ -4,9 +4,9 @@ import HongguoPlayerKit
 import SwiftUI
 
 /// 剧场, in the iOS 剧场's order: one row of chips (the categories 真人剧 / 漫剧 / AI 剧, the 题材
-/// filter, then 排行榜, 追剧日历 and 新剧), and under it the chosen category's grid, the shared
+/// filter, then 追剧日历 and 新剧), and under it the chosen category's grid, the shared
 /// TheaterModel (the same paging rules as the iOS grid). The page's colour follows the focused
-/// cover.
+/// cover. 排行 has its own top tab, so there is no second way into it from here.
 struct TheaterPage: View {
     @Environment(TVAppModel.self) private var app
     @State private var model: TheaterModel?
@@ -18,6 +18,8 @@ struct TheaterPage: View {
             AmbientBackground(tint: tint)
             if let model {
                 TheaterContent(model: model, releases: $releases, onFocus: follow)
+                    // Under 新剧 or 追剧日历 the page takes no focus.
+                    .disabled(releases != nil)
             }
             if let releases {
                 NewReleasesPage(tab: releases) { self.releases = nil }
@@ -80,10 +82,10 @@ private struct TheaterContent: View {
             }
             .disabled(model.genres.isEmpty)
             Spacer(minLength: 20)
-            ChipButton(title: "排行榜", systemImage: "flame.fill", tint: Theme.red) { app.selectedTab = .ranking }
             ChipButton(title: "追剧日历", systemImage: "calendar", tint: Theme.orange) { releases = .calendar }
             ChipButton(title: "新剧", systemImage: "sparkles", tint: Theme.gold) { releases = .recommended }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .focusSection()
     }
 
@@ -105,6 +107,7 @@ private struct TheaterContent: View {
                     }) { app.openDetail(series) }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .focusSection()
             if model.hasMore {
                 Button("加载更多") { Task { await model.loadMore() } }

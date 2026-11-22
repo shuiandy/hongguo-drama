@@ -1,25 +1,31 @@
 import SwiftUI
 import UIKit
 
-/// The whole-screen surface that takes the Siri Remote while the player shows no panel: a click,
-/// a click on the left or right edge (±10 s), horizontal swipes (scrubbing) and a swipe down.
-/// The play key is left to the page (`onPlayPauseCommand`), so one press is handled once. SwiftUI has no swipe input on tvOS, so this is a focusable UIKit view with gesture
-/// recognizers for the touch surface.
+/// The whole-screen surface that takes the Siri Remote while the player shows nothing but the
+/// picture. It answers presses only: the centre click, a click on the ring's left or right
+/// (±10 s), a click on its top or bottom (the controls) and Back. Swipes left and right do
+/// nothing here, so a finger resting or sliding on the clickpad never moves the playback
+/// position; a swipe up or down brings the controls in, like the click does.
+///
+/// As soon as the controls or a panel show, the surface stops being focusable and the focus
+/// engine alone moves between what is on screen: nothing here listens while a button has the focus.
+/// The play key is left to the page (`onPlayPauseCommand`), so one press is handled once.
 struct RemoteSurface: UIViewRepresentable {
-    /// Takes focus and input only while true (a panel takes over otherwise).
+    /// Takes focus and input only while true (the controls or a panel take over otherwise).
     var isActive: Bool
     /// Changing it asks the focus system to move the focus here (what had it went away).
     var focusRequest: Int = 0
     var onSelect: () -> Void
     var onStep: (_ direction: Int) -> Void
-    /// Horizontal swipe: the fraction of the surface's width moved so far, then nil when it ends.
-    var onScrub: (_ fraction: Double?) -> Void
-    var onSwipeDown: () -> Void
+    /// Up or down, clicked or swiped: bring the controls in.
+    var onReveal: () -> Void
     var onMenu: () -> Void
 
     func makeUIView(context: Context) -> SurfaceView {
         let view = SurfaceView()
         view.handlers = self
+        view.isActive = isActive
+        view.focusRequest = focusRequest
         return view
     }
 
@@ -31,11 +37,7 @@ struct RemoteSurface: UIViewRepresentable {
         }
         if view.focusRequest != focusRequest {
             view.focusRequest = focusRequest
-            DispatchQueue.main.async {
-                guard view.isActive, let system = UIFocusSystem.focusSystem(for: view) else { return }
-                system.requestFocusUpdate(to: view)
-                system.updateFocusIfNeeded()
-            }
+            view.takeFocus()
         }
     }
 
@@ -43,8 +45,6 @@ struct RemoteSurface: UIViewRepresentable {
         var handlers: RemoteSurface?
         var isActive = true
         var focusRequest = 0
-        private var panStart: CGPoint = .zero
-        private var scrubbing = false
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -52,40 +52,34 @@ struct RemoteSurface: UIViewRepresentable {
             let select = UITapGestureRecognizer(target: self, action: #selector(selected))
             select.allowedPressTypes = [NSNumber(value: UIPress.PressType.select.rawValue)]
             addGestureRecognizer(select)
-            let pan = UIPanGestureRecognizer(target: self, action: #selector(panned(_:)))
-            pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirect.rawValue)]
-            addGestureRecognizer(pan)
+            for direction in [UISwipeGestureRecognizer.Direction.up, .down] {
+                let swipe = UISwipeGestureRecognizer(target: self, action: #selector(revealed))
+                swipe.direction = direction
+                addGestureRecognizer(swipe)
+            }
         }
 
         required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
         override var canBecomeFocused: Bool { isActive }
 
-        @objc private func selected() { handlers?.onSelect() }
-
-        @objc private func panned(_ pan: UIPanGestureRecognizer) {
-            let moved = pan.translation(in: self)
-            switch pan.state {
-            case .began:
-                scrubbing = false
-            case .changed:
-                // A mostly horizontal swipe scrubs; a clear downward one opens the episodes.
-                if !scrubbing, abs(moved.x) > 40, abs(moved.x) > abs(moved.y) { scrubbing = true }
-                if scrubbing { handlers?.onScrub(Double(moved.x / max(1, bounds.width))) }
-            case .ended:
-                if scrubbing {
-                    handlers?.onScrub(nil)
-                } else if moved.y > 120, moved.y > abs(moved.x) * 1.5 {
-                    handlers?.onSwipeDown()
+        /// Asks for the focus now, and once more shortly after if by then nothing has it at all
+        /// (the view that had it may still have been fading out at the first request).
+        func takeFocus() {
+            for (attempt, delay) in [0.0, 0.3].enumerated() {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self, self.isActive, !self.isFocused,
+                          let system = UIFocusSystem.focusSystem(for: self) else { return }
+                    if attempt > 0, system.focusedItem != nil { return }
+                    system.requestFocusUpdate(to: self)
+                    system.updateFocusIfNeeded()
                 }
-                scrubbing = false
-            case .cancelled, .failed:
-                if scrubbing { handlers?.onScrub(nil) }
-                scrubbing = false
-            default:
-                break
             }
         }
+
+        @objc private func selected() { handlers?.onSelect() }
+
+        @objc private func revealed() { handlers?.onReveal() }
 
         override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
             var handled = false
@@ -93,9 +87,7 @@ struct RemoteSurface: UIViewRepresentable {
                 switch press.type {
                 case .leftArrow: handlers?.onStep(-1); handled = true
                 case .rightArrow: handlers?.onStep(1); handled = true
-                // The down arrow counts as a swipe down: the controls sit inside this surface, so
-                // the focus engine cannot move down to them by itself.
-                case .downArrow: handlers?.onSwipeDown(); handled = true
+                case .upArrow, .downArrow: handlers?.onReveal(); handled = true
                 case .menu: handlers?.onMenu(); handled = true
                 default: break
                 }
