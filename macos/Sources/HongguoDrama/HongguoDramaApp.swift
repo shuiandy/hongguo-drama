@@ -50,15 +50,35 @@ struct SettingsCommands: Commands {
         CommandGroup(replacing: .appSettings) {
             Button("设置…") {
                 AppModel.shared.showSettings()
-                if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true && $0.isVisible }) {
-                    window.makeKeyAndOrderFront(nil)
-                } else {
-                    openWindow(id: "main")
-                }
-                NSApp.activate(ignoringOtherApps: true)
+                MainWindow.show()
             }
             .keyboardShortcut(",", modifiers: .command)
         }
+        // Commands live as long as the app, so this keeps a working openWindow even after the
+        // last main window has been closed (the Dock icon needs it to bring the window back).
+        let _ = MainWindow.storeOpener(openWindow)
+    }
+}
+
+/// Brings the main window back: the open or minimised one if there is one (a closed SwiftUI window
+/// can linger in NSApp.windows, so it is not reused), otherwise a
+/// fresh one from the "main" WindowGroup.
+@MainActor enum MainWindow {
+    private static var opener: OpenWindowAction?
+
+    static func storeOpener(_ action: OpenWindowAction) -> Bool {
+        opener = action
+        return true
+    }
+
+    static func show() {
+        if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true && ($0.isVisible || $0.isMiniaturized) }) {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            opener?(id: "main")
+        }
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
 
@@ -75,6 +95,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Clicking the Dock icon after the main window was closed. AppKit only offers to reopen when no
+    /// window is visible, and the player window often still is, so always bring the main window
+    /// back ourselves instead of leaving it to SwiftUI.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        MainActor.assumeIsolated { MainWindow.show() }
+        return false
+    }
 
     /// Coming back to the app (say after watching on the phone) brings the account's progress,
     /// favourites and likes in; syncCloudHistory itself waits a minute between runs.
