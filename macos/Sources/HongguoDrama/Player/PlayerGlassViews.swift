@@ -611,7 +611,7 @@ struct PlayerSidePanel: View {
         .glassSurface(in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .task(id: controller.episodes?.seriesId) {
             details = nil
-            guard let id = controller.episodes?.seriesId, SourceRouter.isHongguo(id) else { return }
+            guard let id = controller.episodes?.seriesId else { return }
             details = try? await AppModel.shared.series.publicDetails(seriesId: id)
         }
         .task(id: "\(controller.episodes?.seriesId ?? ""):\(controller.currentEpisode?.vid ?? ""):\(tab == .reviews && reviewScope == .episode)") {
@@ -834,10 +834,6 @@ struct PlayerSidePanel: View {
               let seriesId = controller.episodes?.seriesId, let vid = controller.currentEpisode?.vid else { return }
         if episodeComments?.vid == vid { return }
         episodeCommentsError = ""
-        guard WatchHistory.source(of: seriesId) == WatchHistory.hongguoSource else {
-            episodeCommentsError = "这个片源没有本集评论"
-            return
-        }
         do {
             let result = try await Self.episodeCommentService.comments(seriesId: seriesId, vid: vid)
             guard !Task.isCancelled else { return }
@@ -878,7 +874,7 @@ struct PlayerSocialButtons: View {
         let title = controller.episodes?.title ?? controller.title
         let liked = model.isEpisodeLikedAnywhere(seriesId: episode.seriesId, vid: episode.vid, index: episode.index)
         let favorite = model.isFavoriteAnywhere(episode.seriesId)
-        let account = AccountState.shared.profile != nil && model.settings.accountWriteSync && SourceRouter.isHongguo(episode.seriesId)
+        let account = AccountState.shared.profile != nil && model.settings.accountWriteSync
         HStack(spacing: 2) {
             Button {
                 model.setEpisodeLike(!liked, seriesId: episode.seriesId, title: title, vid: episode.vid, index: episode.index)

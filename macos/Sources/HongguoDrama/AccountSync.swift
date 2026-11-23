@@ -158,7 +158,7 @@ final class AccountSync {
 
     func favoriteChanged(seriesId: String, title: String, collected: Bool) {
         if !collected { shelf.removeAll { $0.seriesId == seriesId } }
-        guard enabled, SourceRouter.isHongguo(seriesId), seriesId.allSatisfy(\.isNumber) else { return }
+        guard enabled, seriesId.allSatisfy(\.isNumber) else { return }
         remember(collected, id: seriesId, in: "favorites")
         enqueue("favorite:\(seriesId)") { account in
             try await AccountDataAccess.setBookshelfVideo(accountId: account, seriesId: seriesId, collected: collected)
@@ -180,7 +180,7 @@ final class AccountSync {
                 row.seriesId == seriesId && (row.vid == vid || (row.vid.isEmpty && index > 0 && row.episodeIndex == index))
             }
         }
-        guard enabled, SourceRouter.isHongguo(seriesId), vid.allSatisfy(\.isNumber), !vid.isEmpty else { return }
+        guard enabled, vid.allSatisfy(\.isNumber), !vid.isEmpty else { return }
         remember(liked, id: vid, in: "likes")
         enqueue("like:\(vid)") { account in
             try await AccountDataAccess.setEpisodeDigg(accountId: account, vid: vid, seriesId: seriesId, liked: liked)
@@ -190,7 +190,7 @@ final class AccountSync {
     /// Called whenever the player saves a position. `force` for episode end and player close.
     func progressSaved(seriesId: String, vid: String, episodeIndex: Int, position: Double, duration: Double,
                        finished: Bool, force: Bool = false) {
-        guard enabled, model.settings.cloudHistorySync, SourceRouter.isHongguo(seriesId), episodeIndex > 0 else { return }
+        guard enabled, model.settings.cloudHistorySync, episodeIndex > 0 else { return }
         let now = Date()
         if !force, !finished, let last = lastProgressSent[seriesId], last.vid == vid, now.timeIntervalSince(last.at) < 15 { return }
         lastProgressSent[seriesId] = (vid, now)
@@ -208,7 +208,7 @@ final class AccountSync {
     }
 
     func historyRemoved(_ record: WatchRecord) {
-        guard enabled, model.settings.cloudHistorySync, SourceRouter.isHongguo(record.seriesId) else { return }
+        guard enabled, model.settings.cloudHistorySync else { return }
         lastProgressSent[record.seriesId] = nil
         enqueue("history:\(record.seriesId)") { account in
             try await AccountDataAccess.uploadReadHistory(accountId: account, seriesId: record.seriesId, vid: record.vid,

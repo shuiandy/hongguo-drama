@@ -211,7 +211,7 @@ struct DownloadGroupCard: View {
 
     private func sendToNAS() async -> String? {
         do {
-            let list = try await SourceRouter.episodes(seriesId: first.seriesId)
+            let list = try await AppModel.seriesService.episodes(seriesId: first.seriesId)
             return await model.downloadToNAS(list, cover: first.cover)
         } catch {
             return "读取分集失败：\(describe(error))"
@@ -229,7 +229,7 @@ struct DownloadGroupCard: View {
 
     private func rescan() async -> String {
         do {
-            let list = try await SourceRouter.episodes(seriesId: first.seriesId)
+            let list = try await AppModel.seriesService.episodes(seriesId: first.seriesId)
             let added = try await model.downloads.rescan(seriesId: first.seriesId, seriesTitle: first.seriesTitle,
                                                          cover: first.cover, episodes: list.episodes)
             return added > 0 ? "找到 \(added) 个本地文件，已加入下载列表" : "没有找到新的本地文件"

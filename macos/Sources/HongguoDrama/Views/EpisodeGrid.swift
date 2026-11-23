@@ -124,7 +124,7 @@ struct EpisodeCell: View {
                 AppModel.shared.toggleEpisodeLike(seriesId: episode.seriesId, title: seriesTitle, vid: episode.vid)
             }
             Divider()
-            if !isDownloaded, SourceRouter.isHongguo(episode.seriesId) {
+            if !isDownloaded {
                 Button("下载这一集") {
                     let model = AppModel.shared
                     let player = PlayerController.shared

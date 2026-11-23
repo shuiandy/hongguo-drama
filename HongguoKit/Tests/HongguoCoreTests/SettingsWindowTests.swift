@@ -12,7 +12,6 @@ final class SettingsWindowTests: XCTestCase {
         XCTAssertEqual(settings.playbackCacheLimitGB, 5)
         XCTAssertEqual(settings.defaultPictureMode, .fit)
         XCTAssertNil(settings.startVolume)
-        XCTAssertTrue(settings.searchOtherSources)
         XCTAssertEqual(settings.watchCheckHours, 6)
         XCTAssertFalse(settings.watchNotifications)
         XCTAssertTrue(settings.checkUpdatesAtLaunch)

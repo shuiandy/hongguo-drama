@@ -3,7 +3,7 @@ import HongguoCore
 
 /// Categories of the settings window, in sidebar order.
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case general, playback, danmaku, shortcuts, downloads, sources, network, account, notifications, about
+    case general, playback, danmaku, shortcuts, downloads, network, account, notifications, about
 
     var id: String { rawValue }
 
@@ -14,7 +14,6 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .danmaku: return "弹幕"
         case .shortcuts: return "快捷键"
         case .downloads: return "下载"
-        case .sources: return "片源"
         case .network: return "网络"
         case .account: return "账号"
         case .notifications: return "追更与通知"
@@ -29,7 +28,6 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .danmaku: return "样式、区域和屏蔽词"
         case .shortcuts: return "播放器和全局快捷键"
         case .downloads: return "位置、命名和存储空间"
-        case .sources: return "内置片源和自定义接口"
         case .network: return "代理和连接测试"
         case .account: return "红果账号和云端观看记录"
         case .notifications: return "更新提醒、续作和公告"
@@ -44,7 +42,6 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .danmaku: return "text.bubble.fill"
         case .shortcuts: return "keyboard.fill"
         case .downloads: return "arrow.down"
-        case .sources: return "film.stack.fill"
         case .network: return "network"
         case .account: return "person.fill"
         case .notifications: return "bell.fill"
@@ -60,7 +57,6 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .danmaku: return [Color(red: 0.22, green: 0.74, blue: 0.97), Color(red: 0.01, green: 0.41, blue: 0.63)]
         case .shortcuts: return [Color(red: 0.58, green: 0.64, blue: 0.72), Color(red: 0.2, green: 0.25, blue: 0.33)]
         case .downloads: return [Color(red: 0.2, green: 0.83, blue: 0.6), Color(red: 0.02, green: 0.47, blue: 0.34)]
-        case .sources: return [Color(red: 0.98, green: 0.57, blue: 0.24), Color(red: 0.92, green: 0.35, blue: 0.05)]
         case .network: return [Color(red: 0.2, green: 0.83, blue: 0.6), Color(red: 0.02, green: 0.47, blue: 0.34)]
         case .account: return [Color(red: 0.65, green: 0.55, blue: 0.98), Color(red: 0.49, green: 0.23, blue: 0.93)]
         case .notifications: return [Color(red: 0.96, green: 0.45, blue: 0.71), Color(red: 0.75, green: 0.09, blue: 0.36)]
@@ -76,7 +72,6 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .danmaku: return ["弹幕", "透明", "字号", "速度", "区域", "密度", "屏蔽", "敏感词"]
         case .shortcuts: return ["快捷键", "键盘", "空格", "全屏", "置顶", "小窗"]
         case .downloads: return ["下载", "位置", "文件夹", "命名", "同时", "删除", "导出", "评论", "存储", "空间", "NAS", "NFO", "封面", "合并", "ByteVC2", "转码"]
-        case .sources: return ["片源", "西饭", "河马", "ReelShort", "DramaBox", "接口", "CMS", "搜索", "App 搜索"]
         case .network: return ["网络", "代理", "HTTP", "SOCKS", "直连", "系统代理", "测试"]
         case .account: return ["账号", "登录", "扫码", "退出", "云端", "同步", "观看记录"]
         case .notifications: return ["追更", "更新", "续作", "频率", "通知", "公告"]
@@ -92,7 +87,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     static let groups: [(String, [SettingsPane])] = [
         ("偏好", [.general, .playback, .danmaku, .shortcuts]),
-        ("内容", [.downloads, .sources, .network]),
+        ("内容", [.downloads, .network]),
         ("账号", [.account, .notifications]),
         ("", [.about]),
     ]
@@ -228,7 +223,6 @@ struct SettingsPanel: View {
         case .danmaku: SettingsDanmakuPane()
         case .shortcuts: SettingsShortcutsPane()
         case .downloads: SettingsDownloadsPane()
-        case .sources: SettingsSourcesPane()
         case .account: SettingsAccountPane()
         case .notifications: SettingsNotificationsPane()
         case .network: SettingsNetworkPane()

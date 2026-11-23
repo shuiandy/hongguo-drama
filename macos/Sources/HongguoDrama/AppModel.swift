@@ -17,8 +17,6 @@ enum SidebarItem: Hashable, Identifiable {
     case library
     case downloads
     case account
-    /// Another catalogue: "xifan", "hema", "reelshort", "dramabox" or "custom:<uuid>".
-    case source(String)
 
     var id: String {
         switch self {
@@ -31,7 +29,6 @@ enum SidebarItem: Hashable, Identifiable {
         case .library: return "library"
         case .downloads: return "downloads"
         case .account: return "account"
-        case .source(let id): return "source:\(id)"
         }
     }
 
@@ -46,7 +43,6 @@ enum SidebarItem: Hashable, Identifiable {
         case .library: return "我的剧库"
         case .downloads: return "下载"
         case .account: return "账号"
-        case .source(let id): return SourceRouter.label(id)
         }
     }
 
@@ -55,7 +51,6 @@ enum SidebarItem: Hashable, Identifiable {
         switch self {
         case .category(let kind): return "category:\(kind.rawValue)"
         case .ranking(let kind): return "ranking:\(kind.rawValue)"
-        case .source(let id): return "source:\(id)"
         default: return id
         }
     }
@@ -65,7 +60,6 @@ enum SidebarItem: Hashable, Identifiable {
         switch parts.first {
         case "category": if let raw = parts.last, let kind = CatalogKind(rawValue: raw) { self = .category(kind) } else { return nil }
         case "ranking": if let raw = parts.last, let kind = CatalogKind(rawValue: raw) { self = .ranking(kind) } else { return nil }
-        case "source": guard parts.count == 2 else { return nil }; self = .source(parts[1])
         case "search": self = .search
         case "feed": self = .feed
         case "calendar": self = .calendar
@@ -92,7 +86,6 @@ enum SidebarItem: Hashable, Identifiable {
         case .library: return "heart"
         case .downloads: return "arrow.down.circle"
         case .account: return "person.crop.circle"
-        case .source: return "film.stack"
         }
     }
 }
@@ -111,7 +104,9 @@ final class AppModel {
 
     let search = AppSearchService()
     let catalog = CatalogService()
-    let series = SourceRouter.series
+    /// The one series service, shared with code off the main actor (player, downloads).
+    nonisolated static let seriesService = SeriesService()
+    let series = AppModel.seriesService
     let store = LibraryStore.shared
 
     var selection: SidebarItem? = .category(.realDrama) {
@@ -194,6 +189,7 @@ final class AppModel {
     private(set) var localFiles: [String: URL] = [:]
 
     private init() {
+        Self.removeOtherSourceLeftovers()
         let settings = LibraryStore.shared.settings
         self.settings = settings
         ByteVC2Converter.configure(enabled: settings.byteVC2Conversion, fast: settings.fastConversion)
@@ -209,6 +205,22 @@ final class AppModel {
         applyCacheLimit()
     }
 
+    /// Older builds could also browse other catalogues (西饭, 河马, overseas, custom endpoints). Their
+    /// watch history (`<source>:<id>` rows), a `source:<id>` start page and their switches in the
+    /// preferences cannot be used any more: drop them at launch, before anything reads them.
+    private static func removeOtherSourceLeftovers() {
+        let store = LibraryStore.shared
+        for record in store.history() where WatchHistory.source(of: record.seriesId) != WatchHistory.hongguoSource {
+            store.removeHistory(record.seriesId)
+        }
+        var settings = store.settings
+        if settings.lastPage?.hasPrefix("source:") == true {
+            settings.lastPage = nil
+            store.settings = settings
+        }
+        UserDefaults.standard.removeObject(forKey: "HongguoMediaSourceSettings.v1")
+    }
+
     /// Sidebar page for 打开时显示.
     static func startSelection(_ settings: AppSettings) -> SidebarItem {
         switch settings.startPage {
@@ -217,9 +229,8 @@ final class AppModel {
         case "downloads": return .downloads
         case "discover": return .category(.realDrama)
         default:
-            // Other sources are picked inside 发现, and an unknown key falls back to it too.
+            // An unknown key (such as a page an older build had) falls back to 发现.
             guard let key = settings.lastPage, let item = SidebarItem(persistKey: key) else { return .category(.realDrama) }
-            if case .source = item { return .category(.realDrama) }
             return item
         }
     }
@@ -255,7 +266,7 @@ final class AppModel {
         var seen = Set<String>()
         var result: [(seriesId: String, title: String, cover: String, total: Int, openedAt: Date)] = []
         func add(_ id: String, _ title: String, _ cover: String, _ total: Int, _ openedAt: Date) {
-            guard SourceRouter.isHongguo(id), id.count >= 6, id.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }), !title.isEmpty,
+            guard id.count >= 6, id.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }), !title.isEmpty,
                   !publishAttempted.contains(id), seen.insert(id).inserted,
                   library.series(id)?.publishedAt == nil else { return }
             result.append((id, title, cover, total, openedAt))
@@ -399,7 +410,7 @@ final class AppModel {
     func download(_ episodes: [Episode], seriesId: String, title: String, cover: String) async -> Int {
         do {
             let added = try await downloads.enqueue(seriesId: seriesId, seriesTitle: title, cover: cover, episodes: episodes)
-            if settings.downloadMetadata, SourceRouter.isHongguo(seriesId) {
+            if settings.downloadMetadata {
                 let directory = DownloadNaming.seriesDirectory(root: Self.downloadConfiguration(settings).root, seriesId: seriesId, seriesTitle: title)
                 Task.detached(priority: .utility) { await Self.saveSeriesMetadata(seriesId: seriesId, title: title, cover: cover, into: directory) }
             }
@@ -438,7 +449,7 @@ final class AppModel {
     /// never starts from a position another device has already moved past. Gives up after `timeout`
     /// seconds and keeps this Mac's record (playback does not wait on a slow network).
     func syncCloudPosition(seriesId: String, timeout: Double = 3) async {
-        guard settings.cloudHistorySync, SourceRouter.isHongguo(seriesId),
+        guard settings.cloudHistorySync,
               let token = AccountState.shared.session.current else { return }
         guard let row = await AccountService.shared.latestHistoryRow(seriesId: seriesId, timeout: timeout) else { return }
         guard AccountState.shared.session.accepts(token) else { return }

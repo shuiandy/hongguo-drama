@@ -1,16 +1,14 @@
 import SwiftUI
 import HongguoCore
-import MediaSources
 
 /// 热播推荐 (port of DramaFeed + RandomDrama): one recommended series at a time from a Hongguo
-/// ranking or another source's catalogue, with the next few queued below, plus 摇一摇 which draws
-/// a random series from every enabled source.
+/// ranking, with the next few queued below, plus 摇一摇 which draws a random series from the
+/// rankings and categories.
 struct FeedView: View {
     @Environment(AppModel.self) private var model
 
-    enum Mode: Hashable, Sendable { case ranking(CatalogKind), sourceList, random }
+    enum Mode: Hashable, Sendable { case ranking(CatalogKind), random }
 
-    @State private var source = "hongguo"
     @State private var mode: Mode = .ranking(.hotDrama)
     @State private var items: [SeriesSummary] = []
     @State private var index = 0
@@ -20,21 +18,18 @@ struct FeedView: View {
     /// Session cache, so switching tabs shows the last list at once while it refreshes.
     @State private var cache: [String: (items: [SeriesSummary], at: Date)] = [:]
     // 摇一摇
-    @State private var randomScope = "all"
     @State private var pool: [SeriesSummary] = []
     @State private var drawn: SeriesSummary?
     @State private var drawCount = 0
 
-    private var sources: [MediaSources.Entry] { SourceSettingsStore.shared.value.mediaSources }
     private var selected: SeriesSummary? {
         if mode == .random { return drawn }
         return items.indices.contains(index) ? items[index] : nil
     }
     private var cacheKey: String {
         switch mode {
-        case .ranking(let kind): return "hongguo:\(kind.rawValue)"
-        case .sourceList: return "\(source):list"
-        case .random: return "random:\(randomScope)"
+        case .ranking(let kind): return "ranking:\(kind.rawValue)"
+        case .random: return "random"
         }
     }
 
@@ -42,21 +37,6 @@ struct FeedView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 PageHeader(title: "热播推荐", subtitle: subtitle) {
-                    if mode != .random, sources.count > 1 {
-                        Picker("来源", selection: $source) {
-                            ForEach(sources, id: \.id) { Text($0.label).tag($0.id) }
-                        }
-                        .labelsHidden().fixedSize()
-                        .help("推荐来源")
-                    }
-                    if mode == .random, sources.count > 1 {
-                        Picker("抽取范围", selection: $randomScope) {
-                            Text("全部来源").tag("all")
-                            ForEach(sources, id: \.id) { Text($0.label).tag($0.id) }
-                        }
-                        .labelsHidden().fixedSize()
-                        .help("抽取范围")
-                    }
                     Button { Task { await reload(force: true) } } label: { Image(systemName: "arrow.clockwise") }
                         .buttonStyle(GlassIconButtonStyle(diameter: 38))
                         .help("刷新片单")
@@ -69,8 +49,8 @@ struct FeedView: View {
                 } else {
                     LoadStateView(error: error, isLoading: isLoading) { Task { await reload(force: true) } }
                     if !isLoading, error == nil {
-                        ContentUnavailableView("这个来源暂未返回可用片单", systemImage: "film.stack",
-                                               description: Text("可以刷新，或切换来源。"))
+                        ContentUnavailableView("暂未返回可用片单", systemImage: "film.stack",
+                                               description: Text("可以刷新，或换一个榜单。"))
                             .frame(maxWidth: .infinity)
                     }
                 }
@@ -95,22 +75,17 @@ struct FeedView: View {
         .navigationTitle("热播推荐")
         .transparentToolbar()
         .task(id: cacheKey) { await reload(force: false) }
-        .onChange(of: source) { _, value in
-            mode = value == "hongguo" ? .ranking(.hotDrama) : .sourceList
-        }
     }
 
     private var modeOptions: [GlassOption<Mode>] {
-        var options: [GlassOption<Mode>] = source == "hongguo"
-            ? CatalogKind.rankings.map { GlassOption(label: $0.label, value: Mode.ranking($0)) }
-            : [GlassOption(label: "来源片单", value: Mode.sourceList)]
+        var options = CatalogKind.rankings.map { GlassOption(label: $0.label, value: Mode.ranking($0)) }
         options.append(GlassOption(label: "摇一摇", value: Mode.random))
         return options
     }
 
     private var subtitle: String {
         if mode == .random { return pool.isEmpty ? "今晚，看点意料之外的" : "随机抽取 · 共 \(pool.count) 部可抽" }
-        guard !items.isEmpty else { return isLoading ? "加载中…" : "从热播榜和来源片单，遇见下一部故事。" }
+        guard !items.isEmpty else { return isLoading ? "加载中…" : "从热播榜，遇见下一部故事。" }
         var text = "第 \(index + 1) / \(items.count) 部"
         if let updatedAt { text += " · \(updatedAt.formatted(date: .omitted, time: .shortened)) 更新" }
         if isLoading { text += " · 正在更新…" }
@@ -130,7 +105,6 @@ struct FeedView: View {
                 HStack(spacing: 8) {
                     if mode == .random {
                         GlassTag(text: "随机抽取", systemImage: "dice.fill", iconColor: .hongguoRed)
-                        GlassTag(text: SourceRouter.label(MediaSources.sourceId(of: item.seriesId)))
                     } else if let rank = item.rank {
                         GlassTag(text: "No.\(rank)", systemImage: "flame.fill", iconColor: .orange)
                     }
@@ -226,10 +200,8 @@ struct FeedView: View {
             switch mode {
             case .ranking(let kind):
                 fresh = try await model.catalog.browse(kind: kind, page: 1, forceRefresh: force).results
-            case .sourceList:
-                fresh = try await Self.browse(source)
             case .random:
-                fresh = await Self.randomPool(scope: randomScope, sources: sources, catalog: model.catalog)
+                fresh = await Self.randomPool(catalog: model.catalog)
                 if fresh.isEmpty { throw HongguoError(.upstream, "没有读到可抽取的片单，请稍后重试") }
             }
             guard key == cacheKey else { return }
@@ -251,23 +223,11 @@ struct FeedView: View {
         }
     }
 
-    private static func browse(_ sourceId: String) async throws -> [SeriesSummary] {
-        guard let source = try SourceRouter.catalogue(sourceId) else { throw HongguoError(.input, "来源不可用") }
-        return try await source.browse(genre: nil, page: 1).results
-    }
-
-    /// The draw pool: page 1 of the Hongguo rankings and of each enabled source, whatever answers.
-    private static func randomPool(scope: String, sources: [MediaSources.Entry], catalog: CatalogService) async -> [SeriesSummary] {
-        let ids = scope == "all" ? sources.map(\.id) : [scope]
-        return await withTaskGroup(of: [SeriesSummary].self) { group in
-            for id in ids {
-                if id == "hongguo" {
-                    for kind in CatalogKind.rankings + CatalogKind.categories {
-                        group.addTask { (try? await catalog.browse(kind: kind, page: 1).results) ?? [] }
-                    }
-                } else {
-                    group.addTask { (try? await browse(id)) ?? [] }
-                }
+    /// The draw pool: page 1 of every Hongguo ranking and category, whatever answers.
+    private static func randomPool(catalog: CatalogService) async -> [SeriesSummary] {
+        await withTaskGroup(of: [SeriesSummary].self) { group in
+            for kind in CatalogKind.rankings + CatalogKind.categories {
+                group.addTask { (try? await catalog.browse(kind: kind, page: 1).results) ?? [] }
             }
             var all: [SeriesSummary] = []
             for await list in group { all += list }

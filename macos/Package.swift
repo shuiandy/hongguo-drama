@@ -16,20 +16,8 @@ let package = Package(
         // SwiftUI + AppKit + AVKit application shell.
         .executableTarget(
             name: "HongguoDrama",
-            dependencies: [.product(name: "HongguoCore", package: "HongguoKit"), "MediaSources"],
-            path: "Sources/HongguoDrama"
-        ),
-        // Catalogues other than Hongguo (西饭, 河马, ReelShort, DramaBox, custom Apple CMS
-        // endpoints), used by this app only and kept out of the shared HongguoKit.
-        .target(
-            name: "MediaSources",
             dependencies: [.product(name: "HongguoCore", package: "HongguoKit")],
-            path: "Sources/MediaSources"
-        ),
-        .testTarget(
-            name: "MediaSourcesTests",
-            dependencies: ["MediaSources", .product(name: "HongguoCore", package: "HongguoKit")],
-            path: "Tests/MediaSourcesTests"
+            path: "Sources/HongguoDrama"
         ),
     ]
 )

@@ -5,7 +5,7 @@ import HongguoCore
 extension AppModel {
     /// Cover, intro and tvshow.nfo next to a series' downloads. Failures never block the download.
     nonisolated static func saveSeriesMetadata(seriesId: String, title: String, cover: String, into directory: URL) async {
-        let details = try? await SourceRouter.series.publicDetails(seriesId: seriesId)
+        let details = try? await AppModel.seriesService.publicDetails(seriesId: seriesId)
         let series = SeriesMetadata.Series(seriesId: seriesId, title: title, description: details?.description ?? "",
                                            cover: cover.isEmpty ? (details?.cover ?? "") : cover)
         _ = try? await SeriesMetadata.writeSeries(series, into: directory)

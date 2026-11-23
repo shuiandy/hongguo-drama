@@ -74,8 +74,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var defaultPictureMode: PictureMode = .fit
     /// Volume (percent) applied each time the player opens; nil keeps the last volume.
     public var startVolume: Int?
-    /// Also search the enabled other sources from the search page (the Mac app's other catalogues).
-    public var searchOtherSources: Bool = true
     /// Hours between new-episode checks for unfinished series (1...48).
     public var watchCheckHours: Int = 6
     /// Post a macOS notification when a check finds new episodes or sequels.
@@ -167,7 +165,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
         playbackCacheLimitGB = (try? c.decodeIfPresent(Int.self, forKey: .playbackCacheLimitGB)) ?? d.playbackCacheLimitGB
         defaultPictureMode = (try? c.decodeIfPresent(PictureMode.self, forKey: .defaultPictureMode)) ?? d.defaultPictureMode
         startVolume = try? c.decodeIfPresent(Int.self, forKey: .startVolume)
-        searchOtherSources = (try? c.decodeIfPresent(Bool.self, forKey: .searchOtherSources)) ?? d.searchOtherSources
         watchCheckHours = (try? c.decodeIfPresent(Int.self, forKey: .watchCheckHours)) ?? d.watchCheckHours
         watchNotifications = (try? c.decodeIfPresent(Bool.self, forKey: .watchNotifications)) ?? d.watchNotifications
         checkUpdatesAtLaunch = (try? c.decodeIfPresent(Bool.self, forKey: .checkUpdatesAtLaunch)) ?? d.checkUpdatesAtLaunch

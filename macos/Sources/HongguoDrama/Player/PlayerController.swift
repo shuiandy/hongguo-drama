@@ -222,7 +222,7 @@ final class PlayerController {
         let model = AppModel.shared
         async let synced: Void = model.syncCloudPosition(seriesId: seriesId)
         do {
-            let list = try await SourceRouter.episodes(seriesId: seriesId)
+            let list = try await AppModel.seriesService.episodes(seriesId: seriesId)
             await synced
             continueWatching(list, cover: cover)
         } catch {
@@ -256,7 +256,7 @@ final class PlayerController {
         loadingText = "正在加载《\(title)》分集…"
         errorMessage = nil
         do {
-            let list = try await SourceRouter.episodes(seriesId: seriesId)
+            let list = try await AppModel.seriesService.episodes(seriesId: seriesId)
             open(episodes: list, cover: cover, index: index, startAt: startAt)
         } catch {
             isLoading = false
@@ -334,7 +334,7 @@ final class PlayerController {
                 if let ready {
                     info = ready
                 } else {
-                    info = try await SourceRouter.playInfo(vid: episode.vid, seriesId: list.seriesId, force: force)
+                    info = try await AppModel.seriesService.playInfo(vid: episode.vid, seriesId: list.seriesId, force: force)
                         .selecting(shortSide: preferred)
                 }
                 try Task.checkCancellation()
@@ -501,10 +501,10 @@ final class PlayerController {
         let ahead = list.episodes[index..<min(index + 6, list.episodes.count)]
             .filter { localFileProvider?($0) == nil }.map(\.vid)
         Task { [weak self] in
-            await SourceRouter.prefetchPlayInfo(seriesId: list.seriesId, vids: ahead)
+            if !ahead.isEmpty { await AppModel.seriesService.prefetchPlayInfo(vids: Array(ahead)) }
             // The viewer may have moved on while that request was out.
             guard let current = self, current.episodes?.seriesId == list.seriesId, current.index == playing else { return }
-            guard let raw = await SourceRouter.prefetchedPlayInfo(vid: next.vid, seriesId: list.seriesId) else { return }
+            guard let raw = await AppModel.seriesService.prefetchedPlayInfo(vid: next.vid, seriesId: list.seriesId) else { return }
             guard let self, self.episodes?.seriesId == list.seriesId else { return }
             self.prefetched = (next.vid, raw, Date())
             let info = raw.selecting(shortSide: preferred)

@@ -65,7 +65,6 @@ struct SeriesDetailView: View {
             await model.syncCloudPosition(seriesId: summary.seriesId)
         }
         .task(id: summary.seriesId) {
-            guard SourceRouter.isHongguo(summary.seriesId) else { return }
             seasons = try? await DiscoveryAccess.sameIPSeries(seriesId: summary.seriesId)
         }
     }
@@ -174,7 +173,7 @@ struct SeriesDetailView: View {
     /// plus similarly named series that may be renamed sequels.
     @ViewBuilder
     private var sequelFinder: some View {
-        if SourceRouter.isHongguo(summary.seriesId), foundSequels != nil || findingSequels || !sequelError.isEmpty {
+        if foundSequels != nil || findingSequels || !sequelError.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 if findingSequels {
                     HStack(spacing: 8) { ProgressView().controlSize(.small); Text("正在查找下一季…").foregroundStyle(.secondary) }
@@ -275,13 +274,10 @@ struct SeriesDetailView: View {
                     }
                     .buttonStyle(GlassButtonStyle(size: .large))
                     .help(favorite ? "取消收藏" : "加入我的剧库")
-                    if SourceRouter.isHongguo(summary.seriesId) {
-                        Button { Task { await findSequels() } } label: { Label("查找下一季", systemImage: "rectangle.stack.badge.plus") }
-                            .buttonStyle(GlassButtonStyle(size: .large))
-                            .disabled(findingSequels)
-                            .help("按剧名查找这部剧的下一季和可能的续作")
-                    }
-                    if SourceRouter.isHongguo(summary.seriesId) {
+                    Button { Task { await findSequels() } } label: { Label("查找下一季", systemImage: "rectangle.stack.badge.plus") }
+                        .buttonStyle(GlassButtonStyle(size: .large))
+                        .disabled(findingSequels)
+                        .help("按剧名查找这部剧的下一季和可能的续作")
                     Menu {
                         if let episodes {
                             Button("下载全部 \(episodes.total) 集") { download(episodes.episodes) }
@@ -313,7 +309,6 @@ struct SeriesDetailView: View {
                     .buttonStyle(GlassButtonStyle(size: .large))
                     .menuIndicator(.hidden)
                     .fixedSize()
-                    }
                 }
                 .disabled(episodes == nil)
                 .padding(.top, 4)
@@ -426,18 +421,15 @@ struct SeriesDetailView: View {
         defer { isLoading = false }
         let service = model.series
         let seriesId = summary.seriesId
-        let hongguo = SourceRouter.isHongguo(seriesId)
-        async let detailsTask = hongguo ? try? service.publicDetails(seriesId: seriesId) : nil
+        async let detailsTask = try? service.publicDetails(seriesId: seriesId)
         do {
-            let list = try await SourceRouter.episodes(seriesId: seriesId, force: force)
+            let list = try await service.episodes(seriesId: seriesId, force: force)
             episodes = list
-            if hongguo {
-                // The episode the play button starts and the ones after it, in one request, so the
-                // first click does not wait for the play model.
-                let first = max(0, min((record?.episodeIndex ?? 1) - 1, list.episodes.count - 1))
-                let vids = list.episodes.dropFirst(first).prefix(6).map(\.vid)
-                Task { await SourceRouter.prefetchPlayInfo(seriesId: seriesId, vids: vids) }
-            }
+            // The episode the play button starts and the ones after it, in one request, so the
+            // first click does not wait for the play model.
+            let first = max(0, min((record?.episodeIndex ?? 1) - 1, list.episodes.count - 1))
+            let vids = Array(list.episodes.dropFirst(first).prefix(6).map(\.vid))
+            if !vids.isEmpty { Task { await service.prefetchPlayInfo(vids: vids) } }
             _ = try? model.library.recordOpened(seriesId: seriesId, title: list.title, cover: cover, episodeCount: list.total,
                                                 publishedAt: summary.publishedAt)
         } catch {
