@@ -78,16 +78,36 @@ public enum CodecFallback {
 
     /// The play model as the core asks for it, and the fallback address inside it.
     private static func model(vid: String, transport: AppTransport) async throws -> JSONValue {
-        let payload = try AppSource.modelPayload(vids: [vid])
         let identity = try await PersistentAppDevice.shared.get(transport: transport)
-        let dToken = await PersistentAppDevice.shared.dTokenHeaders()
-        let signed = try AppSource.modelRequest(base: AppSource.playerAPI, payload: payload, identity: identity)
-        let response = try await transport.requestJSON(signed.url, method: "POST", headers: signed.headers + dToken, body: signed.body,
-                                                       deadline: Date().addingTimeInterval(12))
+        let ctx = await PersistentAppDevice.shared.playSessionContext()
+        let isUGC = UGCVideos.contains(vid)
+        func ask(ugc: Bool) async throws -> JSONValue {
+            let signed = try VideoModelRequest.request(
+                vid: vid,
+                identity: identity,
+                openudid: ctx.openudid,
+                guest: ctx.cookies,
+                dToken: ctx.dToken,
+                installMillis: ctx.firstInstallTimeMs,
+                isUGC: ugc
+            )
+            return try await transport.requestJSON(
+                signed.url, method: "POST", headers: signed.headers, body: signed.body,
+                deadline: Date().addingTimeInterval(12)
+            )
+        }
+        var response = try await ask(ugc: isUGC)
+        if !isUGC, Int(response["code"].number ?? -1) == 101_000 {
+            response = try await ask(ugc: true)
+            if response["Code"].isZeroOrMissingStatusCode && response["code"].isZeroOrMissingStatusCode,
+               !response["data"]["video_model"].isNull {
+                UGCVideos.insert([vid])
+            }
+        }
         guard response["Code"].isZeroOrMissingStatusCode && response["code"].isZeroOrMissingStatusCode else {
             throw HongguoError(.upstream, "App 接口暂未提供本集播放信息")
         }
-        let entry = lookupEntry(vid: vid, in: response["data"])
+        let entry = response["data"]
         if let text = entry["video_model"].string { return (try? JSONValue.parse(text)) ?? .null }
         return entry["video_model"]
     }

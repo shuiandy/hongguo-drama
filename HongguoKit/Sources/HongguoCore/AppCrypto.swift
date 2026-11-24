@@ -255,6 +255,12 @@ struct ProtoWriter {
     /// Pre-encoded field bytes (for wire types the helpers do not cover).
     mutating func raw(_ value: [UInt8]) { bytes += value }
 
+    /// 32-bit IEEE 754 float field (wire type 5, little-endian).
+    mutating func float(_ tag: Int, _ value: Float) {
+        bytes += Self.varint(UInt64(tag) << 3 | 5)
+        bytes += AppCrypto.le32(value.bitPattern)
+    }
+
     /// Zig-zag encoded signed field (app-source.js / playback-v5.js `'sint'`).
     mutating func sint(_ tag: Int, _ value: Int64) { uint(tag, Self.zigzag(value)) }
 
