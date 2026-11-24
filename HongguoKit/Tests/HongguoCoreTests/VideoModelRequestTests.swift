@@ -73,12 +73,22 @@ final class VideoModelRequestTests: XCTestCase {
         XCTAssertEqual(PersistentAppDevice.guestCookies(fromSetCookie: ""), [:])
     }
 
-    func testGorgonKeepsLegacyVector() {
+    func testGorgonKeepsLegacyVectorAndKeysDeviceFlags() {
         let legacy = AppLegacySigner.xGorgon(query: "a=1", body: nil, ts: 1_700_000_000, random: 0x1234)
         let explicit = AppLegacySigner.xGorgon(query: "a=1", body: nil, ts: 1_700_000_000, random: 0x1234,
                                                flags: (0x40, 0x01), sdkCode: 67503104)
         XCTAssertEqual(legacy, explicit)
-        XCTAssertTrue(legacy.hasPrefix("840434124001"))
+        XCTAssertEqual(legacy, "840434124001a5245614d9fe6cc91364e71df6105a461269934f")
+
+        // flags[0]/flags[1] must key the RC4 cipher (not stay hardcoded to 0x40/0x01).
+        let body = Array(#"{"video_id":"1"}"#.utf8)
+        let device = AppLegacySigner.xGorgon(query: "a=1", body: body, ts: 1_700_000_000, random: 0x1234,
+                                             flags: (0x04, 0x05), sdkCode: 0x040a0300)
+        XCTAssertEqual(device, "840434120405381f07cb5041487b40c98e257f12246527cc214d")
+        let legacyWithSameInput = AppLegacySigner.xGorgon(query: "a=1", body: body, ts: 1_700_000_000, random: 0x1234,
+                                                          flags: (0x40, 0x01), sdkCode: 0x040a0300)
+        XCTAssertNotEqual(String(device.dropFirst(12)), String(legacyWithSameInput.dropFirst(12)),
+                          "ciphertext must depend on flags bytes in the RC4 key")
     }
 
     func testDeviceTraitsAndFingerprintArePerDeviceAndDeterministic() throws {

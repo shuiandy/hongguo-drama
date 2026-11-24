@@ -171,7 +171,7 @@ struct AppLegacySigner {
                         flags: (UInt8, UInt8) = (0x40, 0x01), sdkCode: UInt32 = 67503104) -> String {
         let input = Array(AppCrypto.md5(Array(query.utf8))[0..<4]) + (body.map { Array(AppCrypto.md5($0)[0..<4]) } ?? [0, 0, 0, 0])
             + [0, 0, 0, 0] + AppCrypto.le32(sdkCode) + AppCrypto.be32Bytes(ts)
-        let key: [UInt8] = [0x4a, 0x40, 0x16, UInt8((random >> 8) & 255), 0x47, 0x6c, 0x01, UInt8(random & 255)]
+        let key: [UInt8] = [0x4a, flags.0, 0x16, UInt8((random >> 8) & 255), 0x47, 0x6c, flags.1, UInt8(random & 255)]
         var s = (0..<256).map { UInt8($0) }
         var j = 0
         // Not a swap: the reference only copies s[j] into s[i].
