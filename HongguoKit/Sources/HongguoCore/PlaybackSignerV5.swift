@@ -4,6 +4,7 @@
 // originally drpys 22261ad (GPL-3.0).
 // Public wire constants, no captured sessions, SDK, VM or PolyForm implementation.
 import Foundation
+import CryptoKit
 
 /// Signs the App `multi_video_model/player/v1` request: X-Khronos / X-Helios / X-Medusa / X-SS-Stub.
 struct PlaybackSignerV5 {
@@ -256,13 +257,20 @@ struct PlaybackSignerV5 {
         message.sint(17, Int64(ts)); message.string(20, "none"); message.sint(21, 377); message.bytes(23, env.bytes)
         message.string(24, #"{"cmr":16777216,"cmr2":16777216,"un_h":11,"vpn":0,"kd":0,"dyn":"","do":1,"tk":true}"#)
 
-        let nonce = random32(), high = (nonce >> 16) & 255
+        return try seal(message.bytes, flags: flags, query: query, f13: f13, ts: ts, nonce: random32(), packedRandom: { random32() })
+    }
+
+    /// Encrypts a medusa message into the header (shared by both layouts). `packedRandom` is drawn
+    /// after the nonce, as the SDK does.
+    func seal(_ message: [UInt8], flags: [UInt8], query: [UInt8], f13: [UInt8], ts: UInt32, nonce: UInt32,
+              packedRandom: () -> UInt32) throws -> String {
+        let high = (nonce >> 16) & 255
         let hash = AppCrypto.sm3(Self.signKey + AppCrypto.le32(nonce) + Self.signKey)
         let seed = AppCrypto.le32(~(((high << 11) | (nonce >> 24)) ^ (high >> 5) ^ high))
-        var transformed = Array((flags + Self.xmxor(message.bytes, hash)).reversed())
+        var transformed = Array((flags + Self.xmxor(message, hash)).reversed())
         for i in 0..<transformed.count { transformed[i] ^= seed[(~i) & 3] }
         let check: UInt32 = 0x18000001 | (UInt32(query[0] & 63) << 14) | (UInt32(f13[0] & 63) << 8)
-        let packed = [0xca] + AppCrypto.le32(random32()) + AppCrypto.le32(check) + transformed
+        let packed = [0xca] + AppCrypto.le32(packedRandom()) + AppCrypto.le32(check) + transformed
             + [UInt8((nonce >> 16) & 255), UInt8(nonce >> 24)]
         let carrier = Carrier(key: AppCrypto.md5(Array(Self.signKey[0..<16])), ts: ts)
         let encrypted = try carrier.encrypt(packed, iv: AppCrypto.md5(Array(Self.signKey[16...])))
@@ -270,6 +278,52 @@ struct PlaybackSignerV5 {
         let time = AppCrypto.le32(ts)
         for i in 0..<prefix.count { prefix[i] ^= time[i & 3] }
         return AppCrypto.base64(prefix + [UInt8(nonce & 255), UInt8((nonce >> 8) & 255), 0, 1] + encrypted)
+    }
+
+    /// Phone-layout `x-medusa` (v04.10.03 SDK, flags `04 05`, status `369`). Since 2026-11-23 play
+    /// requests carrying the legacy emulator status (`377`) receive empty HTTP 200 replies. All
+    /// per-device traits and field-24 fingerprint hashes are deterministically derived from
+    /// `deviceId` (never shared hardcoded capture hashes).
+    func medusaDevice(query: [UInt8], f13: [UInt8], ts: UInt32, who: Who, installMillis: Int64? = nil) throws -> String {
+        let flags: [UInt8] = [0x04, 0x05, 0, 0, 0, 0, 0, 0]
+        let process = MedusaProcess.shared
+        let traits = MedusaProcess.traits(deviceId: who.deviceId, referenceMillis: process.launchMillis)
+        let effectiveInstall = installMillis ?? traits.installMillis
+        let messageRandom = random32() & 0x7fffffff
+        let nowMillis = Int64(ts) * 1000 + Int64(messageRandom % 1000)
+        var device = ProtoWriter()
+        device.sint(1, 1); device.string(3, "8662"); device.string(4, who.deviceId)
+        device.string(5, "!notset!"); device.string(6, "!noperm!")
+        device.sint(7, -888888); device.sint(8, -888888); device.sint(9, 2); device.sint(10, -888888)
+        device.string(11, "!notset!"); device.string(12, "Asia/Shanghai,8"); device.string(13, "zh_CN"); device.sint(14, 8)
+        device.float(16, traits.storage); device.float(17, traits.storageFree)
+        device.float(18, traits.memory); device.float(19, traits.memoryFree)
+        device.float(20, traits.storage * 2); device.float(21, traits.storageFree * 2)
+        device.string(22, who.osVersion); device.sint(23, 60); device.sint(24, 10)
+        let launchAt = min(nowMillis, process.launchMillis)
+        device.sint(25, effectiveInstall); device.sint(26, min(nowMillis, launchAt + 540)); device.sint(27, effectiveInstall)
+        device.sint(28, nowMillis); device.sint(29, 1)
+        device.string(30, who.deviceType); device.string(31, who.brand)
+        device.string(32, "!notset!"); device.string(33, "!notset!"); device.string(34, "!notset!")
+        device.string(35, who.brand); device.string(36, "!notset!"); device.sint(38, 3); device.sint(40, launchAt)
+        var env = ProtoWriter()
+        env.sint(1, max(1, Int64(ts) - process.launchMillis / 1000))
+        env.string(6, "v04.10.03.04-bugfix"); env.sint(7, process.pid); env.string(8, who.channel)
+        env.bytes(12, device.bytes); env.raw([0x6a, 0x00])
+        env.string(14, who.versionName); env.sint(15, process.ppid)
+        env.sint(18, Int64(ts) + 766353820); env.sint(19, Int64(ts) + 16); env.sint(20, Int64(ts) - 1072050540)
+        var counters = ProtoWriter()
+        counters.sint(1, process.nextCount()); counters.sint(2, 5); counters.sint(3, 694367); counters.sint(5, 694367)
+        var message = ProtoWriter()
+        message.bytes(1, Self.magic); message.sint(2, 5); message.sint(3, Int64(messageRandom))
+        message.string(4, "8662"); message.string(5, who.deviceId); message.string(6, "646637794")
+        message.string(7, who.versionName); message.string(8, who.sdkVersion); message.sint(9, 0x040a0300)
+        message.bytes(10, flags); message.sint(12, Int64(ts)); message.bytes(13, f13)
+        message.bytes(14, Array(query[0..<6])); message.bytes(15, counters.bytes)
+        message.sint(17, Int64(ts)); message.string(20, "none"); message.sint(21, 369); message.bytes(23, env.bytes)
+        message.string(24, MedusaProcess.fingerprintJSON(deviceId: who.deviceId))
+        return try seal(message.bytes, flags: flags, query: query, f13: f13, ts: ts, nonce: random32() & 0x7fffffff,
+                        packedRandom: { random32() & 0x7fffffff })
     }
 
     func helios(ts: UInt32) -> String {
@@ -352,5 +406,69 @@ extension String {
     /// base64 -> base64url without padding (Node `toString('base64url')`).
     var base64URL: String {
         replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    }
+}
+
+/// Process-wide and per-device fields for phone-layout `x-medusa`: launch time, process ids,
+/// monotonically increasing signature counter, hardware traits, and deterministic per-device
+/// field-24 fingerprint hashes.
+final class MedusaProcess: @unchecked Sendable {
+    static let shared = MedusaProcess()
+    let launchMillis = Int64(Date().timeIntervalSince1970 * 1000)
+    let pid: Int64
+    let ppid: Int64
+    private let lock = NSLock()
+    private var count: Int64
+
+    init() {
+        let nanos = Int64(Date().timeIntervalSince1970 * 1_000_000_000)
+        pid = 3000 + nanos % 25000
+        ppid = 500 + (nanos / 25000) % 700
+        count = 20 + nanos % 100
+    }
+
+    func nextCount() -> Int64 {
+        lock.lock(); defer { lock.unlock() }
+        count += 1
+        return count
+    }
+
+    struct Traits: Equatable { var storage, storageFree, memory, memoryFree: Float; var installMillis: Int64 }
+
+    /// Storage, memory, and fallback install time derived stably from `deviceId`.
+    static func traits(deviceId: String, referenceMillis: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> Traits {
+        let h = Array(SHA256.hash(data: Data("medusa-device\u{0}\(deviceId)".utf8)))
+        func pick(_ i: Int, _ n: UInt32) -> UInt32 {
+            (UInt32(h[i * 4]) | UInt32(h[i * 4 + 1]) << 8 | UInt32(h[i * 4 + 2]) << 16 | UInt32(h[i * 4 + 3]) << 24) % n
+        }
+        let storage = [Float(106.83), 108.57, 229.36, 233.91, 487.62][Int(pick(0, 5))] + Float(pick(1, 400)) / 1000
+        let memory = [Float(5.37), 7.42, 11.18, 15.07][Int(pick(2, 4))] + Float(pick(3, 90)) / 1000
+        let day: Int64 = 86_400_000
+        return Traits(
+            storage: storage,
+            storageFree: storage * (0.25 + Float(pick(5, 500)) / 1000),
+            memory: memory,
+            memoryFree: 0.35 + Float(pick(6, 900)) / 1000,
+            installMillis: referenceMillis - day - Int64(pick(4, UInt32(20 * day)))
+        )
+    }
+
+    /// Per-device field-24 JSON derived deterministically from `deviceId` (avoids sharing static
+    /// captured hashes across installations).
+    static func fingerprintJSON(deviceId: String) -> String {
+        let h = Array(SHA256.hash(data: Data("medusa-fp-v1\u{0}\(deviceId)".utf8)))
+        func u32(_ idx: Int) -> UInt32 {
+            let o = (idx * 4) % (h.count - 4)
+            return UInt32(h[o]) | (UInt32(h[o + 1]) << 8) | (UInt32(h[o + 2]) << 16) | (UInt32(h[o + 3]) << 24)
+        }
+        func u40(_ idx: Int) -> UInt64 {
+            (UInt64(u32(idx)) << 8) | UInt64(h[(idx + 7) % h.count])
+        }
+        let unH = u32(0)
+        let fkd = u32(1)
+        let pd = u32(2)
+        let lp = "2|\(500_000_000_000 + u40(3) % 400_000_000_000)|\(500_000_000_000 + u40(4) % 400_000_000_000)|\(1_800_000_000_000 + u40(5) % 800_000_000_000)|\(1_000_000_000 + UInt64(u32(6)) % 500_000_000)"
+        let fl = "0|0|\(u32(7))|\(u32(0) ^ 0x5a5a5a5a)|\(u32(1) ^ 0xa5a5a5a5)|0|0|0|0|\(u32(2) ^ 0x3c3c3c3c)"
+        return #"{"cmr":16777216,"cmr2":16777216,"un_h":\#(unH),"vpn":0,"sts":27,"kd":0,"fkd":\#(fkd),"pd":\#(pd),"lp":"\#(lp)","fl":"\#(fl)","dyn":"","do":0,"tk":true}"#
     }
 }
