@@ -275,7 +275,7 @@ public actor AuthenticatedPlaybackSource {
                 let dToken = await PersistentAppDevice.shared.dTokenHeaders()
                 let entries = try await self.requestModels(
                     vids: chunk,
-                    channels: [.multiPlainIOS],
+                    channels: [.videoModel],
                     identity: identity,
                     extraHeaders: dToken,
                     deadline: Date().addingTimeInterval(8)
@@ -380,13 +380,12 @@ public actor AuthenticatedPlaybackSource {
         var routeTag = "auth-app"
         var lastError: Error?
 
-        // Pass 1: the official iOS 7.4.3 `mGetVideoModel` (`/multi_video_model/v1/`). The V2 scene
-        // path (`/multi_video_model/player/v1/`, either host) answers empty to this request
-        // (EndpointReachabilityLiveTests, 2026-11-20), so it is not asked: it only added two waits.
+        // Pass 1: single-episode `/novel/player/video_model/v1/` with phone-layout `x-medusa`
+        // (since 2026-11-23 `/multi_video_model/v1/` returns empty 200 and is not asked on the hot path).
         do {
             entries = try await requestModels(
                 vids: [vid],
-                channels: [.multiPlainIOS],
+                channels: [.videoModel],
                 identity: identity,
                 extraHeaders: dToken,
                 deadline: deadline
@@ -420,7 +419,7 @@ public actor AuthenticatedPlaybackSource {
                 do {
                     entries = try await requestModels(
                         vids: [vid],
-                        channels: [.multiPlainIOS],
+                        channels: [.videoModel],
                         identity: identity,
                         extraHeaders: dToken,
                         deadline: deadline
@@ -446,7 +445,7 @@ public actor AuthenticatedPlaybackSource {
                 do {
                     entries = try await requestModels(
                         vids: [vid],
-                        channels: [.multiPlainIOS],
+                        channels: [.videoModel],
                         identity: identity,
                         extraHeaders: dToken,
                         deadline: deadline
@@ -608,15 +607,20 @@ public actor AuthenticatedPlaybackSource {
     }
 
     private enum Channel {
+        /// Single-episode `/novel/player/video_model/v1/` with phone-layout `x-medusa` (v04.10.03).
+        case videoModel
         /// Official iOS 7.4.3 `FQVPlayerApiService.mGetVideoModel` (`/multi_video_model/v1/`).
         case multiPlainIOS
     }
+
+    /// Maximum episodes resolved per prefetch batch, and maximum concurrent requests per batch.
+    private static let singleBatchLimit = 4
+    private static let singleBatchConcurrency = 3
 
     private static let multiPlainPath = "/novel/player/multi_video_model/v1/"
 
     private func requestModels(vids: [String], channels: [Channel], identity: PlaybackIdentity,
                                extraHeaders: [(String, String)], deadline: Date) async throws -> JSONValue {
-        let multiPayload = try AppSource.modelPayload(vids: vids)
         try Task.checkCancellationAsApp()
 
         var lastError: Error?
@@ -626,7 +630,17 @@ public actor AuthenticatedPlaybackSource {
         for channel in channels {
             try Task.checkCancellationAsApp()
             guard deadline.timeIntervalSinceNow >= 1 else { break }
+            if channel == .videoModel {
+                do {
+                    return try await requestVideoModels(vids: vids, identity: identity, deadline: deadline)
+                } catch let error as AppSourceError {
+                    if error.code == .cancelled { throw error }
+                    lastError = error
+                    continue
+                }
+            }
             do {
+                let multiPayload = try AppSource.modelPayload(vids: vids)
                 let req = try buildRequest(channel: channel, multiPayload: multiPayload, identity: identity)
                 let reply = try await transport.requestJSON(
                     req.url,
@@ -671,11 +685,100 @@ public actor AuthenticatedPlaybackSource {
 
     private func buildRequest(channel: Channel, multiPayload: [UInt8], identity: PlaybackIdentity)
         throws -> (url: String, headers: [(String, String)], body: [UInt8]) {
-        let base: String
-        switch channel {
-        case .multiPlainIOS: base = "https://api5-normal-sinfonlineb.fqnovel.com\(Self.multiPlainPath)"
-        }
+        let base = "https://api5-normal-sinfonlineb.fqnovel.com\(Self.multiPlainPath)"
         return try AppSource.modelRequest(base: base, payload: multiPayload, identity: identity)
+    }
+
+    /// Resolves one episode (or a bounded concurrent prefetch slice of up to `singleBatchLimit`
+    /// episodes) through `/novel/player/video_model/v1/`, returning `{vid: entry}`.
+    private func requestVideoModels(vids: [String], identity: PlaybackIdentity, deadline: Date) async throws -> JSONValue {
+        let ctx = await PersistentAppDevice.shared.playSessionContext()
+        let targets = Array(vids.prefix(Self.singleBatchLimit))
+        let transport = self.transport
+
+        func fetchOne(_ vid: String) async -> (String, Result<JSONValue, AppSourceError>) {
+            do {
+                try Task.checkCancellationAsApp()
+                guard deadline.timeIntervalSinceNow >= 1 else {
+                    return (vid, .failure(AppSourceError(.timeout, "请求超时，请稍后重试")))
+                }
+                let req = try VideoModelRequest.request(
+                    vid: vid,
+                    identity: identity,
+                    openudid: ctx.openudid,
+                    guest: ctx.cookies,
+                    dToken: ctx.dToken,
+                    installMillis: ctx.firstInstallTimeMs
+                )
+                let reply = try await transport.requestJSON(
+                    req.url,
+                    method: "POST",
+                    headers: req.headers,
+                    body: req.body,
+                    deadline: deadline
+                )
+                if !reply["Code"].isZeroOrMissingStatusCode || !reply["code"].isZeroOrMissingStatusCode {
+                    return (vid, .failure(AppSourceError(.businessRejected, "App 接口暂未提供本集播放信息")))
+                }
+                let data = reply["data"]
+                guard !data["video_model"].isNull else {
+                    return (vid, .failure(AppSourceError(.missingModel, "App 接口未返回所选分集，已停止取址")))
+                }
+                return (vid, .success(data))
+            } catch let error as AppSourceError {
+                return (vid, .failure(error))
+            } catch {
+                return (vid, .failure(AppSourceError(.invalidResponse, "App 接口未返回有效数据")))
+            }
+        }
+
+        if targets.count == 1, let only = targets.first {
+            let (_, outcome) = await fetchOne(only)
+            switch outcome {
+            case .success(let data): return .object([only: data])
+            case .failure(let error): throw error
+            }
+        }
+
+        var merged: [String: JSONValue] = [:]
+        var lastError: AppSourceError?
+        var cancelled = false
+        await withTaskGroup(of: (String, Result<JSONValue, AppSourceError>).self) { group in
+            var nextIndex = 0
+            let initial = min(Self.singleBatchConcurrency, targets.count)
+            while nextIndex < initial {
+                let vid = targets[nextIndex]
+                nextIndex += 1
+                group.addTask { await fetchOne(vid) }
+            }
+            while let (vid, outcome) = await group.next() {
+                switch outcome {
+                case .success(let data):
+                    merged[vid] = data
+                case .failure(let error):
+                    if error.code == .cancelled {
+                        cancelled = true
+                        group.cancelAll()
+                        continue
+                    }
+                    lastError = error
+                    if merged.isEmpty, error.code == .emptyResponse {
+                        group.cancelAll()
+                        continue
+                    }
+                }
+                if nextIndex < targets.count, !Task.isCancelled, deadline.timeIntervalSinceNow >= 1 {
+                    let nextVid = targets[nextIndex]
+                    nextIndex += 1
+                    group.addTask { await fetchOne(nextVid) }
+                }
+            }
+        }
+        if cancelled { throw AppSourceError(.cancelled, "已取消 App 片源请求") }
+        guard !merged.isEmpty else {
+            throw lastError ?? AppSourceError(.emptyResponse, "App 接口返回空响应（HTTP 200），原因尚未确认")
+        }
+        return .object(merged)
     }
 
     private func extractModel(from entry: JSONValue) -> JSONValue {

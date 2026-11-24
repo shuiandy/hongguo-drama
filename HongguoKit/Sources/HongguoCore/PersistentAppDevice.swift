@@ -70,12 +70,16 @@ public actor PersistentAppDevice {
         /// Platform recorded at registration (`"iphone"` for official iOS 7.4.3 `BDInstall`);
         /// legacy non-iOS records trigger a one-time fresh iOS registration.
         public var platform: String?
+        /// Guest cookies `device_register` sets (`ttreq`, `store-region`, `store-region-src`),
+        /// echoed on playback requests when present. Nil on records saved before this field existed.
+        public var guestCookies: [String: String]?
 
         public init(deviceId: String, iid: String, cdid: String,
                     openudid: String? = nil, clientudid: String? = nil,
                     deviceToken: String? = nil, klinkEgdi: String? = nil,
                     isActivated: Bool? = nil, lastRegisteredAt: Date? = nil,
-                    firstInstallTimeMs: Int64? = nil, platform: String? = "iphone") {
+                    firstInstallTimeMs: Int64? = nil, platform: String? = "iphone",
+                    guestCookies: [String: String]? = nil) {
             self.deviceId = deviceId
             self.iid = iid
             self.cdid = cdid
@@ -87,6 +91,7 @@ public actor PersistentAppDevice {
             self.lastRegisteredAt = lastRegisteredAt
             self.firstInstallTimeMs = firstInstallTimeMs
             self.platform = platform
+            self.guestCookies = guestCookies
         }
 
         /// Mirrors `-[BDInstall _needRegsiter]`: re-register if >6 hours old, missing `device_token`,
@@ -197,6 +202,26 @@ public actor PersistentAppDevice {
         }
         let fresh = try await registerOrRenew(existing: nil, transport: transport, resetClock: now)
         return (fresh.playbackIdentity, true)
+    }
+
+    /// Device metadata sent on playback requests: registration `openudid`, optional guest cookies,
+    /// `device_token` (`x-tt-dt`), and persisted `firstInstallTimeMs`.
+    func playSessionContext() -> (openudid: String, cookies: [String: String]?, dToken: String, firstInstallTimeMs: Int64?) {
+        let current = currentRecord()
+        let token = current?.deviceToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return (current?.openudid ?? "", current?.guestCookies, token, current?.firstInstallTimeMs)
+    }
+
+    /// The guest cookies a `device_register` reply sets that playback requests echo. `Set-Cookie`
+    /// arrives folded into one header (joined by ", "), so split on both "," and ";".
+    static func guestCookies(fromSetCookie header: String) -> [String: String] {
+        var jar: [String: String] = [:]
+        for part in header.components(separatedBy: CharacterSet(charactersIn: ",;")) {
+            let pair = part.trimmingCharacters(in: .whitespaces).split(separator: "=", maxSplits: 1).map(String.init)
+            guard pair.count == 2, ["ttreq", "store-region", "store-region-src"].contains(pair[0]), !pair[1].isEmpty else { continue }
+            jar[pair[0]] = pair[1]
+        }
+        return jar
     }
 
     /// Returns `[("x-tt-dt", deviceToken)]` when a `device_token` is available, matching
@@ -407,7 +432,9 @@ public actor PersistentAppDevice {
         for url in urls {
             guard deadline.timeIntervalSinceNow >= 1 else { break }
             do {
-                let response = try await transport.requestJSON(url, method: "POST", headers: headers, body: body, deadline: deadline)
+                let (response, responseHeaders) = try await transport.requestJSONWithHeaders(
+                    url, method: "POST", headers: headers, body: body, deadline: deadline
+                )
                 if !response["code"].isZeroOrMissingStatusCode || !response["Code"].isZeroOrMissingStatusCode {
                     throw AppSourceError(.businessRejected, "Registration rejected")
                 }
@@ -419,6 +446,7 @@ public actor PersistentAppDevice {
                 let token = response["device_token"].string?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let egdi = response["klink_egdi"].string?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let stillActivated = wasActivated && deviceId == existing?.deviceId
+                let cookies = Self.guestCookies(fromSetCookie: responseHeaders["set-cookie"] ?? "")
                 return StoredRecord(
                     deviceId: deviceId,
                     iid: iid,
@@ -430,7 +458,8 @@ public actor PersistentAppDevice {
                     isActivated: stillActivated,
                     lastRegisteredAt: Date(),
                     firstInstallTimeMs: firstInstallTime,
-                    platform: "iphone"
+                    platform: "iphone",
+                    guestCookies: cookies.isEmpty ? existing?.guestCookies : cookies
                 )
             } catch let error as AppSourceError where error.code == .cancelled {
                 throw error

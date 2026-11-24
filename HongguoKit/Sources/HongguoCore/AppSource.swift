@@ -60,6 +60,12 @@ struct AppTransport: Sendable {
 
     func requestJSON(_ start: String, method: String = "GET", headers: [(String, String)], body: [UInt8]? = nil,
                      deadline: Date, maxBytes: Int = 8 * 1024 * 1024) async throws -> JSONValue {
+        try await requestJSONWithHeaders(start, method: method, headers: headers, body: body, deadline: deadline, maxBytes: maxBytes).json
+    }
+
+    /// `requestJSON` plus the reply's headers (for `Set-Cookie` on device registration).
+    func requestJSONWithHeaders(_ start: String, method: String = "GET", headers: [(String, String)], body: [UInt8]? = nil,
+                                deadline: Date, maxBytes: Int = 8 * 1024 * 1024) async throws -> (json: JSONValue, headers: [String: String]) {
         var url = try AppSource.checkedURL(start, domains: Self.apiDomains)
         for _ in 0..<4 {
             try Task.checkCancellationAsApp()
@@ -113,7 +119,7 @@ struct AppTransport: Sendable {
             guard let parsed = try? JSONValue.parse(response.data), parsed.object != nil else {
                 throw AppSourceError(.invalidResponse, "App 接口未返回有效数据")
             }
-            return parsed
+            return (parsed, response.headers)
         }
         throw AppSourceError(.securityBlocked, "App 片源跳转次数过多")
     }
