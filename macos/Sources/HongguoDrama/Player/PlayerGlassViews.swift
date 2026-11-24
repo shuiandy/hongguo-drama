@@ -630,7 +630,10 @@ struct PlayerSidePanel: View {
         HStack(spacing: 12) {
             CoverImage(url: controller.cover, cornerRadius: 12).frame(width: 60, height: 80)
             VStack(alignment: .leading, spacing: 4) {
+                // Two lines, then truncated. fixedSize: the panel's stack would otherwise squeeze the
+                // title back to one line when the window is short.
                 Text(controller.episodes?.title ?? "加载中").font(.system(size: 17, weight: .bold)).lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(progressLine).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 0)
