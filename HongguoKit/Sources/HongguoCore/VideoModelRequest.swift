@@ -18,11 +18,19 @@ enum VideoModelRequest {
         + "Cronet/TTNetVersion:8d40f833 2026-03-03 QuicVersion:21ac1950 2025-11-18)"
 
     /// Plain JSON body with `device_level: 1` (defends against server-side ByteVC2 substitution).
-    static func payload(vid: String) throws -> [UInt8] {
+    /// Creator/UGC videos (`content_type` 1001, tracked in `UGCVideos`) set `content_type: 1001`
+    /// per official 7.4.3 `FQVGetVideoModelRequest.videoContentType -> content_type`.
+    static func payload(vid: String, isUGC: Bool? = nil) throws -> [UInt8] {
         guard vid.range(of: "^[0-9]{4,25}$", options: .regularExpression) != nil else {
             throw AppSourceError(.invalidResponse, "无效的分集")
         }
-        return Array(#"{"biz_param":{"device_level":1,"need_all_video_definition":true,"video_id_type":0,"video_platform":3},"video_id":"\#(vid)"}"#.utf8)
+        let ct = (isUGC ?? UGCVideos.contains(vid)) ? #","content_type":1001"# : ""
+        return Array(#"{"biz_param":{"device_level":1,"need_all_video_definition":true,"video_id_type":0,"video_platform":3}\#(ct),"video_id":"\#(vid)"}"#.utf8)
+    }
+
+    /// Normalizes a 40-char iOS `openudid` to Android's 16-char width while preserving shorter values.
+    static func normalizedOpenUDID(_ openudid: String) -> String {
+        openudid.count > 16 ? String(openudid.prefix(16)) : openudid
     }
 
     static func pairs(identity: PlaybackIdentity, openudid: String) -> [(String, String)] {
@@ -33,7 +41,8 @@ enum VideoModelRequest {
             ("language", "zh"), ("os_api", "34"), ("os_version", osVersion), ("manifest_version_code", versionCode),
             ("resolution", "1200*2670"), ("dpi", "460"), ("update_version_code", versionCode), ("host_abi", "arm64-v8a"),
             ("dragon_device_type", "phone"), ("pv_player", versionCode), ("compliance_status", "0"),
-            ("need_personal_recommend", "1"), ("player_so_load", "1"), ("is_android_pad_screen", "0"), ("openudid", openudid),
+            ("need_personal_recommend", "1"), ("player_so_load", "1"), ("is_android_pad_screen", "0"),
+            ("openudid", normalizedOpenUDID(openudid)),
         ]
     }
 
@@ -44,13 +53,14 @@ enum VideoModelRequest {
     }
 
     static func request(vid: String, identity: PlaybackIdentity, openudid: String, guest: [String: String]?,
-                        dToken: String = "", installMillis: Int64? = nil,
+                        dToken: String = "", installMillis: Int64? = nil, isUGC: Bool? = nil,
                         nowMillis: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
                         signer: PlaybackSignerV5 = .shared, random32: () -> UInt32 = AppCrypto.random32)
         throws -> (url: String, headers: [(String, String)], body: [UInt8]) {
-        let body = try payload(vid: vid)
+        let body = try payload(vid: vid, isUGC: isUGC)
         let bodyMd5 = AppCrypto.md5(body)
         let basePairs = pairs(identity: identity, openudid: openudid)
+        let trimmedDToken = dToken.trimmingCharacters(in: .whitespacesAndNewlines)
         for offset in 0..<1024 {
             let ticket = nowMillis + Int64(offset)
             let ts = UInt32(ticket / 1000)
@@ -71,9 +81,10 @@ enum VideoModelRequest {
                                                      flags: (0x04, 0x05), sdkCode: 0x040a0300)),
                 ("x-helios", signer.helios(ts: ts)),
                 ("x-medusa", try signer.medusaDevice(query: queryHash, f13: f13, ts: ts, who: who, installMillis: installMillis)),
-                ("x-tt-dt", dToken), ("Content-Type", "application/json; charset=UTF-8"), ("x-ss-stub", stub.uppercased()),
+                ("Content-Type", "application/json; charset=UTF-8"), ("x-ss-stub", stub.uppercased()),
                 ("x-ss-dp", "8662"), ("lc", "101"), ("x-reading-request", "\(ticket)-\(random32() & 0x7fffffff)"),
             ]
+            if !trimmedDToken.isEmpty { headers.append(("x-tt-dt", trimmedDToken)) }
             if let cookie = cookie(iid: identity.iid, guest: guest) { headers.append(("Cookie", cookie)) }
             return ("\(Self.base)?\(query)", headers, body)
         }

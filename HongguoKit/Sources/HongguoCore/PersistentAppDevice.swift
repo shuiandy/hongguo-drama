@@ -212,6 +212,15 @@ public actor PersistentAppDevice {
         return (current?.openudid ?? "", current?.guestCookies, token, current?.firstInstallTimeMs)
     }
 
+    /// Case-insensitive `Set-Cookie` lookup over raw `HTTPURLResponse` header maps (Foundation
+    /// preserves `"Set-Cookie"` casing on HTTP/1.1 replies).
+    static func guestCookies(fromHeaders headers: [String: String]) -> [String: String] {
+        guard let raw = headers.first(where: { $0.key.caseInsensitiveCompare("Set-Cookie") == .orderedSame })?.value else {
+            return [:]
+        }
+        return guestCookies(fromSetCookie: raw)
+    }
+
     /// The guest cookies a `device_register` reply sets that playback requests echo. `Set-Cookie`
     /// arrives folded into one header (joined by ", "), so split on both "," and ";".
     static func guestCookies(fromSetCookie header: String) -> [String: String] {
@@ -446,7 +455,7 @@ public actor PersistentAppDevice {
                 let token = response["device_token"].string?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let egdi = response["klink_egdi"].string?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let stillActivated = wasActivated && deviceId == existing?.deviceId
-                let cookies = Self.guestCookies(fromSetCookie: responseHeaders["set-cookie"] ?? "")
+                let cookies = Self.guestCookies(fromHeaders: responseHeaders)
                 return StoredRecord(
                     deviceId: deviceId,
                     iid: iid,

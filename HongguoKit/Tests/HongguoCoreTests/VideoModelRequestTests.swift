@@ -44,15 +44,32 @@ final class VideoModelRequestTests: XCTestCase {
     func testNoCookieWithoutTicketAndRejectsInvalidVid() throws {
         let req = try VideoModelRequest.request(vid: "7694243705045126169", identity: identity, openudid: "", guest: nil)
         XCTAssertFalse(req.headers.contains { $0.0 == "Cookie" })
+        XCTAssertFalse(req.headers.contains { $0.0 == "x-tt-dt" }, "empty dToken must be omitted")
         XCTAssertNil(VideoModelRequest.cookie(iid: "1", guest: ["store-region": "cn"]))
         XCTAssertThrowsError(try VideoModelRequest.payload(vid: "12\"}"))
     }
 
-    func testGuestCookiesFromFoldedHeader() {
+    func testUGCPayloadAndOpenUDIDNormalization() throws {
+        let ugcBody = try JSONValue.parse(Data(try VideoModelRequest.payload(vid: "7694243705045126169", isUGC: true)))
+        XCTAssertEqual(ugcBody["content_type"].signedInt, 1001)
+        XCTAssertEqual(ugcBody["biz_param"]["video_id_type"].signedInt, 0)
+        let dramaBody = try JSONValue.parse(Data(try VideoModelRequest.payload(vid: "7694243705045126169", isUGC: false)))
+        XCTAssertTrue(dramaBody["content_type"].isNull)
+        XCTAssertEqual(dramaBody["biz_param"]["video_id_type"].signedInt, 0)
+
+        let iosOpenUDID = "0123456789abcdef0123456789abcdef01234567"
+        let req = try VideoModelRequest.request(vid: "7694243705045126169", identity: identity, openudid: iosOpenUDID, guest: nil)
+        let query = String(req.url.split(separator: "?", maxSplits: 1)[1])
+        XCTAssertEqual(AppCrypto.queryParam(query, "openudid"), "0123456789abcdef")
+    }
+
+    func testGuestCookiesFromFoldedHeaderAndCaseInsensitiveMap() {
         let header = "store-region=cn-gd; Path=/; Domain=fqnovel.com; Max-Age=31536000, store-region-src=did; Path=/, "
             + "ttreq=1$0b2a9e; Path=/; Domain=fqnovel.com, install_id=7; Path=/"
-        XCTAssertEqual(PersistentAppDevice.guestCookies(fromSetCookie: header),
-                       ["store-region": "cn-gd", "store-region-src": "did", "ttreq": "1$0b2a9e"])
+        let expected = ["store-region": "cn-gd", "store-region-src": "did", "ttreq": "1$0b2a9e"]
+        XCTAssertEqual(PersistentAppDevice.guestCookies(fromSetCookie: header), expected)
+        XCTAssertEqual(PersistentAppDevice.guestCookies(fromHeaders: ["Set-Cookie": header]), expected)
+        XCTAssertEqual(PersistentAppDevice.guestCookies(fromHeaders: ["set-cookie": header]), expected)
         XCTAssertEqual(PersistentAppDevice.guestCookies(fromSetCookie: ""), [:])
     }
 

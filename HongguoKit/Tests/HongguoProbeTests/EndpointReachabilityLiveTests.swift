@@ -55,21 +55,16 @@ final class EndpointReachabilityLiveTests: XCTestCase {
             let d = try await OfficialSeriesDetail.load(sid, force: true); vid = d.episodes.first?.vid ?? ""
             try need(!d.episodes.isEmpty, "episodes"); return "\(d.episodes.count) eps"
         }
-        // The V2 scene path (`/multi_video_model/player/v1/`) answers empty on both hosts and is not used.
-        for (name, base) in [("multi_video_model/v1 (play)", AppSource.playerAPI)] {
-            await check(name) {
-                let identity = try await PersistentAppDevice.shared.get(transport: transport)
-                let dToken = await PersistentAppDevice.shared.dTokenHeaders()
-                let req = try AppSource.modelRequest(base: base, payload: try AppSource.modelPayload(vids: [vid]), identity: identity)
-                let json = try await transport.requestJSON(req.url, method: "POST", headers: req.headers + dToken, body: req.body,
-                                                           deadline: Date().addingTimeInterval(10))
-                let data = json["data"]["1004"].isNull ? json["data"] : json["data"]["1004"]
-                try need(Int(json["code"].number ?? -1) == 0 && data[vid]["video_model"].string != nil, "video_model code=\(json["code"].number ?? -1)")
-                return "video_model present"
-            }
+        // Since 2026-11-23 `/multi_video_model/v1/` returns empty 200; playback uses
+        // `/novel/player/video_model/v1/` with phone-layout `x-medusa`.
+        await check("video_model/v1 (play drama)") {
+            let source = AuthenticatedPlaybackSource(diskCache: VideoModelDiskCache(fileURL: nil))
+            let res = try await source.resolveWithMeta(vid: vid, force: true)
+            return "video_model present (\(res.info.codec) \(res.info.quality?.shortSide ?? 0)p)"
         }
         await check("album_detail (collection)") {
-            let d = try await OfficialAlbumDetail.load("7695396523919559704"); try need((d?.episodes.count ?? 0) > 1, "album"); return "\(d!.episodes.count) eps"
+            let d = try await OfficialAlbumDetail.load("7695396523919559704"); try need((d?.episodes.count ?? 0) > 1, "album")
+            return "\(d!.episodes.count) eps"
         }
         var rankCursor: DiscoveryAccess.RankCursor?
         await check("plan/v (ranking)") {
